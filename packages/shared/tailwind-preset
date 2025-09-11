@@ -1,0 +1,43 @@
+import type { Config } from 'tailwindcss';
+import forms from '@tailwindcss/forms';
+import typography from '@tailwindcss/typography';
+
+// Shared Tailwind preset used by BOTH apps (admin + booking).
+// Each app's tailwind.config.ts will `presets: [sharedPreset]` and define its own `content` globs.
+
+const preset: Omit<Config, 'content'> = {
+  theme: {
+    extend: {
+      colors: {
+        cream: '#FAF6EF',
+        gold: '#D8A14A',
+        terracotta: {
+          50: '#F8EAE3',
+          100: '#F1D5C7',
+          200: '#E5B59C',
+          300: '#D99674',
+          400: '#CD784E',
+          500: '#C96A3D', // primary
+          600: '#A8542D', // hover/darken
+          700: '#8F4724',
+          800: '#6F361B',
+          900: '#5A2C16',
+          DEFAULT: '#C96A3D'
+        }
+      },
+      boxShadow: {
+        soft: '0 10px 20px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04)'
+      },
+      fontFamily: {
+        serif: ['"Cormorant Garamond"', 'serif'],
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji']
+      },
+      backgroundImage: {
+        // Subtle linen/cloth-esque texture (very light). Use as bg-[image:var(--cloth)] if desired via CSS var.
+      }
+    }
+  },
+  plugins: [forms, typography]
+};
+
+export default preset;

@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.role == 'admin';
+    }
+
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /services/{id} {
+      allow read: if true;
+      allow write, delete, create: if isAdmin();
+    }
+
+    match /customers/{id} {
+      allow read: if isAdmin();
+      // Public creation is handled via Cloud Functions or client create with limited fields (optional).
+      allow write: if isAdmin();
+    }
+
+    match /appointments/{id} {
+      allow read: if true;
+      allow create: if
+        request.resource.data.customerId is string &&
+        request.resource.data.serviceId is string &&
+        request.resource.data.start is string &&
+        request.resource.data.duration is int;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

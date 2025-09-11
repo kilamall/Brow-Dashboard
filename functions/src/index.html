@@ -1,0 +1,57 @@
+import * as admin from 'firebase-admin';
+import * as functions from 'firebase-functions';
+import { DateTime } from 'luxon';
+
+admin.initializeApp();
+const db = admin.firestore();
+
+function isWithinBusinessHours(startISO: string, bh: any): boolean {
+  const tz: string = bh?.timezone || 'America/Los_Angeles';
+  const zdt = DateTime.fromISO(startISO, { zone: 'utc' }).setZone(tz);
+  const weekdayIdx = zdt.weekday % 7; // Mon=1..Sun=7 → 0..6 (Sun=0)
+  const key = ['sun','mon','tue','wed','thu','fri','sat'][weekdayIdx];
+  const ranges: [string,string][] = (bh?.slots?.[key] || []);
+  const hhmm = zdt.toFormat('HH:mm');
+  return ranges.some(([s,e]) => s <= hhmm && hhmm < e);
+}
+
+export const autoConfirmPending = functions
+  .region('us-central1')              // optional: pick your region
+  .pubsub.schedule('* * * * *')       // every minute
+  .timeZone('America/Los_Angeles')    // run in your business TZ
+  .onRun(async () => {
+    const now = admin.firestore.Timestamp.now();
+    const fiveMinAgo = admin.firestore.Timestamp.fromMillis(now.toMillis() - 5 * 60 * 1000);
+
+    // Read business hours once
+    const bhSnap = await db.doc('settings/businessHours').get();
+    if (!bhSnap.exists) return null;
+    const bh = bhSnap.data();
+
+    // Find pending, eligible appts
+    const q = db.collection('appointments')
+      .where('status', '==', 'pending')
+      .where('autoConfirm', '==', true)
+      .where('createdAt', '<=', fiveMinAgo)
+      .orderBy('createdAt', 'asc')
+      .limit(50);
+
+    const snap = await q.get();
+    if (snap.empty) return null;
+
+    const batch = db.batch();
+    for (const docSnap of snap.docs) {
+      const a = docSnap.data() as any;
+      if (a.status !== 'pending') continue;
+      if (!isWithinBusinessHours(a.start, bh)) continue;
+      batch.update(docSnap.ref, {
+        status: 'confirmed',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // commit if anything queued
+    // @ts-ignore internal check for some admin sdk versions
+    if ((batch as any)?._ops?.length > 0) await batch.commit();
+    return null;
+  });
