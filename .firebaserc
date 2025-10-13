@@ -1,1 +1,19 @@
-{ "projects": { "default": "bueno-brows" } }
+{
+  "projects": {
+    "default": "bueno-brows-7cce7",
+    "BB": "bueno-brows"
+  },
+  "targets": {
+    "bueno-brows-7cce7": {
+      "hosting": {
+        "admin": [
+          "bueno-brows-admin"
+        ],
+        "booking": [
+          "bueno-brows-7cce7"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

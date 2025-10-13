@@ -7,7 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'), // ← FIX
+      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
+      '@buenobrows/shared': path.resolve(__dirname, '../../packages/shared/src'),
     },
   },
 });

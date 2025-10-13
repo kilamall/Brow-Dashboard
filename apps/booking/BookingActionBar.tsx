@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { sendMagicLink, completeMagicLinkSignIn } from '@shared/authHelpers';
+import { sendMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import {
   createSlotHoldClient,
   releaseHoldClient,
   getOrCreateSessionId,
-} from '@shared/functionsClient';
-import type { Service } from '@shared/types';
+} from '@buenobrows/shared/functionsClient';
+import type { Service } from '@buenobrows/shared/types';
 
 type Status = 'idle' | 'holding' | 'verifying' | 'error';
 type Slot = { id: string; startISO: string; endISO: string; resourceId?: string };

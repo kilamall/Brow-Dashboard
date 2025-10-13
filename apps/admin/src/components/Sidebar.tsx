@@ -20,6 +20,9 @@ export default function Sidebar() {
         <LinkItem to="/schedule">Schedule</LinkItem>
         <LinkItem to="/customers">Customers</LinkItem>
         <LinkItem to="/services">Services</LinkItem>
+        <LinkItem to="/messages">Messages</LinkItem>
+        <LinkItem to="/sms">SMS Support</LinkItem>
+        <LinkItem to="/ai-conversations">AI Conversations</LinkItem>
         <LinkItem to="/settings">Settings</LinkItem>
       </nav>
     </aside>

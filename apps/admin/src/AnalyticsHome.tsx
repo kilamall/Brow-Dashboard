@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { initFirebase } from '@shared/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
-import type { AnalyticsTargets, Appointment, Service } from '@shared/types';
+import type { AnalyticsTargets, Appointment, Service } from '@buenobrows/shared/types';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isSameMonth, parseISO, differenceInDays, } from 'date-fns';
-
-const { db } = initFirebase();
 
 type Period = 'day' | 'week' | 'month' | 'year' | 'all';
 
@@ -14,6 +12,9 @@ export default function AnalyticsHome() {
   const [services, setServices] = useState<Record<string, Service>>({});
   const [appts, setAppts] = useState<Appointment[]>([]);
 
+  // Get memoized Firebase instance
+  const { db } = useFirebase();
+
   // Watch targets
   useEffect(() => {
     const ref = collection(db, 'settings');
@@ -21,6 +22,7 @@ export default function AnalyticsHome() {
       const doc = snap.docs.find((d) => d.id === 'analyticsTargets');
       if (doc?.exists()) setTargets(doc.data() as any);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Watch services (for names & pricing fallback)
@@ -31,6 +33,7 @@ export default function AnalyticsHome() {
       snap.forEach((d) => (map[d.id] = { id: d.id, ...(d.data() as any) }));
       setServices(map);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Compute range based on period
@@ -45,6 +48,7 @@ export default function AnalyticsHome() {
       snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
       setAppts(rows);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromISO, toISO]);
 
   // Metrics

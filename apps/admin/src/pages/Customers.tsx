@@ -1,15 +1,16 @@
-import { initFirebase } from '@shared/firebase';
+import React, { useState, useEffect } from 'react';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import {
   watchCustomers,
   createCustomer,
   updateCustomer,
   deleteCustomer
-} from '@shared/firestoreActions';
-import type { Customer } from '@shared/types';
+} from '@buenobrows/shared/firestoreActions';
+import type { Customer } from '@buenobrows/shared/types';
 
-const { db } = initFirebase();
 
 export default function Customers(){
+  const { db } = useFirebase();
   const [rows, setRows] = useState<Customer[]>([]);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<Customer | null>(null);

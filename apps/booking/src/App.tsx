@@ -1,9 +1,10 @@
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import Home from './pages/Home';
-import ServicesPage from './pages/Services';
-import Book from './pages/Book';
-import ConfirmationPage from './pages/Confirmation';
+import Home from '@/pages/Home';
+import ServicesPage from '@/pages/Services';
+import Book from '@/pages/Book';
+import ConfirmationPage from '@/pages/Confirmation';
+
 
 export default function App() {
   return (

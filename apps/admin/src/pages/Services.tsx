@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import { initFirebase } from '../../../../packages/shared/src/firebase';
-import { watchServices, createService, updateService, deleteService } from '../../../../packages/shared/src/firestoreActions';
-import type { Service } from '../../../../packages/shared/src/types';
-
-const { db } = initFirebase();
+import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { watchServices, createService, updateService, deleteService } from '@buenobrows/shared/firestoreActions';
+import type { Service } from '@buenobrows/shared/types';
 
 export default function Services(){
+  const { db } = useFirebase();
   const [rows, setRows] = useState<Service[]>([]);
   const [editing, setEditing] = useState<Service | null>(null);
   useEffect(()=> {

@@ -3,29 +3,42 @@ import AuthGate from './components/AuthGate';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 
-// Pages (Services/Customers are already added; the others are simple shells for now)
-import AnalyticsHome from './AnalyticsHome';
+import AnalyticsHome from './AnalyticsHome';        // lives at src/AnalyticsHome.tsx
 import Schedule from './pages/Schedule';
 import Customers from './pages/Customers';
 import Services from './pages/Services';
+import Messages from './pages/Messages';
+import SMS from './pages/SMS';
+import AIConversations from './pages/AIConversations';
 import Settings from './pages/Settings';
 
 export default function App() {
   return (
     <AuthGate>
-      <div className="min-h-screen grid grid-cols-[240px_1fr] bg-cream">
-        <Sidebar />
-        <div className="flex flex-col">
-          <Header />
+      <div className="min-h-screen grid" style={{ gridTemplateRows: '56px 1fr' }}>
+        {/* Top bar */}
+        <Header />
+
+        {/* Left nav + content */}
+        <div className="grid" style={{ gridTemplateColumns: '224px 1fr' }}>
+          <Sidebar />
           <main className="p-6">
             <Routes>
-              // Redirect root path "/" to "/home" for default landing page behavior
-                            <Route path="/" element={<Navigate to="/home" />} />
-                            <Route path="/home" element={<AnalyticsHome />} />
-              <Route path="/schedule" element={<Schedule />} />
-              <Route path="/customers" element={<Customers />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/settings" element={<Settings />} />
+              {/* Redirect the root of this router to "home" (relative) */}
+              <Route index element={<Navigate to="home" replace />} />
+
+              {/* Use relative paths for child routes */}
+              <Route path="home" element={<AnalyticsHome />} />
+              <Route path="schedule" element={<Schedule />} />
+              <Route path="customers" element={<Customers />} />
+              <Route path="services" element={<Services />} />
+            <Route path="messages" element={<Messages />} />
+            <Route path="sms" element={<SMS />} />
+            <Route path="ai-conversations" element={<AIConversations />} />
+              <Route path="settings" element={<Settings />} />
+
+              {/* Catch-all */}
+              <Route path="*" element={<Navigate to="home" replace />} />
             </Routes>
           </main>
         </div>

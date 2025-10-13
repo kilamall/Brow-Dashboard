@@ -1,0 +1,85 @@
+import * as functions from 'firebase-functions';
+import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+
+try { initializeApp(); } catch {}
+
+/**
+ * Callable function to set admin role for a user
+ * 
+ * SECURITY: This is a one-time setup function. 
+ * Deploy it, call it once to set your admin, then remove/comment out before final deployment!
+ * 
+ * Usage from browser console (when logged in):
+ * ```
+ * const setAdmin = firebase.functions().httpsCallable('setAdminRole');
+ * setAdmin({ email: 'your@email.com' }).then(r => console.log(r.data));
+ * ```
+ */
+export const setAdminRole = functions.https.onCall(async (data, context) => {
+  // For initial setup, allow anyone to call this
+  // ⚠️ REMOVE THIS FUNCTION AFTER SETTING UP YOUR FIRST ADMIN!
+  
+  const { email } = data;
+  
+  if (!email) {
+    throw new functions.https.HttpsError('invalid-argument', 'Email is required');
+  }
+  
+  try {
+    const auth = getAuth();
+    const user = await auth.getUserByEmail(email);
+    await auth.setCustomUserClaims(user.uid, { role: 'admin' });
+    
+    return {
+      success: true,
+      message: `Successfully set admin role for ${email}`,
+      uid: user.uid
+    };
+  } catch (error: any) {
+    throw new functions.https.HttpsError('internal', error.message);
+  }
+});
+
+/**
+ * Alternative: HTTP endpoint (easier to call with curl)
+ * 
+ * Usage:
+ * curl -X POST https://us-central1-bueno-brows-7cce7.cloudfunctions.net/setAdminRoleHTTP \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"email":"regina@buenobrows.com"}'
+ */
+export const setAdminRoleHTTP = functions.https.onRequest(async (req, res) => {
+  // Enable CORS
+  res.set('Access-Control-Allow-Origin', '*');
+  
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).send('');
+    return;
+  }
+  
+  const { email } = req.body;
+  
+  if (!email) {
+    res.status(400).json({ error: 'Email is required' });
+    return;
+  }
+  
+  try {
+    const auth = getAuth();
+    const user = await auth.getUserByEmail(email);
+    await auth.setCustomUserClaims(user.uid, { role: 'admin' });
+    
+    res.json({
+      success: true,
+      message: `Successfully set admin role for ${email}`,
+      uid: user.uid,
+      warning: '⚠️ Remove this function after setup!'
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+

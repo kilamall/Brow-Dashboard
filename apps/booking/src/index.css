@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Globals */
+html, body, #root { height: 100%; }
+body {
+  @apply bg-cream text-slate-800 antialiased;
+}

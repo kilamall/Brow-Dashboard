@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { initFirebase } from '@shared/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
-import type { Appointment, Service } from '@shared/types';
+import type { Appointment, Service } from '@buenobrows/shared/types';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
 import {
   addMonths,
@@ -14,9 +14,8 @@ import {
   startOfWeek,
 } from 'date-fns';
 
-const { db } = initFirebase();
-
 export default function Schedule() {
+  const { db } = useFirebase();
   const [month, setMonth] = useState<Date>(() => new Date()); // current visible month
 
   // Build grid range (start Sunday..Sat end) covering the current month
@@ -37,7 +36,7 @@ export default function Schedule() {
       snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
       setAppts(rows);
     });
-  }, [gridStart, gridEnd]);
+  }, [gridStart, gridEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Services map for names
   const [services, setServices] = useState<Record<string, Service>>({});
@@ -48,13 +47,13 @@ export default function Schedule() {
       snap.forEach((d) => (map[d.id] = { id: d.id, ...(d.data() as any) }));
       setServices(map);
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const days: Date[] = useMemo(() => {
     const list: Date[] = [];
     for (let d = new Date(gridStart); d <= gridEnd; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) list.push(new Date(d));
     return list;
-  }, [gridStart, gridEnd]);
+  }, [gridStart, gridEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [openAdd, setOpenAdd] = useState<{ open: boolean; date: Date | null }>({ open: false, date: null });

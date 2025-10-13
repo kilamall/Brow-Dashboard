@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { initFirebase } from '@shared/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import {
   watchAnalyticsTargets,
   setAnalyticsTargets,
   watchBusinessHours,
   setBusinessHours,
   watchAppointmentsByDay
-} from '@shared/firestoreActions';
-import type { AnalyticsTargets, BusinessHours, Appointment } from '@shared/types';
-import { availableSlotsForDay } from '@shared/slotUtils';
+} from '@buenobrows/shared/firestoreActions';
+import type { AnalyticsTargets, BusinessHours, Appointment } from '@buenobrows/shared/types';
+import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { format, parseISO } from 'date-fns';
 
-const { db } = initFirebase();
 
 export default function Settings() {
+  const { db } = useFirebase();
   const [targets, setTargetsState] = useState<AnalyticsTargets | null>(null);
   const [bh, setBhState] = useState<BusinessHours | null>(null);
 

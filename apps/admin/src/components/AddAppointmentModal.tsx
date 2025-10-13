@@ -1,21 +1,21 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
-import { initFirebase } from '@shared/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import {
   createAppointmentTx,
   E_OVERLAP,
   findCustomerByEmail,
   watchBusinessHours,
   watchServices
-} from '@shared/firestoreActions';
-import type { Appointment, BusinessHours, Customer, Service } from '@shared/types';
-import { availableSlotsForDay } from '@shared/slotUtils';
+} from '@buenobrows/shared/firestoreActions';
+import type { Appointment, BusinessHours, Customer, Service } from '@buenobrows/shared/types';
+import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { collection, getDocs, limit, query, where, type Firestore } from 'firebase/firestore';
 
-const { db } = initFirebase();
 
 export default function AddAppointmentModal({ open, onClose, date, onCreated }: { open: boolean; onClose: () => void; date: Date; onCreated?: (id: string) => void; }) {
+  const { db } = useFirebase();
   // Data
   const [services, setServices] = useState<Service[]>([]);
   const [bh, setBh] = useState<BusinessHours | null>(null);

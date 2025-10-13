@@ -1,9 +1,9 @@
-import { initFirebase } from '../../../../packages/shared/src/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { signOut } from 'firebase/auth';
 
-const { auth } = initFirebase();
 
 export default function Header(){
+  const { auth } = useFirebase();
   return (
     <header className="flex items-center justify-between border-b bg-white px-6 py-3">
       <h1 className="font-serif text-xl text-slate-800">Dashboard</h1>

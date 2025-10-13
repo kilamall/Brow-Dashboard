@@ -3,22 +3,21 @@
   "private": true,
   "packageManager": "pnpm@9.6.0",
   "scripts": {
-    "dev:admin": "pnpm --filter @bueno/admin dev",
-    "dev:booking": "pnpm --filter @bueno/booking dev",
+    "dev:admin": "pnpm --filter @buenobrows/admin dev",
+    "dev:booking": "pnpm --filter @buenobrows/booking dev",
+    "dev:legacy": "pnpm --filter @bueno/legacy dev",
     "build": "pnpm -r build",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "pnpm -r format"
   },
   "workspaces": [
     "apps/admin",
     "apps/booking",
+    "apps/legacy",
     "packages/shared"
   ],
   "dependencies": {
-    "@headlessui/react": "^2.2.7",
-    "@types/react-router-dom": "^5.3.3",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "react-router-dom": "^7.8.2"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.10",
@@ -27,6 +26,9 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
     "tailwindcss": "^4.1.12",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "eslint": "^9.11.1",
+    "eslint-plugin-react": "^7.36.1",
+    "prettier": "^3.3.3"
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { initFirebase } from '@shared/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
-import type { Appointment, Service } from '@shared/types';
+import type { Appointment, Service } from '@buenobrows/shared/types';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
 import {
   addMonths,
@@ -14,9 +14,9 @@ import {
   startOfWeek,
 } from 'date-fns';
 
-const { db } = initFirebase();
 
 export default function Schedule() {
+  const { db } = useFirebase();
   const [month, setMonth] = useState<Date>(() => new Date()); // current visible month
 
   // Build grid range (start Sunday..Sat end) covering the current month

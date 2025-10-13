@@ -1,14 +1,13 @@
 import { PropsWithChildren, useEffect, useState } from 'react';
-import { initFirebase } from '../../../../packages/shared/src/firebase';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
-
-const { auth } = initFirebase();
 
 type State = 'loading' | 'authed' | 'unauthed' | 'restricted';
 
 export default function AuthGate({ children }: PropsWithChildren) {
   const [state, setState] = useState<State>('loading');
   const [err, setErr] = useState('');
+  const { auth } = useFirebase();
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -36,6 +35,8 @@ export default function AuthGate({ children }: PropsWithChildren) {
 function SignIn({ error, onError }: { error?: string; onError: (e: string) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const { auth } = useFirebase();
+  
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
