@@ -25,12 +25,24 @@ export type CreateHoldInput = {
 
 export type FinalizeHoldInput = {
   holdId: string;
+  customerId: string;         // required; the customer document ID
   customer: { name?: string; email?: string; phone?: string };
   price?: number;             // optional; server will coerce to service price if mismatched
   autoConfirm?: boolean;      // default true
 };
 
 export type FinalizeHoldResult = { appointmentId: string };
+
+export type FindOrCreateCustomerInput = {
+  email: string;
+  name?: string;
+  phone?: string;
+};
+
+export type FindOrCreateCustomerResult = {
+  customerId: string;
+  isNew: boolean;
+};
 
 // -------------- internals --------------
 function getFns() {
@@ -82,6 +94,16 @@ export async function extendHoldClient(holdId: string, extraSeconds = 90): Promi
     const fn = httpsCallable(getFns(), 'extendHold');
     const res = await fn({ holdId, extraSeconds });
     return res.data as { ok: true };
+  } catch (e: any) {
+    throw mapError(e);
+  }
+}
+
+export async function findOrCreateCustomerClient(input: FindOrCreateCustomerInput): Promise<FindOrCreateCustomerResult> {
+  try {
+    const fn = httpsCallable(getFns(), 'findOrCreateCustomer');
+    const res = await fn(input);
+    return res.data as FindOrCreateCustomerResult;
   } catch (e: any) {
     throw mapError(e);
   }

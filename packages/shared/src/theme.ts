@@ -3,8 +3,14 @@ export const theme = {
 colors: {
 cream: '#FAF6EF',
 terracotta: {
-DEFAULT: '#C96A3D',
-dark: '#A8542D'
+DEFAULT: '#ffcc33',
+dark: '#e6b829'
+},
+// Branding colors
+brand: {
+bueno: '#ffbd59',
+brows: '#D1B6A4',
+outline: '#804d00'
 },
 gold: '#D8A14A',
 slate: {
@@ -14,7 +20,9 @@ slate: {
 },
 typography: {
 headingSerif: 'Cormorant Garamond, ui-serif, Georgia, serif',
-bodySans: 'Inter, ui-sans-serif, system-ui, sans-serif'
+bodySans: 'Inter, ui-sans-serif, system-ui, sans-serif',
+brandBueno: 'Rosella Solid, cursive',
+brandBrows: 'Bookmania, serif'
 },
 radius: {
 card: '1rem'

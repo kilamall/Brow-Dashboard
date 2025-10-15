@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
+import { onSnapshot, collection, query, where, orderBy, updateDoc, doc } from 'firebase/firestore';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
+import AppointmentDetailModal from '@/components/AppointmentDetailModal';
+import EditAppointmentModal from '@/components/EditAppointmentModal';
 import {
   addMonths,
   endOfMonth,
@@ -57,6 +59,8 @@ export default function Schedule() {
 
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [openAdd, setOpenAdd] = useState<{ open: boolean; date: Date | null }>({ open: false, date: null });
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
 
   return (
     <div className="grid gap-4">
@@ -99,7 +103,14 @@ export default function Schedule() {
               {/* small list preview */}
               <div className="px-2 pb-2 space-y-1">
                 {todaysAppts.slice(0, 3).map((a) => (
-                  <div key={a.id} className="text-[11px] truncate border rounded px-1 py-0.5">
+                  <div 
+                    key={a.id} 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedAppointment(a);
+                    }}
+                    className="text-[11px] truncate border rounded px-1 py-0.5 cursor-pointer hover:bg-slate-100 transition-colors"
+                  >
                     {format(new Date(a.start), 'h:mma')} · {services[a.serviceId]?.name || 'Service'}
                   </div>
                 ))}
@@ -109,13 +120,39 @@ export default function Schedule() {
               </div>
               {/* Hover popover */}
               {hoverDate && isSameDay(hoverDate, d) && todaysAppts.length > 0 && (
-                <div className="absolute z-10 left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border rounded-xl shadow-lg p-2">
-                  <div className="text-xs font-medium mb-1">{format(d, 'PP')}</div>
-                  <ul className="max-h-48 overflow-auto space-y-1">
+                <div className="absolute z-10 left-1/2 -translate-x-1/2 top-full mt-1 w-64 bg-white border rounded-xl shadow-lg p-3">
+                  <div className="text-xs font-medium mb-2">{format(d, 'PP')}</div>
+                  <ul className="max-h-48 overflow-auto space-y-2">
                     {todaysAppts.map((a) => (
-                      <li key={a.id} className="text-xs flex justify-between gap-2">
-                        <span className="truncate">{format(new Date(a.start), 'h:mm a')}</span>
-                        <span className="truncate text-right">{services[a.serviceId]?.name || 'Service'}</span>
+                      <li 
+                        key={a.id} 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedAppointment(a);
+                        }}
+                        className="text-xs flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-md hover:bg-slate-100 group cursor-pointer"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{format(new Date(a.start), 'h:mm a')}</div>
+                          <div className="text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                          {a.customerName && (
+                            <div className="text-slate-500 truncate text-[10px]">{a.customerName}</div>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm('Cancel this appointment?')) {
+                              updateDoc(doc(db, 'appointments', a.id), { status: 'cancelled' });
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 p-1"
+                          title="Cancel appointment"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -132,6 +169,28 @@ export default function Schedule() {
         date={openAdd.date || new Date()}
         onClose={() => setOpenAdd({ open: false, date: null })}
         onCreated={() => setOpenAdd({ open: false, date: null })}
+      />
+
+      {/* Appointment Detail Modal */}
+      <AppointmentDetailModal
+        appointment={selectedAppointment}
+        service={selectedAppointment ? services[selectedAppointment.serviceId] : null}
+        onClose={() => setSelectedAppointment(null)}
+        onEdit={() => {
+          setEditingAppointment(selectedAppointment);
+          setSelectedAppointment(null);
+        }}
+      />
+
+      {/* Edit Appointment Modal */}
+      <EditAppointmentModal
+        appointment={editingAppointment}
+        service={editingAppointment ? services[editingAppointment.serviceId] : null}
+        onClose={() => setEditingAppointment(null)}
+        onUpdated={() => {
+          setEditingAppointment(null);
+          // Data will auto-refresh from Firestore listener
+        }}
       />
     </div>
   );

@@ -14,7 +14,7 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
-import type { Appointment, AnalyticsTargets, BusinessHours, Customer, Service } from './types';
+import type { Appointment, AnalyticsTargets, BusinessHours, Customer, Service, BusinessInfo, HomePageContent } from './types';
 
 export const E_OVERLAP = 'E_OVERLAP';
 
@@ -81,6 +81,7 @@ export function watchServices(
 // ========================= Customers =========================
 export async function createCustomer(db: Firestore, input: Partial<Customer>): Promise<string> {
   const ref = input.id ? doc(db, 'customers', input.id) : doc(collection(db, 'customers'));
+  // Use merge: false for new customers to trigger 'create' rule, not 'update' rule
   await setDoc(
     ref,
     {
@@ -92,7 +93,7 @@ export async function createCustomer(db: Firestore, input: Partial<Customer>): P
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
-    { merge: true }
+    { merge: false }
   );
   return ref.id;
 }
@@ -126,23 +127,24 @@ export async function findCustomerByEmail(db: Firestore, email: string): Promise
 
 export function watchCustomers(db: Firestore, term: string | undefined, cb: (rows: Customer[]) => void) {
   const base = collection(db, 'customers');
+  const searchTerm = term?.trim().toLowerCase() || '';
 
-  // Email exact
-  if (term && term.includes('@')) {
-    const byEmail = query(base, where('email', '==', term));
-    return onSnapshot(byEmail, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
-  }
-
-  // Name prefix
-  if (term && term.trim().length >= 2) {
-    const t = term.trim();
-    const byName = query(base, where('name', '>=', t), where('name', '<=', t + '\uf8ff'), orderBy('name', 'asc'), limit(50));
-    return onSnapshot(byName, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
-  }
-
-  // Default list (cap length)
+  // Fetch all customers and filter client-side for case-insensitive search
   const all = query(base, orderBy('name', 'asc'), limit(200));
-  return onSnapshot(all, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
+  return onSnapshot(all, (snap) => {
+    let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Customer);
+    
+    // Case-insensitive filtering
+    if (searchTerm) {
+      customers = customers.filter(c => 
+        c.name?.toLowerCase().includes(searchTerm) ||
+        c.email?.toLowerCase().includes(searchTerm) ||
+        c.phone?.includes(searchTerm)
+      );
+    }
+    
+    cb(customers);
+  });
 }
 
 // ========================= Appointments =========================
@@ -240,10 +242,114 @@ export async function setAnalyticsTargets(db: Firestore, v: AnalyticsTargets) {
 
 export function watchBusinessHours(db: Firestore, cb: (v: BusinessHours) => void) {
   const ref = doc(db, 'settings', 'businessHours');
-  return onSnapshot(ref, (d) => cb((d.data() as any) as BusinessHours));
+  return onSnapshot(ref, (d) => {
+    const data = d.data();
+    
+    if (!data) {
+      // Return default business hours if no data exists
+      cb({
+        timezone: 'America/Los_Angeles',
+        slotInterval: 15,
+        slots: {
+          sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: []
+        }
+      });
+      return;
+    }
+    
+    // Convert Firestore format back to BusinessHours format
+    const businessHours: BusinessHours = {
+      timezone: data.timezone || 'America/Los_Angeles',
+      slotInterval: data.slotInterval || 15,
+      slots: {
+        sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: []
+      }
+    };
+    
+    // Convert Firestore ranges back to array format
+    if (data.slots) {
+      Object.entries(data.slots).forEach(([day, dayData]: [string, any]) => {
+        if (dayData && dayData.ranges && Array.isArray(dayData.ranges)) {
+          businessHours.slots[day as keyof BusinessHours['slots']] = dayData.ranges.map((r: any) => [r.start, r.end] as [string, string]);
+        }
+      });
+    }
+    
+    cb(businessHours);
+  });
 }
 
 export async function setBusinessHours(db: Firestore, v: BusinessHours) {
   const ref = doc(db, 'settings', 'businessHours');
-  await setDoc(ref, { ...v, updatedAt: serverTimestamp() }, { merge: true });
+  
+  // Convert nested arrays to Firestore-compatible format
+  const firestoreData = {
+    timezone: v.timezone,
+    slotInterval: v.slotInterval,
+    slots: Object.fromEntries(
+      Object.entries(v.slots).map(([day, ranges]) => [
+        day,
+        {
+          ranges: ranges.map(([start, end]) => ({ start, end }))
+        }
+      ])
+    ),
+    updatedAt: serverTimestamp()
+  };
+  
+  await setDoc(ref, firestoreData, { merge: true });
+}
+
+// ========================= Business Info =========================
+export function watchBusinessInfo(db: Firestore, cb: (info: BusinessInfo) => void) {
+  const ref = doc(db, 'settings', 'businessInfo');
+  return onSnapshot(ref, (snap) => {
+    if (!snap.exists()) {
+      cb({
+        name: 'BUENO BROWS',
+        address: '315 9th Ave',
+        city: 'San Mateo',
+        state: 'CA',
+        zip: '94401',
+        phone: '(650) 613-8455',
+        email: 'hello@buenobrows.com',
+        instagram: 'buenobrows',
+        tiktok: 'buenobrows'
+      });
+      return;
+    }
+    cb(snap.data() as BusinessInfo);
+  });
+}
+
+export async function setBusinessInfo(db: Firestore, info: BusinessInfo) {
+  const ref = doc(db, 'settings', 'businessInfo');
+  await setDoc(ref, { ...info, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+// ========================= Homepage Content =========================
+export function watchHomePageContent(db: Firestore, cb: (content: HomePageContent) => void) {
+  const ref = doc(db, 'settings', 'homePageContent');
+  return onSnapshot(ref, (snap) => {
+    if (!snap.exists()) {
+      cb({
+        heroTitle: 'Refined. Natural. You.',
+        heroSubtitle: 'Filipino-inspired beauty studio specializing in brows & lashes. Thoughtfully scheduled, never rushed.',
+        ctaPrimary: 'Book now',
+        ctaSecondary: 'See services',
+        aboutText: 'At BUENO BROWS, we believe beauty is personal. Our Filipino-inspired approach combines precision with warmth, creating results that enhance your natural features.',
+        buenoCircleEnabled: true,
+        buenoCircleTitle: 'Join the Bueno Circle',
+        buenoCircleDescription: 'Get 10% off your first appointment and exclusive updates!',
+        buenoCircleDiscount: 10
+      });
+      return;
+    }
+    cb(snap.data() as HomePageContent);
+  });
+}
+
+export async function setHomePageContent(db: Firestore, content: HomePageContent) {
+  const ref = doc(db, 'settings', 'homePageContent');
+  await setDoc(ref, { ...content, updatedAt: serverTimestamp() }, { merge: true });
 }

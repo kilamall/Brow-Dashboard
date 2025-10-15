@@ -12,17 +12,23 @@ const preset: Omit<Config, 'content'> = {
         cream: '#FAF6EF',
         gold: '#D8A14A',
         terracotta: {
-          50: '#F8EAE3',
-          100: '#F1D5C7',
-          200: '#E5B59C',
-          300: '#D99674',
-          400: '#CD784E',
-          500: '#C96A3D', // primary
-          600: '#A8542D', // hover/darken
-          700: '#8F4724',
-          800: '#6F361B',
-          900: '#5A2C16',
-          DEFAULT: '#C96A3D'
+          50: '#fffef7',
+          100: '#fffceb',
+          200: '#fff8d1',
+          300: '#fff2a8',
+          400: '#ffe766',
+          500: '#ffcc33', // primary
+          600: '#e6b829', // hover/darken
+          700: '#cc9922',
+          800: '#b3861e',
+          900: '#99731a',
+          DEFAULT: '#ffcc33'
+        },
+        // Branding colors
+        brand: {
+          bueno: '#ffbd59',
+          brows: '#D1B6A4',
+          outline: '#804d00'
         }
       },
       boxShadow: {
@@ -30,7 +36,9 @@ const preset: Omit<Config, 'content'> = {
       },
       fontFamily: {
         serif: ['"Cormorant Garamond"', 'serif'],
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji']
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'],
+        brandBueno: ['"Rosella Solid"', 'cursive'],
+        brandBrows: ['"Bookmania"', 'serif']
       },
       backgroundImage: {
         // Subtle linen/cloth-esque texture (very light). Use as bg-[image:var(--cloth)] if desired via CSS var.

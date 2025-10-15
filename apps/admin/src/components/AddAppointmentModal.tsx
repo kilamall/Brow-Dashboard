@@ -23,20 +23,53 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
   useEffect(() => watchBusinessHours(db, setBh), []);
 
   // Form
-  const [serviceId, setServiceId] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [customerTerm, setCustomerTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [timeHHMM, setTimeHHMM] = useState('10:00');
-  const [duration, setDuration] = useState<number>(60);
   const [notes, setNotes] = useState('');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    const s = services.find((s) => s.id === serviceId);
-    if (s) setDuration(s.duration);
-  }, [serviceId, services]);
+  const selectedServices = useMemo(
+    () => services.filter((s) => selectedServiceIds.includes(s.id)),
+    [services, selectedServiceIds]
+  );
+  const totalDuration = useMemo(
+    () => selectedServices.reduce((sum, service) => sum + service.duration, 0),
+    [selectedServices]
+  );
+  const totalPrice = useMemo(
+    () => selectedServices.reduce((sum, service) => sum + service.price, 0),
+    [selectedServices]
+  );
+
+  // Group services by category
+  const servicesByCategory = useMemo(() => {
+    const groups: Record<string, Service[]> = {};
+    services.forEach((service) => {
+      const category = service.category || 'Other';
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(service);
+    });
+    return groups;
+  }, [services]);
+
+  const toggleCategory = (category: string) => {
+    setCollapsedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
+  };
 
   // Suggestions for customers (name/email prefix search)
   const [suggestions, setSuggestions] = useState<Customer[]>([]);
@@ -79,7 +112,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
     });
   }, [open, date]);
 
-  const slots = useMemo(() => (bh ? availableSlotsForDay(date, duration, bh, dayAppts) : []), [bh, date, duration, dayAppts]);
+  const slots = useMemo(() => (bh ? availableSlotsForDay(date, totalDuration, bh, dayAppts) : []), [bh, date, totalDuration, dayAppts]);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -87,6 +120,13 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
   async function handleCreate() {
     try {
       setSaving(true); setErr('');
+      
+      // Validate that at least one service is selected
+      if (selectedServiceIds.length === 0) {
+        setErr('Please select at least one service');
+        return;
+      }
+      
       // Resolve customer
       let customerId: string;
       if (selectedCustomer) customerId = selectedCustomer.id;
@@ -104,11 +144,12 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
 
       const id = await createAppointmentTx(db, {
         customerId,
-        serviceId,
+        serviceIds: selectedServiceIds,
+        serviceId: selectedServiceIds[0], // Keep for backward compatibility
         start: start.toISOString(),
-        duration,
+        duration: totalDuration,
         status: 'confirmed',
-        bookedPrice: services.find((s) => s.id === serviceId)?.price ?? 0,
+        bookedPrice: totalPrice,
         notes,
       } as any);
 
@@ -161,15 +202,148 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                     )}
                   </div>
 
-                  {/* Service */}
+                  {/* Services */}
                   <div>
-                    <label className="text-sm text-slate-600">Service</label>
-                    <select className="border rounded-md p-2 w-full" value={serviceId} onChange={(e)=>setServiceId(e.target.value)}>
-                      <option value="">Select service…</option>
-                      {services.map((s)=> (
-                        <option key={s.id} value={s.id}>{s.name} — {s.duration}m · ${s.price.toFixed(2)}</option>
-                      ))}
-                    </select>
+                    <label className="text-sm font-medium text-slate-700 mb-2 block">
+                      Select Services {selectedServices.length > 0 && <span className="text-terracotta">({selectedServices.length} selected)</span>}
+                    </label>
+                    
+                    {/* Service Cards by Category */}
+                    <div className="max-h-64 overflow-y-auto border rounded-lg bg-slate-50">
+                      {Object.entries(servicesByCategory).map(([category, categoryServices]) => {
+                        const isCollapsed = collapsedCategories.has(category);
+                        return (
+                          <div key={category} className="border-b border-slate-200 last:border-b-0">
+                            {/* Category Header */}
+                            <button
+                              type="button"
+                              onClick={() => toggleCategory(category)}
+                              className="w-full px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between hover:bg-slate-200 transition-colors"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
+                                  {category}
+                                </div>
+                                <span className="text-xs bg-slate-300 text-slate-600 px-1.5 py-0.5 rounded-full">
+                                  {categoryServices.length}
+                                </span>
+                              </div>
+                              <svg 
+                                className={`w-3 h-3 text-slate-500 transition-transform ${isCollapsed ? '' : 'rotate-180'}`} 
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+
+                            {/* Category Services */}
+                            {!isCollapsed && (
+                              <div className="p-3 bg-white">
+                                <div className="grid gap-2">
+                                  {categoryServices.map((s) => {
+                                    const isSelected = selectedServiceIds.includes(s.id);
+                                    return (
+                                      <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={() => {
+                                          if (isSelected) {
+                                            setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
+                                          } else {
+                                            setSelectedServiceIds(prev => [...prev, s.id]);
+                                          }
+                                        }}
+                                        className={`
+                                          relative p-3 rounded-lg border-2 text-left transition-all
+                                          ${isSelected 
+                                            ? 'border-terracotta bg-terracotta/5 shadow-sm' 
+                                            : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                                          }
+                                        `}
+                                      >
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="flex-1">
+                                            <div className="font-medium text-slate-800 mb-1">{s.name}</div>
+                                            <div className="flex items-center gap-3 text-xs text-slate-600">
+                                              <span className="flex items-center gap-1">
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                {s.duration} min
+                                              </span>
+                                              <span className="flex items-center gap-1 font-medium text-slate-700">
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                ${s.price.toFixed(2)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          {isSelected && (
+                                            <div className="flex-shrink-0">
+                                              <div className="w-5 h-5 rounded-full bg-terracotta flex items-center justify-center">
+                                                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                </svg>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Selected Services Summary Bar */}
+                    {selectedServices.length > 0 && (
+                      <div className="mt-3 p-3 bg-terracotta/10 border border-terracotta/20 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-slate-700">Selected Services</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedServiceIds([])}
+                            className="text-xs text-slate-500 hover:text-red-600 transition-colors"
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {selectedServices.map((service) => (
+                            <div
+                              key={service.id}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-white rounded-md text-xs border border-slate-200"
+                            >
+                              <span className="font-medium">{service.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedServiceIds(prev => prev.filter(id => id !== service.id))}
+                                className="ml-1 text-slate-400 hover:text-red-600 transition-colors"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-terracotta/20">
+                          <div className="flex items-center gap-4 text-sm">
+                            <span className="text-slate-600">
+                              <span className="font-medium text-slate-700">{totalDuration}</span> minutes
+                            </span>
+                            <span className="text-slate-600">
+                              <span className="font-semibold text-terracotta text-base">${totalPrice.toFixed(2)}</span> total
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Date/time */}
@@ -184,7 +358,17 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                     </div>
                     <div>
                       <label className="text-sm text-slate-600">Duration (min)</label>
-                      <input type="number" min={5} step={5} className="border rounded-md p-2 w-full" value={duration} onChange={(e)=>setDuration(parseInt(e.target.value||'0'))} />
+                      <input 
+                        type="number" 
+                        min={5} 
+                        step={5} 
+                        className="border rounded-md p-2 w-full bg-slate-50" 
+                        value={totalDuration} 
+                        readOnly
+                      />
+                      <div className="text-xs text-slate-500 mt-1">
+                        Auto-calculated from selected services
+                      </div>
                     </div>
                   </div>
 
@@ -193,12 +377,12 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                     <div>
                       <div className="text-xs text-slate-600 mb-1">Available slots</div>
                       <div className="grid grid-cols-4 gap-2">
-                        {availableSlotsForDay(date, duration, bh, dayAppts).slice(0, 16).map((iso)=> (
+                        {availableSlotsForDay(date, totalDuration, bh, dayAppts).slice(0, 16).map((iso)=> (
                           <button key={iso} className="border rounded-md py-1 text-sm hover:bg-cream" onClick={()=> setTimeHHMM(format(parseISO(iso), 'HH:mm'))}>
                             {format(parseISO(iso), 'h:mm a')}
                           </button>
                         ))}
-                        {!availableSlotsForDay(date, duration, bh, dayAppts).length && <div className="text-xs text-slate-500">No slots under business hours.</div>}
+                        {!availableSlotsForDay(date, totalDuration, bh, dayAppts).length && <div className="text-xs text-slate-500">No slots under business hours.</div>}
                       </div>
                     </div>
                   )}
@@ -213,7 +397,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
 
                   <div className="flex justify-end gap-2">
                     <button className="px-4 py-2 rounded-md border" onClick={onClose} disabled={saving}>Cancel</button>
-                    <button className="px-4 py-2 rounded-md bg-terracotta text-white" onClick={handleCreate} disabled={saving || !serviceId}>{saving ? 'Saving…' : 'Create appointment'}</button>
+                    <button className="px-4 py-2 rounded-md bg-terracotta text-white" onClick={handleCreate} disabled={saving || selectedServiceIds.length === 0}>{saving ? 'Saving…' : 'Create appointment'}</button>
                   </div>
                 </div>
               </Dialog.Panel>

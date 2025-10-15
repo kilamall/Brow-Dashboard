@@ -7,9 +7,11 @@ import AnalyticsHome from './AnalyticsHome';        // lives at src/AnalyticsHom
 import Schedule from './pages/Schedule';
 import Customers from './pages/Customers';
 import Services from './pages/Services';
+import Reviews from './pages/Reviews';
 import Messages from './pages/Messages';
 import SMS from './pages/SMS';
 import AIConversations from './pages/AIConversations';
+import SkinAnalyses from './pages/SkinAnalyses';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -32,9 +34,11 @@ export default function App() {
               <Route path="schedule" element={<Schedule />} />
               <Route path="customers" element={<Customers />} />
               <Route path="services" element={<Services />} />
+              <Route path="reviews" element={<Reviews />} />
             <Route path="messages" element={<Messages />} />
             <Route path="sms" element={<SMS />} />
             <Route path="ai-conversations" element={<AIConversations />} />
+            <Route path="skin-analyses" element={<SkinAnalyses />} />
               <Route path="settings" element={<Settings />} />
 
               {/* Catch-all */}

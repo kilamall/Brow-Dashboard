@@ -1,0 +1,50 @@
+rules_version = '2';
+
+// Cloud Storage Security Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             request.auth.token.role == 'admin';
+    }
+    
+    // Hero images - admin upload only
+    match /hero-images/{imageId} {
+      allow read: if true; // Anyone can view
+      allow write: if isAdmin(); // Only admins can upload/delete
+    }
+    
+    // Gallery images - admin upload only
+    match /gallery/{imageId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Service images - admin upload only
+    match /service-images/{imageId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Profile images - users can manage their own
+    match /profile-images/{userId}/{imageId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Skin analysis images - authenticated users ONLY
+    match /skin-analysis/{userId}/{imageId} {
+      allow read: if request.auth != null && 
+                     (request.auth.uid == userId || isAdmin());
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Deny all other paths by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

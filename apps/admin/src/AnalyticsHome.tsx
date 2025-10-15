@@ -3,6 +3,8 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
 import type { AnalyticsTargets, Appointment, Service } from '@buenobrows/shared/types';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isSameMonth, parseISO, differenceInDays, } from 'date-fns';
+import AppointmentDetailModal from '@/components/AppointmentDetailModal';
+import EditAppointmentModal from '@/components/EditAppointmentModal';
 
 type Period = 'day' | 'week' | 'month' | 'year' | 'all';
 
@@ -11,6 +13,8 @@ export default function AnalyticsHome() {
   const [targets, setTargets] = useState<AnalyticsTargets | null>(null);
   const [services, setServices] = useState<Record<string, Service>>({});
   const [appts, setAppts] = useState<Appointment[]>([]);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
 
   // Get memoized Firebase instance
   const { db } = useFirebase();
@@ -108,6 +112,60 @@ export default function AnalyticsHome() {
         <KPI title="Cancelled value" value={fmtCurrency(cancelledValue)} subtitle="Excluded from revenue" />
         <KPI title="Expected COGS" value={fmtCurrency(expectedCogs)} subtitle={`${targets?.defaultCogsRate ?? 0}% of revenue`} className="sm:col-span-2 lg:col-span-1" />
       </section>
+
+      {/* Schedule Snapshot */}
+      <section className="bg-white rounded-xl shadow-soft p-4">
+        <h3 className="font-serif text-xl mb-3">Upcoming Appointments</h3>
+        {appts.filter(a => a.status === 'confirmed').length === 0 ? (
+          <div className="text-slate-500 text-sm">No upcoming appointments for this period.</div>
+        ) : (
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {appts
+              .filter(a => a.status === 'confirmed')
+              .slice(0, 10)
+              .map((a) => (
+                <div 
+                  key={a.id} 
+                  onClick={() => setSelectedAppointment(a)}
+                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm">{format(parseISO(a.start), 'MMM d, h:mm a')}</div>
+                    <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                    {a.customerName && (
+                      <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                    )}
+                  </div>
+                  <div className="text-sm font-semibold text-terracotta">
+                    {fmtCurrency(a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </section>
+
+      {/* Appointment Detail Modal */}
+      <AppointmentDetailModal
+        appointment={selectedAppointment}
+        service={selectedAppointment ? services[selectedAppointment.serviceId] : null}
+        onClose={() => setSelectedAppointment(null)}
+        onEdit={() => {
+          setEditingAppointment(selectedAppointment);
+          setSelectedAppointment(null);
+        }}
+      />
+
+      {/* Edit Appointment Modal */}
+      <EditAppointmentModal
+        appointment={editingAppointment}
+        service={editingAppointment ? services[editingAppointment.serviceId] : null}
+        onClose={() => setEditingAppointment(null)}
+        onUpdated={() => {
+          setEditingAppointment(null);
+          // Data will auto-refresh from Firestore listener
+        }}
+      />
 
       {/* Top services this month */}
       <section className="bg-white rounded-xl shadow-soft p-4">
