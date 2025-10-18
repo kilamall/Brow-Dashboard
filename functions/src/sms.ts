@@ -393,6 +393,12 @@ export const sendSMSToCustomer = onCall(
       throw new HttpsError('unauthenticated', 'Must be authenticated');
     }
     
+    // SECURITY FIX: Require admin role
+    const userToken = req.auth?.token;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+    
     if (!phoneNumber || !message) {
       throw new HttpsError('invalid-argument', 'Missing phone number or message');
     }
@@ -471,6 +477,14 @@ export const getSMSConversation = onCall(
     
     if (!customerId) {
       throw new HttpsError('invalid-argument', 'Missing customer ID');
+    }
+    
+    // SECURITY FIX: Prevent IDOR - only allow access to own data or admin
+    const isAdmin = req.auth?.token?.role === 'admin';
+    const isOwnData = userId === customerId;
+    
+    if (!isAdmin && !isOwnData) {
+      throw new HttpsError('permission-denied', 'Cannot access other customers\' conversations');
     }
     
     try {

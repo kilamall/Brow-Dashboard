@@ -14,7 +14,7 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
-import type { Appointment, AnalyticsTargets, BusinessHours, Customer, Service, BusinessInfo, HomePageContent } from './types';
+import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, BusinessInfo, HomePageContent } from './types';
 
 export const E_OVERLAP = 'E_OVERLAP';
 
@@ -69,9 +69,10 @@ export function watchServices(
   cb: (rows: Service[]) => void
 ) {
   const base = collection(db, 'services');
+  // Limit services query to 100 (most businesses have < 50 services)
   const qy = opts?.activeOnly
-    ? query(base, where('active', '==', true), orderBy('name', 'asc'))
-    : query(base, orderBy('name', 'asc'));
+    ? query(base, where('active', '==', true), orderBy('name', 'asc'), limit(100))
+    : query(base, orderBy('name', 'asc'), limit(100));
   return onSnapshot(qy, (snap) => {
     const rows: Service[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
     cb(rows);
@@ -89,7 +90,7 @@ export async function createCustomer(db: Firestore, input: Partial<Customer>): P
       email: input.email || null,
       phone: input.phone || null,
       notes: input.notes || null,
-      status: input.status || 'approved',
+      status: input.status || 'pending',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
@@ -125,12 +126,21 @@ export async function findCustomerByEmail(db: Firestore, email: string): Promise
   return { id: d.id, ...(d.data() as any) } as Customer;
 }
 
+export async function findCustomerByPhone(db: Firestore, phone: string): Promise<Customer | null> {
+  const qy = query(collection(db, 'customers'), where('phone', '==', phone), limit(1));
+  const snap = await getDocs(qy);
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...(d.data() as any) } as Customer;
+}
+
 export function watchCustomers(db: Firestore, term: string | undefined, cb: (rows: Customer[]) => void) {
   const base = collection(db, 'customers');
   const searchTerm = term?.trim().toLowerCase() || '';
 
-  // Fetch all customers and filter client-side for case-insensitive search
-  const all = query(base, orderBy('name', 'asc'), limit(200));
+  // Fetch limited customers and filter client-side for case-insensitive search
+  // Limit to 500 to reduce read costs (configurable based on needs)
+  const all = query(base, orderBy('name', 'asc'), limit(500));
   return onSnapshot(all, (snap) => {
     let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Customer);
     
@@ -149,7 +159,8 @@ export function watchCustomers(db: Firestore, term: string | undefined, cb: (row
 
 // ========================= Appointments =========================
 export async function listAppointmentsInRange(db: Firestore, startISO: string, endISO: string): Promise<Appointment[]> {
-  const qy = query(collection(db, 'appointments'), where('start', '>=', startISO), where('start', '<', endISO), orderBy('start', 'asc'));
+  // Limit appointment queries to 1000 (prevents excessive reads on large date ranges)
+  const qy = query(collection(db, 'appointments'), where('start', '>=', startISO), where('start', '<', endISO), orderBy('start', 'asc'), limit(1000));
   const snap = await getDocs(qy);
   const out: Appointment[] = [];
   snap.forEach((d) => {
@@ -162,7 +173,8 @@ export async function listAppointmentsInRange(db: Firestore, startISO: string, e
 export function watchAppointmentsByDay(db: Firestore, day: Date, cb: (rows: Appointment[]) => void) {
   const start = new Date(day); start.setHours(0, 0, 0, 0);
   const end = new Date(day); end.setHours(23, 59, 59, 999);
-  const qy = query(collection(db, 'appointments'), where('start', '>=', start.toISOString()), where('start', '<=', end.toISOString()), orderBy('start', 'asc'));
+  // Limit daily appointments to 200 (more than enough for a single day)
+  const qy = query(collection(db, 'appointments'), where('start', '>=', start.toISOString()), where('start', '<=', end.toISOString()), orderBy('start', 'asc'), limit(200));
   return onSnapshot(qy, (snap) => {
     const out: Appointment[] = [];
     snap.forEach((d) => {
@@ -170,6 +182,16 @@ export function watchAppointmentsByDay(db: Firestore, day: Date, cb: (rows: Appo
       if (a.status !== 'cancelled') out.push(a);
     });
     cb(out);
+  }, (error) => {
+    // Handle permission errors gracefully - if user doesn't have permission, return empty array
+    console.warn('Error watching appointments:', error);
+    if (error.code === 'permission-denied') {
+      console.log('Permission denied for appointments - returning empty array for availability calculation');
+      cb([]);
+    } else {
+      // For other errors, still return empty array to prevent UI breaking
+      cb([]);
+    }
   });
 }
 
@@ -216,7 +238,7 @@ export async function createAppointmentTx(
       serviceId: input.serviceId,
       start: startISO,
       duration: input.duration,
-      status: input.status || 'confirmed',
+      status: input.status || 'pending',
       notes: input.notes || null,
       bookedPrice: input.bookedPrice ?? null,
       autoConfirm: (input as any).autoConfirm ?? false,
@@ -266,11 +288,30 @@ export function watchBusinessHours(db: Firestore, cb: (v: BusinessHours) => void
       }
     };
     
-    // Convert Firestore ranges back to array format
+    // Handle new format (with slots and ranges)
     if (data.slots) {
       Object.entries(data.slots).forEach(([day, dayData]: [string, any]) => {
         if (dayData && dayData.ranges && Array.isArray(dayData.ranges)) {
           businessHours.slots[day as keyof BusinessHours['slots']] = dayData.ranges.map((r: any) => [r.start, r.end] as [string, string]);
+        }
+      });
+    }
+    // Handle old format (with monday, tuesday, etc.)
+    else if (data.monday !== undefined || data.tuesday !== undefined) {
+      const dayMapping = {
+        monday: 'mon',
+        tuesday: 'tue',
+        wednesday: 'wed',
+        thursday: 'thu',
+        friday: 'fri',
+        saturday: 'sat',
+        sunday: 'sun'
+      };
+      
+      Object.entries(dayMapping).forEach(([oldDay, newDay]) => {
+        const dayData = data[oldDay];
+        if (dayData && dayData.open && dayData.close) {
+          businessHours.slots[newDay as keyof BusinessHours['slots']] = [[dayData.open, dayData.close]];
         }
       });
     }
@@ -352,4 +393,70 @@ export function watchHomePageContent(db: Firestore, cb: (content: HomePageConten
 export async function setHomePageContent(db: Firestore, content: HomePageContent) {
   const ref = doc(db, 'settings', 'homePageContent');
   await setDoc(ref, { ...content, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+// ========================= Appointment Edit Requests =========================
+
+export async function createAppointmentEditRequest(
+  db: Firestore,
+  input: Omit<AppointmentEditRequest, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  const ref = doc(collection(db, 'appointmentEditRequests'));
+  await setDoc(ref, {
+    ...input,
+    status: 'pending',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateAppointmentEditRequest(
+  db: Firestore,
+  id: string,
+  updates: Partial<AppointmentEditRequest>
+): Promise<void> {
+  const ref = doc(db, 'appointmentEditRequests', id);
+  await updateDoc(ref, {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function watchAppointmentEditRequests(
+  db: Firestore,
+  cb: (requests: AppointmentEditRequest[]) => void
+): () => void {
+  const q = query(
+    collection(db, 'appointmentEditRequests'),
+    orderBy('createdAt', 'desc')
+  );
+  
+  return onSnapshot(q, (snap) => {
+    const requests: AppointmentEditRequest[] = [];
+    snap.forEach((d) => {
+      requests.push({ id: d.id, ...(d.data() as any) });
+    });
+    cb(requests);
+  });
+}
+
+export function watchAppointmentEditRequestsByCustomer(
+  db: Firestore,
+  customerId: string,
+  cb: (requests: AppointmentEditRequest[]) => void
+): () => void {
+  const q = query(
+    collection(db, 'appointmentEditRequests'),
+    where('customerId', '==', customerId),
+    orderBy('createdAt', 'desc')
+  );
+  
+  return onSnapshot(q, (snap) => {
+    const requests: AppointmentEditRequest[] = [];
+    snap.forEach((d) => {
+      requests.push({ id: d.id, ...(d.data() as any) });
+    });
+    cb(requests);
+  });
 }

@@ -65,7 +65,7 @@ export async function createOrUpdateCustomer(customer) {
     name: (customer.name || '').trim(),
     email: customer.email || '',
     phone: customer.phone || '',
-    status: customer.status || 'approved',
+    status: customer.status || 'pending',
     notes: customer.notes || '',
     updatedAt: serverTimestamp(),
   };

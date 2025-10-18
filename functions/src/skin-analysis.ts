@@ -1,15 +1,22 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { defineSecret } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import * as crypto from 'crypto';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
 const storage = getStorage();
 
 // Gemini AI Configuration
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
+const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent';
+
+// Cache configuration
+const CACHE_COLLECTION = 'ai_analysis_cache';
+const CACHE_TTL_DAYS = 90; // Cache results for 90 days
 
 // Business services for recommendations
 const SERVICES = [
@@ -25,14 +32,46 @@ const SERVICES = [
 // Convert image URL to base64
 async function imageUrlToBase64(imageUrl: string): Promise<string> {
   try {
+    console.log('Processing image URL:', imageUrl);
+    
     // If it's a Firebase Storage URL, get it directly from storage
     if (imageUrl.includes('firebasestorage.googleapis.com')) {
       // Extract the path from the URL
       const url = new URL(imageUrl);
-      const pathMatch = url.pathname.match(/\/o\/(.+?)\?/);
-      if (!pathMatch) throw new Error('Invalid Firebase Storage URL');
+      let filePath: string;
       
-      const filePath = decodeURIComponent(pathMatch[1]);
+      console.log('URL pathname:', url.pathname);
+      
+      // Try to match /o/ format first (new format)
+      const oPathMatch = url.pathname.match(/\/o\/(.+?)(?:\?|$)/);
+      if (oPathMatch) {
+        filePath = decodeURIComponent(oPathMatch[1]);
+        console.log('Matched /o/ format, filePath:', filePath);
+      } else {
+        // Try to match /v0/b/{bucket}/o/{path} format (old format)
+        const vPathMatch = url.pathname.match(/\/v0\/b\/[^/]+\/o\/(.+?)(?:\?|$)/);
+        if (vPathMatch) {
+          filePath = decodeURIComponent(vPathMatch[1]);
+          console.log('Matched /v0/b/ format, filePath:', filePath);
+        } else {
+          // Try to match /b/{bucket}/o/{path} format (alternative format)
+          const bPathMatch = url.pathname.match(/\/b\/[^/]+\/o\/(.+?)(?:\?|$)/);
+          if (bPathMatch) {
+            filePath = decodeURIComponent(bPathMatch[1]);
+            console.log('Matched /b/ format, filePath:', filePath);
+          } else {
+            // Last resort: just fetch the URL directly
+            console.log('Could not parse storage path, fetching directly:', imageUrl);
+            const response = await fetch(imageUrl);
+            if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            return buffer.toString('base64');
+          }
+        }
+      }
+      
+      console.log('Downloading from storage path:', filePath);
       const bucket = storage.bucket();
       const file = bucket.file(filePath);
       
@@ -41,6 +80,7 @@ async function imageUrlToBase64(imageUrl: string): Promise<string> {
     }
     
     // For other URLs, fetch directly
+    console.log('Fetching non-Firebase URL directly:', imageUrl);
     const response = await fetch(imageUrl);
     if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
     
@@ -53,9 +93,68 @@ async function imageUrlToBase64(imageUrl: string): Promise<string> {
   }
 }
 
+// Calculate image hash for caching
+function calculateImageHash(imageBase64: string, analysisType: string): string {
+  const hash = crypto.createHash('sha256');
+  hash.update(imageBase64 + analysisType);
+  return hash.digest('hex');
+}
+
+// Check cache for existing analysis
+async function checkCache(imageHash: string): Promise<any | null> {
+  try {
+    const cacheDoc = await db.collection(CACHE_COLLECTION).doc(imageHash).get();
+    
+    if (!cacheDoc.exists) {
+      return null;
+    }
+    
+    const cacheData = cacheDoc.data();
+    if (!cacheData) {
+      return null;
+    }
+    
+    // Check if cache is still valid
+    const cachedAt = cacheData.cachedAt?.toDate();
+    if (!cachedAt) {
+      return null;
+    }
+    
+    const now = new Date();
+    const ageInDays = (now.getTime() - cachedAt.getTime()) / (1000 * 60 * 60 * 24);
+    
+    if (ageInDays > CACHE_TTL_DAYS) {
+      // Cache expired, delete it
+      await db.collection(CACHE_COLLECTION).doc(imageHash).delete();
+      return null;
+    }
+    
+    console.log(`Cache hit for image hash: ${imageHash} (${ageInDays.toFixed(1)} days old)`);
+    return cacheData.analysis;
+  } catch (error) {
+    console.error('Error checking cache:', error);
+    return null;
+  }
+}
+
+// Save analysis to cache
+async function saveToCache(imageHash: string, analysis: any): Promise<void> {
+  try {
+    await db.collection(CACHE_COLLECTION).doc(imageHash).set({
+      analysis,
+      cachedAt: new Date(),
+      imageHash,
+    });
+    console.log(`Analysis cached with hash: ${imageHash}`);
+  } catch (error) {
+    console.error('Error saving to cache:', error);
+    // Don't throw error - caching failure shouldn't break the analysis
+  }
+}
+
 // Call Gemini Vision API
-async function callGeminiVision(imageBase64: string, prompt: string): Promise<string> {
-  if (!GEMINI_API_KEY) {
+async function callGeminiVision(imageBase64: string, prompt: string, apiKey: string): Promise<string> {
+  if (!apiKey) {
     throw new HttpsError('failed-precondition', 'Gemini API key not configured');
   }
 
@@ -80,7 +179,7 @@ async function callGeminiVision(imageBase64: string, prompt: string): Promise<st
       }
     };
 
-    const response = await fetch(`${GEMINI_VISION_API_URL}?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`${GEMINI_VISION_API_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -120,11 +219,31 @@ function parseAIResponse(response: string): any {
 }
 
 // Analyze skin photo
-export const analyzeSkinPhoto = onCall(async (request) => {
+export const analyzeSkinPhoto = onCall(
+  { secrets: [geminiApiKey] },
+  async (request) => {
+  // SECURITY FIX: Require authentication
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+  
+  const userId = request.auth.uid;
+  const apiKey = geminiApiKey.value();
   const { analysisId, imageUrl, analysisType } = request.data;
 
   if (!analysisId || !imageUrl) {
     throw new HttpsError('invalid-argument', 'analysisId and imageUrl are required');
+  }
+
+  // Verify the analysis document exists and belongs to this user
+  const analysisDoc = await db.collection('skinAnalyses').doc(analysisId).get();
+  if (!analysisDoc.exists) {
+    throw new HttpsError('not-found', 'Analysis document not found');
+  }
+  
+  const analysisData = analysisDoc.data();
+  if (analysisData?.customerId !== userId) {
+    throw new HttpsError('permission-denied', 'You do not have permission to analyze this document');
   }
 
   try {
@@ -132,6 +251,29 @@ export const analyzeSkinPhoto = onCall(async (request) => {
 
     // Convert image to base64
     const imageBase64 = await imageUrlToBase64(imageUrl);
+    
+    // Calculate image hash for caching
+    const imageHash = calculateImageHash(imageBase64, 'skin');
+    
+    // Check cache first
+    const cachedAnalysis = await checkCache(imageHash);
+    if (cachedAnalysis) {
+      console.log('Using cached analysis for:', analysisId);
+      
+      // Update Firestore with cached analysis
+      await db.collection('skinAnalyses').doc(analysisId).update({
+        analysis: cachedAnalysis,
+        status: 'completed',
+        fromCache: true,
+        updatedAt: new Date().toISOString(),
+      });
+      
+      return {
+        success: true,
+        analysis: cachedAnalysis,
+        fromCache: true,
+      };
+    }
 
     // Create detailed prompt for skin analysis
     const prompt = `You are an expert aesthetician and makeup artist analyzing a client's facial skin. Analyze this photo and provide a comprehensive assessment in JSON format.
@@ -195,13 +337,17 @@ Return your analysis in this EXACT JSON format:
 }`;
 
     // Get AI analysis
-    const aiResponse = await callGeminiVision(imageBase64, prompt);
+    const aiResponse = await callGeminiVision(imageBase64, prompt, apiKey);
     const analysis = parseAIResponse(aiResponse);
+    
+    // Save to cache for future use
+    await saveToCache(imageHash, analysis);
 
     // Update Firestore with the analysis
     await db.collection('skinAnalyses').doc(analysisId).update({
       analysis,
       status: 'completed',
+      fromCache: false,
       updatedAt: new Date().toISOString(),
     });
 
@@ -210,6 +356,7 @@ Return your analysis in this EXACT JSON format:
     return {
       success: true,
       analysis,
+      fromCache: false,
     };
   } catch (error: any) {
     console.error('Error in analyzeSkinPhoto:', error);
@@ -230,11 +377,31 @@ Return your analysis in this EXACT JSON format:
 });
 
 // Analyze skincare products
-export const analyzeSkinCareProducts = onCall(async (request) => {
+export const analyzeSkinCareProducts = onCall(
+  { secrets: [geminiApiKey] },
+  async (request) => {
+  // SECURITY FIX: Require authentication
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+  
+  const userId = request.auth.uid;
+  const apiKey = geminiApiKey.value();
   const { analysisId, imageUrl } = request.data;
 
   if (!analysisId || !imageUrl) {
     throw new HttpsError('invalid-argument', 'analysisId and imageUrl are required');
+  }
+
+  // Verify the analysis document exists and belongs to this user
+  const analysisDoc = await db.collection('skinAnalyses').doc(analysisId).get();
+  if (!analysisDoc.exists) {
+    throw new HttpsError('not-found', 'Analysis document not found');
+  }
+  
+  const analysisData = analysisDoc.data();
+  if (analysisData?.customerId !== userId) {
+    throw new HttpsError('permission-denied', 'You do not have permission to analyze this document');
   }
 
   try {
@@ -242,6 +409,29 @@ export const analyzeSkinCareProducts = onCall(async (request) => {
 
     // Convert image to base64
     const imageBase64 = await imageUrlToBase64(imageUrl);
+    
+    // Calculate image hash for caching
+    const imageHash = calculateImageHash(imageBase64, 'products');
+    
+    // Check cache first
+    const cachedAnalysis = await checkCache(imageHash);
+    if (cachedAnalysis) {
+      console.log('Using cached product analysis for:', analysisId);
+      
+      // Update Firestore with cached analysis
+      await db.collection('skinAnalyses').doc(analysisId).update({
+        analysis: cachedAnalysis,
+        status: 'completed',
+        fromCache: true,
+        updatedAt: new Date().toISOString(),
+      });
+      
+      return {
+        success: true,
+        analysis: cachedAnalysis,
+        fromCache: true,
+      };
+    }
 
     // Create detailed prompt for product analysis
     const prompt = `You are an expert skincare consultant analyzing skincare products. Look at this image of skincare products and provide a detailed analysis in JSON format.
@@ -282,7 +472,7 @@ Return your analysis in this exact JSON format:
 }`;
 
     // Get AI analysis
-    const aiResponse = await callGeminiVision(imageBase64, prompt);
+    const aiResponse = await callGeminiVision(imageBase64, prompt, apiKey);
     const rawAnalysis = parseAIResponse(aiResponse);
 
     // Format for consistent structure
@@ -296,11 +486,15 @@ Return your analysis in this exact JSON format:
       },
       summary: rawAnalysis.summary || 'Analysis completed successfully.',
     };
+    
+    // Save to cache for future use
+    await saveToCache(imageHash, analysis);
 
     // Update Firestore with the analysis
     await db.collection('skinAnalyses').doc(analysisId).update({
       analysis,
       status: 'completed',
+      fromCache: false,
       updatedAt: new Date().toISOString(),
     });
 
@@ -309,6 +503,7 @@ Return your analysis in this exact JSON format:
     return {
       success: true,
       analysis,
+      fromCache: false,
     };
   } catch (error: any) {
     console.error('Error in analyzeSkinCareProducts:', error);
@@ -327,4 +522,102 @@ Return your analysis in this exact JSON format:
     throw new HttpsError('internal', error.message || 'Failed to analyze skincare products');
   }
 });
+
+// Scheduled cleanup function - runs daily at 2 AM
+// Deletes skin analysis images older than 30 days to reduce storage costs
+export const cleanupOldSkinAnalysisImages = onSchedule(
+  {
+    schedule: 'every day 02:00',
+    timeZone: 'America/Los_Angeles',
+    region: 'us-central1',
+  },
+  async (event) => {
+    console.log('Starting cleanup of old skin analysis images...');
+    
+    const RETENTION_DAYS = 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - RETENTION_DAYS);
+    
+    try {
+      // Get all skin analyses older than 30 days
+      const oldAnalyses = await db.collection('skinAnalyses')
+        .where('createdAt', '<', cutoffDate)
+        .get();
+      
+      console.log(`Found ${oldAnalyses.size} old skin analyses to process`);
+      
+      let deletedImages = 0;
+      let deletedDocs = 0;
+      let errors = 0;
+      
+      const bucket = storage.bucket();
+      
+      // Process each old analysis
+      for (const doc of oldAnalyses.docs) {
+        try {
+          const data = doc.data();
+          const imageUrl = data.imageUrl;
+          
+          if (imageUrl && imageUrl.includes('firebasestorage.googleapis.com')) {
+            // Extract file path from URL
+            const url = new URL(imageUrl);
+            const pathMatch = url.pathname.match(/\/o\/(.+?)\?/);
+            
+            if (pathMatch) {
+              const filePath = decodeURIComponent(pathMatch[1]);
+              
+              // Delete image from storage
+              try {
+                await bucket.file(filePath).delete();
+                deletedImages++;
+                console.log(`Deleted image: ${filePath}`);
+              } catch (deleteError: any) {
+                if (deleteError.code === 404) {
+                  console.log(`Image already deleted: ${filePath}`);
+                } else {
+                  console.error(`Error deleting image ${filePath}:`, deleteError);
+                  errors++;
+                }
+              }
+            }
+          }
+          
+          // Delete Firestore document
+          await doc.ref.delete();
+          deletedDocs++;
+          
+        } catch (error) {
+          console.error(`Error processing document ${doc.id}:`, error);
+          errors++;
+        }
+      }
+      
+      console.log(`Cleanup completed:
+        - Deleted ${deletedImages} images from storage
+        - Deleted ${deletedDocs} Firestore documents
+        - Errors: ${errors}
+      `);
+      
+      // Also cleanup expired cache entries
+      const expiredCacheDate = new Date();
+      expiredCacheDate.setDate(expiredCacheDate.getDate() - CACHE_TTL_DAYS);
+      
+      const expiredCache = await db.collection(CACHE_COLLECTION)
+        .where('cachedAt', '<', expiredCacheDate)
+        .get();
+      
+      let deletedCache = 0;
+      for (const doc of expiredCache.docs) {
+        await doc.ref.delete();
+        deletedCache++;
+      }
+      
+      console.log(`Deleted ${deletedCache} expired cache entries`);
+      
+    } catch (error) {
+      console.error('Error in cleanup function:', error);
+      throw error;
+    }
+  }
+);
 

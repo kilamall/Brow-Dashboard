@@ -6,12 +6,14 @@ import Header from './components/Header';
 import AnalyticsHome from './AnalyticsHome';        // lives at src/AnalyticsHome.tsx
 import Schedule from './pages/Schedule';
 import Customers from './pages/Customers';
+import CustomerProfile from './pages/CustomerProfile';
 import Services from './pages/Services';
 import Reviews from './pages/Reviews';
 import Messages from './pages/Messages';
 import SMS from './pages/SMS';
 import AIConversations from './pages/AIConversations';
 import SkinAnalyses from './pages/SkinAnalyses';
+import ConsentForms from './pages/ConsentForms';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -26,23 +28,25 @@ export default function App() {
           <Sidebar />
           <main className="p-6">
             <Routes>
-              {/* Redirect the root of this router to "home" (relative) */}
-              <Route index element={<Navigate to="home" replace />} />
+              {/* Redirect the root to /home */}
+              <Route index element={<Navigate to="/home" replace />} />
 
-              {/* Use relative paths for child routes */}
-              <Route path="home" element={<AnalyticsHome />} />
-              <Route path="schedule" element={<Schedule />} />
-              <Route path="customers" element={<Customers />} />
-              <Route path="services" element={<Services />} />
-              <Route path="reviews" element={<Reviews />} />
-            <Route path="messages" element={<Messages />} />
-            <Route path="sms" element={<SMS />} />
-            <Route path="ai-conversations" element={<AIConversations />} />
-            <Route path="skin-analyses" element={<SkinAnalyses />} />
-              <Route path="settings" element={<Settings />} />
+              {/* Use absolute paths to match Sidebar navigation */}
+              <Route path="/home" element={<AnalyticsHome />} />
+              <Route path="/schedule" element={<Schedule />} />
+              <Route path="/customers" element={<Customers />} />
+              <Route path="/customers/:customerId" element={<CustomerProfile />} />
+              <Route path="/services" element={<Services />} />
+              <Route path="/reviews" element={<Reviews />} />
+              <Route path="/messages" element={<Messages />} />
+              <Route path="/sms" element={<SMS />} />
+              <Route path="/ai-conversations" element={<AIConversations />} />
+              <Route path="/skin-analyses" element={<SkinAnalyses />} />
+              <Route path="/consent-forms" element={<ConsentForms />} />
+              <Route path="/settings" element={<Settings />} />
 
               {/* Catch-all */}
-              <Route path="*" element={<Navigate to="home" replace />} />
+              <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
           </main>
         </div>

@@ -22,8 +22,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
-  const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<'confirmed' | 'pending' | 'cancelled'>('confirmed');
+  const [notes, setNotes] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const selectedServices = useMemo(
@@ -88,8 +88,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   useEffect(() => {
     if (appointment) {
       // Handle both single serviceId and multiple serviceIds
-      if (appointment.serviceIds && Array.isArray(appointment.serviceIds)) {
-        setSelectedServiceIds(appointment.serviceIds);
+      if ((appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds)) {
+        setSelectedServiceIds((appointment as any).serviceIds);
       } else {
         setSelectedServiceIds(appointment.serviceId ? [appointment.serviceId] : []);
       }

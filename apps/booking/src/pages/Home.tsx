@@ -32,29 +32,28 @@ export default function Home() {
   }
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8 md:space-y-12">
       {/* Hero Section */}
-      <section className="grid md:grid-cols-2 gap-8 items-center">
-        <div>
-          <h1 className="font-serif text-4xl text-terracotta mb-3">{content.heroTitle}</h1>
-          <p className="text-slate-600 mb-6">{content.heroSubtitle}</p>
-          <div className="flex gap-3">
-            <Link to="/book" className="bg-terracotta text-white rounded-md px-6 py-3 hover:bg-terracotta/90 transition-colors">
+      <section className="grid md:grid-cols-2 gap-6 md:gap-8 items-center">
+        <div className="order-2 md:order-1">
+          <h1 className="font-serif text-3xl md:text-4xl lg:text-5xl text-terracotta mb-4 leading-tight">{content.heroTitle}</h1>
+          <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">{content.heroSubtitle}</p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Link to="/book" className="bg-terracotta text-white rounded-lg px-6 py-4 hover:bg-terracotta/90 transition-colors text-center font-medium text-base">
               {content.ctaPrimary}
             </Link>
-            <Link to="/services" className="border border-slate-300 rounded-md px-6 py-3 hover:bg-slate-50 transition-colors">
+            <Link to="/services" className="border border-slate-300 rounded-lg px-6 py-4 hover:bg-slate-50 transition-colors text-center font-medium text-base">
               {content.ctaSecondary}
             </Link>
           </div>
-
         </div>
 
         {/* Hero Image */}
-        <div className="relative bg-white rounded-2xl shadow-soft h-96 grid place-items-center overflow-hidden">
+        <div className="relative bg-white rounded-2xl shadow-soft h-80 md:h-96 grid place-items-center overflow-hidden order-1 md:order-2">
           {content.heroImageUrl ? (
             <img src={content.heroImageUrl} alt="BUENO BROWS" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-slate-400">Hero image (TBD)</span>
+            <span className="text-slate-400 text-lg">Hero image (TBD)</span>
           )}
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute -top-3 -left-3 w-24 h-24 rounded-full bg-terracotta/5" />
@@ -65,9 +64,9 @@ export default function Home() {
 
       {/* About Section */}
       {content.aboutText && (
-        <section className="bg-white rounded-xl shadow-soft p-8 text-center">
-          <h2 className="font-serif text-2xl text-terracotta mb-4">Our Story</h2>
-          <p className="text-slate-600 max-w-3xl mx-auto">{content.aboutText}</p>
+        <section className="bg-white rounded-xl shadow-soft p-6 md:p-8 text-center">
+          <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">Our Story</h2>
+          <p className="text-slate-600 max-w-3xl mx-auto text-base md:text-lg leading-relaxed">{content.aboutText}</p>
         </section>
       )}
 
@@ -75,13 +74,13 @@ export default function Home() {
       <section className="bg-white rounded-xl shadow-soft overflow-hidden">
         <div className="grid md:grid-cols-2 gap-0">
           {/* Map */}
-          <div className="h-80 md:h-auto">
+          <div className="h-64 md:h-auto order-2 md:order-1">
             <iframe
               title="Business Location"
-              src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&q=${encodeURIComponent(`${businessInfo.address}, ${businessInfo.city}, ${businessInfo.state} ${businessInfo.zip}`)}`}
+              src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(`${businessInfo.address}, ${businessInfo.city}, ${businessInfo.state} ${businessInfo.zip}`)}`}
               width="100%"
               height="100%"
-              style={{ border: 0, minHeight: '320px' }}
+              style={{ border: 0, minHeight: '256px' }}
               allowFullScreen
               loading="lazy"
               referrerPolicy="no-referrer-when-downgrade"
@@ -89,24 +88,24 @@ export default function Home() {
           </div>
           
           {/* Location Info */}
-          <div className="p-8">
-            <h2 className="font-serif text-2xl text-terracotta mb-6">Visit Us</h2>
+          <div className="p-6 md:p-8 order-1 md:order-2">
+            <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-6">Visit Us</h2>
             
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <h3 className="text-sm font-semibold text-slate-700 mb-1">Address</h3>
-                <p className="text-slate-600">{businessInfo.address}</p>
-                <p className="text-slate-600">{businessInfo.city}, {businessInfo.state} {businessInfo.zip}</p>
+                <h3 className="text-base font-semibold text-slate-700 mb-2">Address</h3>
+                <p className="text-slate-600 text-base">{businessInfo.address}</p>
+                <p className="text-slate-600 text-base">{businessInfo.city}, {businessInfo.state} {businessInfo.zip}</p>
               </div>
               
               <div>
-                <h3 className="text-sm font-semibold text-slate-700 mb-1">Contact</h3>
-                <p className="text-slate-600">
+                <h3 className="text-base font-semibold text-slate-700 mb-2">Contact</h3>
+                <p className="text-slate-600 text-base">
                   <a href={`tel:${businessInfo.phone.replace(/\D/g, '')}`} className="hover:text-terracotta transition-colors">
                     {businessInfo.phone}
                   </a>
                 </p>
-                <p className="text-slate-600">
+                <p className="text-slate-600 text-base">
                   <a href={`mailto:${businessInfo.email}`} className="hover:text-terracotta transition-colors">
                     {businessInfo.email}
                   </a>
@@ -114,14 +113,14 @@ export default function Home() {
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-slate-700 mb-2">Get Directions</h3>
+                <h3 className="text-base font-semibold text-slate-700 mb-3">Get Directions</h3>
                 <a
                   href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${businessInfo.address}, ${businessInfo.city}, ${businessInfo.state} ${businessInfo.zip}`)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-terracotta hover:underline"
+                  className="inline-flex items-center gap-2 text-terracotta hover:underline text-base font-medium"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
                   </svg>
                   Open in Google Maps
@@ -129,18 +128,18 @@ export default function Home() {
               </div>
 
               {(businessInfo.instagram || businessInfo.tiktok || businessInfo.facebook) && (
-                <div className="pt-4 border-t">
-                  <h3 className="text-sm font-semibold text-slate-700 mb-2">Connect With Us</h3>
-                  <div className="flex items-center gap-3">
+                <div className="pt-5 border-t">
+                  <h3 className="text-base font-semibold text-slate-700 mb-3">Connect With Us</h3>
+                  <div className="flex items-center gap-4">
                     {businessInfo.instagram && (
                       <a 
                         href={`https://instagram.com/${businessInfo.instagram}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="bg-slate-100 p-2 rounded-lg text-slate-700 hover:text-white hover:bg-gradient-to-br hover:from-purple-600 hover:to-pink-500 transition-all duration-300"
+                        className="bg-slate-100 p-3 rounded-lg text-slate-700 hover:text-white hover:bg-gradient-to-br hover:from-purple-600 hover:to-pink-500 transition-all duration-300"
                         aria-label="Instagram"
                       >
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
                         </svg>
                       </a>
@@ -150,10 +149,10 @@ export default function Home() {
                         href={`https://tiktok.com/@${businessInfo.tiktok}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="bg-slate-100 p-2 rounded-lg text-slate-700 hover:text-white hover:bg-black transition-all duration-300"
+                        className="bg-slate-100 p-3 rounded-lg text-slate-700 hover:text-white hover:bg-black transition-all duration-300"
                         aria-label="TikTok"
                       >
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/>
                         </svg>
                       </a>
@@ -163,10 +162,10 @@ export default function Home() {
                         href={`https://facebook.com/${businessInfo.facebook}`} 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="bg-slate-100 p-2 rounded-lg text-slate-700 hover:text-white hover:bg-blue-600 transition-all duration-300"
+                        className="bg-slate-100 p-3 rounded-lg text-slate-700 hover:text-white hover:bg-blue-600 transition-all duration-300"
                         aria-label="Facebook"
                       >
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                         </svg>
                       </a>
@@ -182,10 +181,10 @@ export default function Home() {
       {/* Gallery Section */}
       {content.galleryPhotos && content.galleryPhotos.length > 0 && (
         <section>
-          <h2 className="font-serif text-3xl text-center mb-2 text-terracotta">Our Space</h2>
-          <p className="text-center text-slate-600 mb-8">Take a peek inside our beautiful studio</p>
+          <h2 className="font-serif text-2xl md:text-3xl text-center mb-3 text-terracotta">Our Space</h2>
+          <p className="text-center text-slate-600 mb-8 text-base md:text-lg">Take a peek inside our beautiful studio</p>
           
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
             {content.galleryPhotos.map((photo, index) => (
               <div 
                 key={index}
@@ -203,7 +202,7 @@ export default function Home() {
           </div>
 
           {/* Decorative elements */}
-          <div className="relative mt-8 flex justify-center">
+          <div className="relative mt-6 md:mt-8 flex justify-center">
             <div className="flex gap-2">
               <div className="w-2 h-2 rounded-full bg-terracotta/30" />
               <div className="w-2 h-2 rounded-full bg-gold/40" />
@@ -215,10 +214,10 @@ export default function Home() {
 
       {/* Bueno Circle Section */}
       {content.buenoCircleEnabled && (
-        <section className="bg-gradient-to-br from-terracotta/10 to-gold/10 rounded-xl shadow-soft p-8">
+        <section className="bg-gradient-to-br from-terracotta/10 to-gold/10 rounded-xl shadow-soft p-6 md:p-8">
           <div className="max-w-2xl mx-auto text-center">
-            <h2 className="font-serif text-3xl text-terracotta mb-3">{content.buenoCircleTitle}</h2>
-            <p className="text-slate-600 mb-6">{content.buenoCircleDescription}</p>
+            <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">{content.buenoCircleTitle}</h2>
+            <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">{content.buenoCircleDescription}</p>
             
             {!buenoCircleSubmitted ? (
               <form onSubmit={handleBuenoCircleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
@@ -227,19 +226,19 @@ export default function Home() {
                   placeholder="Enter your phone number"
                   value={buenoCirclePhone}
                   onChange={(e) => setBuenoCirclePhone(e.target.value)}
-                  className="flex-1 border border-slate-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  className="flex-1 border border-slate-300 rounded-lg px-4 py-4 focus:ring-2 focus:ring-terracotta focus:border-transparent text-base"
                   required
                 />
                 <button
                   type="submit"
-                  className="bg-terracotta text-white rounded-lg px-6 py-3 hover:bg-terracotta/90 transition-colors whitespace-nowrap"
+                  className="bg-terracotta text-white rounded-lg px-6 py-4 hover:bg-terracotta/90 transition-colors whitespace-nowrap font-medium text-base"
                 >
                   Get {content.buenoCircleDiscount}% Off
                 </button>
               </form>
             ) : (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md mx-auto">
-                <p className="text-green-700 font-medium">🎉 Welcome to the Bueno Circle!</p>
+                <p className="text-green-700 font-medium text-base">🎉 Welcome to the Bueno Circle!</p>
                 <p className="text-green-600 text-sm mt-1">We'll text you your discount code shortly.</p>
               </div>
             )}
@@ -249,10 +248,10 @@ export default function Home() {
 
       {/* Reviews Section */}
       <section id="reviews">
-        <h2 className="font-serif text-3xl text-center mb-8 text-terracotta">What Clients Say</h2>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <h2 className="font-serif text-2xl md:text-3xl text-center mb-6 md:mb-8 text-terracotta">What Clients Say</h2>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-xl shadow-soft p-6">
+            <div key={i} className="bg-white rounded-xl shadow-soft p-5 md:p-6">
               <div className="flex mb-3">
                 {[...Array(5)].map((_, i) => (
                   <svg key={i} className="w-5 h-5 text-gold fill-current" viewBox="0 0 20 20">
@@ -260,13 +259,13 @@ export default function Home() {
                   </svg>
                 ))}
               </div>
-              <p className="text-slate-700 mb-3">"Beautiful, natural results. Booking was easy and I felt cared for."</p>
+              <p className="text-slate-700 mb-3 text-base leading-relaxed">"Beautiful, natural results. Booking was easy and I felt cared for."</p>
               <div className="text-sm text-slate-500">— Happy Client</div>
             </div>
           ))}
         </div>
-        <div className="text-center mt-8">
-          <Link to="/reviews" className="text-terracotta hover:underline">
+        <div className="text-center mt-6 md:mt-8">
+          <Link to="/reviews" className="text-terracotta hover:underline text-base font-medium">
             See all reviews →
           </Link>
         </div>

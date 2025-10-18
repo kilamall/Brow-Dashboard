@@ -134,7 +134,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
         // create a guest/approved customer on the fly if email provided, else name-only
         const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
         const ref = doc(collection(db, 'customers'));
-        await setDoc(ref, { name: name || customerTerm || 'Unnamed', email: email || null, phone: phone || null, status: 'approved', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(ref, { name: name || customerTerm || 'Unnamed', email: email || null, phone: phone || null, status: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
         customerId = ref.id;
       }
 

@@ -1,3 +1,7 @@
+// Service Worker Version - increment this when updating
+const SW_VERSION = '1.0.1';
+console.log(`Service Worker ${SW_VERSION} initializing...`);
+
 // Import Firebase scripts for service worker
 importScripts('https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/11.0.0/firebase-messaging-compat.js');
@@ -14,6 +18,32 @@ firebase.initializeApp({
 
 // Get messaging instance
 const messaging = firebase.messaging();
+
+// Force update when a new service worker is waiting
+self.addEventListener('install', (event) => {
+  console.log(`Service Worker ${SW_VERSION} installed`);
+  // Skip waiting to activate immediately
+  self.skipWaiting();
+});
+
+// Take control of all pages immediately
+self.addEventListener('activate', (event) => {
+  console.log(`Service Worker ${SW_VERSION} activated`);
+  event.waitUntil(
+    // Clear old caches
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          console.log('Deleting cache:', cacheName);
+          return caches.delete(cacheName);
+        })
+      );
+    }).then(() => {
+      // Take control of all pages immediately
+      return self.clients.claim();
+    })
+  );
+});
 
 // Handle background messages
 messaging.onBackgroundMessage((payload) => {
@@ -61,5 +91,13 @@ self.addEventListener('notificationclick', (event) => {
         }
       })
     );
+  }
+});
+
+// Listen for skip waiting message from the app
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.log('Received SKIP_WAITING message, activating new service worker');
+    self.skipWaiting();
   }
 });

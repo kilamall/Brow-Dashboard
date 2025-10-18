@@ -2,6 +2,7 @@ import {
   collection, 
   doc, 
   addDoc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   getDocs, 
@@ -30,6 +31,7 @@ export interface Message {
   type: 'customer' | 'admin';
   appointmentId?: string;
   priority: 'low' | 'medium' | 'high';
+  isAI?: boolean;
 }
 
 export interface Conversation {
@@ -159,25 +161,17 @@ export class MessagingService {
   async updateConversation(customerId: string, message: Partial<Message>): Promise<void> {
     const conversationRef = doc(this.db, 'conversations', customerId);
     
-    await updateDoc(conversationRef, {
+    // Use setDoc with merge to create or update the conversation
+    await setDoc(conversationRef, {
+      customerId,
+      customerName: message.customerName,
+      customerEmail: message.customerEmail,
       lastMessage: message.content,
       lastMessageTime: serverTimestamp(),
-      unreadCount: message.type === 'customer' ? 
-        (await this.getUnreadCount(customerId)) + 1 : 0,
-      status: 'active'
-    }).catch(async () => {
-      // Create conversation if it doesn't exist
-      await addDoc(collection(this.db, 'conversations'), {
-        customerId,
-        customerName: message.customerName,
-        customerEmail: message.customerEmail,
-        lastMessage: message.content,
-        lastMessageTime: serverTimestamp(),
-        unreadCount: message.type === 'customer' ? 1 : 0,
-        status: 'active',
-        appointmentId: message.appointmentId
-      });
-    });
+      unreadCount: message.type === 'customer' ? 1 : 0,
+      status: 'active',
+      ...(message.appointmentId && { appointmentId: message.appointmentId })
+    }, { merge: true });
   }
 
   // Get unread message count for a customer
@@ -221,17 +215,12 @@ export class MessagingService {
   // Save FCM token for a customer
   async saveCustomerToken(customerId: string, token: string): Promise<void> {
     const tokenRef = doc(this.db, 'customer_tokens', customerId);
-    await updateDoc(tokenRef, {
+    await setDoc(tokenRef, {
+      customerId,
       token,
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    }).catch(async () => {
-      await addDoc(collection(this.db, 'customer_tokens'), {
-        customerId,
-        token,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    });
+    }, { merge: true });
   }
 }
 

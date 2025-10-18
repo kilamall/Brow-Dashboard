@@ -1,11 +1,12 @@
-import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 try { initializeApp(); } catch {}
 
-export const updateBusinessHours = functions.https.onRequest(async (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
+export const updateBusinessHours = onRequest(
+  { region: 'us-central1', cors: true },
+  async (req, res) => {
   
   try {
     const db = getFirestore();
@@ -29,5 +30,6 @@ export const updateBusinessHours = functions.https.onRequest(async (req, res) =>
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+  }
+);
 

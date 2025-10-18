@@ -11,4 +11,25 @@ export default defineConfig({
       '@buenobrows/shared': path.resolve(__dirname, '../../packages/shared/src'),
     },
   },
+  build: {
+    // Generate unique file names with content hash
+    rollupOptions: {
+      output: {
+        // Add timestamp to force cache invalidation
+        entryFileNames: `assets/[name]-[hash].js`,
+        chunkFileNames: `assets/[name]-[hash].js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`,
+      },
+    },
+    // Clear output directory before build
+    emptyOutDir: true,
+    // Generate manifest for cache busting
+    manifest: true,
+  },
+  // Disable browser caching in dev mode
+  server: {
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+  },
 });

@@ -1,4 +1,5 @@
 import type { Appointment, BusinessHours } from './types';
+import type { AvailabilitySlot } from './availabilityHelpers';
 
 /**
  * Generate available start-time ISO strings for a given date, duration, and business hours.
@@ -44,4 +45,51 @@ function wallToDate(base: Date, hhmm: string, timeZone: string): Date {
   }).formatToParts(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hh, mm, 0));
   const get = (t: string) => Number(parts.find(p => p.type === t)?.value || '0');
   return new Date(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+}
+
+/**
+ * Generate available slots using availability collection (more efficient, no customer data)
+ */
+export function availableSlotsFromAvailability(
+  date: Date,
+  durationMin: number,
+  bh: BusinessHours,
+  bookedSlots: AvailabilitySlot[]
+): string[] {
+  const tz = bh.timezone || 'America/Los_Angeles';
+  const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()] as keyof BusinessHours['slots'];
+  const ranges = bh.slots[dayKey] || [];
+  const step = Math.max(5, bh.slotInterval || 15);
+
+  const slots: string[] = [];
+  for (const [startHHMM, endHHMM] of ranges) {
+    const start = wallToDate(date, startHHMM, tz);
+    const end = wallToDate(date, endHHMM, tz);
+    for (let t = start.getTime(); t + durationMin * 60_000 <= end.getTime(); t += step * 60_000) {
+      const sIso = new Date(t).toISOString();
+      const eMs = t + durationMin * 60_000;
+      if (!overlapsAvailability(t, eMs, bookedSlots)) slots.push(sIso);
+    }
+  }
+  return slots;
+}
+
+function overlapsAvailability(startMs: number, endMs: number, slots: AvailabilitySlot[]): boolean {
+  for (const slot of slots) {
+    const slotStart = new Date(slot.start).getTime();
+    const slotEnd = new Date(slot.end).getTime();
+    const overlaps = slotStart < endMs && slotEnd > startMs;
+    
+    // Debug logging
+    console.log('Checking overlap:', {
+      slotStart: new Date(slotStart).toISOString(),
+      slotEnd: new Date(slotEnd).toISOString(),
+      startMs: new Date(startMs).toISOString(),
+      endMs: new Date(endMs).toISOString(),
+      overlaps
+    });
+    
+    if (overlaps) return true;
+  }
+  return false;
 }

@@ -1,21 +1,25 @@
 import { useState, useEffect } from 'react';
-import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
-import type { SkinAnalysis } from '@shared/types';
+import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc, updateDoc, getDocs, where } from 'firebase/firestore';
+import type { SkinAnalysis, SkinAnalysisRequest } from '@shared/types';
 
 export default function SkinAnalysesPage() {
   const [analyses, setAnalyses] = useState<SkinAnalysis[]>([]);
+  const [requests, setRequests] = useState<SkinAnalysisRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAnalysis, setSelectedAnalysis] = useState<SkinAnalysis | null>(null);
   const [filter, setFilter] = useState<'all' | 'skin' | 'products'>('all');
+  const [activeTab, setActiveTab] = useState<'analyses' | 'requests'>('analyses');
 
   useEffect(() => {
     const db = getFirestore();
-    const q = query(
+    
+    // Subscribe to analyses
+    const analysesQuery = query(
       collection(db, 'skinAnalyses'),
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeAnalyses = onSnapshot(analysesQuery, (snapshot) => {
       const data = snapshot.docs.map(doc => ({
         ...doc.data(),
         id: doc.id,
@@ -24,7 +28,24 @@ export default function SkinAnalysesPage() {
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Subscribe to requests
+    const requestsQuery = query(
+      collection(db, 'skinAnalysisRequests'),
+      orderBy('requestedAt', 'desc')
+    );
+
+    const unsubscribeRequests = onSnapshot(requestsQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id,
+      })) as SkinAnalysisRequest[];
+      setRequests(data);
+    });
+
+    return () => {
+      unsubscribeAnalyses();
+      unsubscribeRequests();
+    };
   }, []);
 
   const handleDelete = async (id: string) => {
@@ -37,6 +58,74 @@ export default function SkinAnalysesPage() {
     } catch (error) {
       console.error('Error deleting analysis:', error);
       alert('Failed to delete analysis');
+    }
+  };
+
+  const handleApproveRequest = async (request: SkinAnalysisRequest) => {
+    if (!confirm(`Approve skin analysis request for ${request.customerEmail}?\n\nThis will delete any existing analyses for this customer and allow them to create a new one.`)) return;
+
+    try {
+      const db = getFirestore();
+      
+      // Delete any existing analyses for this customer
+      const existingAnalysesQuery = query(
+        collection(db, 'skinAnalyses'),
+        where('customerId', '==', request.customerId)
+      );
+      
+      const snapshot = await getDocs(existingAnalysesQuery);
+      
+      // Delete all existing analyses
+      const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+      
+      if (snapshot.docs.length > 0) {
+        console.log(`Deleted ${snapshot.docs.length} existing analysis(es) for customer`);
+      }
+      
+      // Update request status
+      await updateDoc(doc(db, 'skinAnalysisRequests', request.id), {
+        status: 'approved',
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      alert(`Request approved! ${snapshot.docs.length > 0 ? `Deleted ${snapshot.docs.length} existing analysis(es). ` : ''}Customer can now create a new analysis.`);
+    } catch (error) {
+      console.error('Error approving request:', error);
+      alert('Failed to approve request');
+    }
+  };
+
+  const handleRejectRequest = async (requestId: string) => {
+    const reason = prompt('Please provide a reason for rejection (optional):');
+    if (reason === null) return; // User cancelled
+
+    try {
+      const db = getFirestore();
+      await updateDoc(doc(db, 'skinAnalysisRequests', requestId), {
+        status: 'rejected',
+        rejectedAt: new Date(),
+        adminNotes: reason,
+        updatedAt: new Date(),
+      });
+
+      alert('Request rejected.');
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      alert('Failed to reject request');
+    }
+  };
+
+  const handleDeleteRequest = async (requestId: string) => {
+    if (!confirm('Are you sure you want to delete this request?')) return;
+
+    try {
+      const db = getFirestore();
+      await deleteDoc(doc(db, 'skinAnalysisRequests', requestId));
+    } catch (error) {
+      console.error('Error deleting request:', error);
+      alert('Failed to delete request');
     }
   };
 
@@ -64,6 +153,8 @@ export default function SkinAnalysesPage() {
     );
   }
 
+  const pendingRequests = requests.filter(r => r.status === 'pending');
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -73,68 +164,99 @@ export default function SkinAnalysesPage() {
         </p>
       </div>
 
-      {/* Filters */}
-      <div className="mb-6 flex gap-2">
+      {/* Tab Switcher */}
+      <div className="mb-6 flex gap-2 border-b border-gray-200">
         <button
-          onClick={() => setFilter('all')}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            filter === 'all'
-              ? 'bg-terracotta text-white'
-              : 'bg-white border border-gray-300 hover:bg-gray-50'
+          onClick={() => setActiveTab('analyses')}
+          className={`px-6 py-3 font-semibold transition-colors border-b-2 ${
+            activeTab === 'analyses'
+              ? 'border-terracotta text-terracotta'
+              : 'border-transparent text-slate-600 hover:text-slate-800'
           }`}
         >
-          All ({analyses.length})
+          Completed Analyses ({analyses.length})
         </button>
         <button
-          onClick={() => setFilter('skin')}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            filter === 'skin'
-              ? 'bg-terracotta text-white'
-              : 'bg-white border border-gray-300 hover:bg-gray-50'
+          onClick={() => setActiveTab('requests')}
+          className={`px-6 py-3 font-semibold transition-colors border-b-2 relative ${
+            activeTab === 'requests'
+              ? 'border-terracotta text-terracotta'
+              : 'border-transparent text-slate-600 hover:text-slate-800'
           }`}
         >
-          Skin Analysis ({analyses.filter(a => a.type === 'skin').length})
-        </button>
-        <button
-          onClick={() => setFilter('products')}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            filter === 'products'
-              ? 'bg-terracotta text-white'
-              : 'bg-white border border-gray-300 hover:bg-gray-50'
-          }`}
-        >
-          Product Analysis ({analyses.filter(a => a.type === 'products').length})
+          Customer Requests ({requests.length})
+          {pendingRequests.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+              {pendingRequests.length}
+            </span>
+          )}
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-sm text-slate-600 mb-1">Total Analyses</div>
-          <div className="text-2xl font-bold text-terracotta">{analyses.length}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-sm text-slate-600 mb-1">Completed</div>
-          <div className="text-2xl font-bold text-green-600">
-            {analyses.filter(a => a.status === 'completed').length}
+      {activeTab === 'analyses' ? (
+        <>
+          {/* Filters */}
+          <div className="mb-6 flex gap-2">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                filter === 'all'
+                  ? 'bg-terracotta text-white'
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              All ({analyses.length})
+            </button>
+            <button
+              onClick={() => setFilter('skin')}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                filter === 'skin'
+                  ? 'bg-terracotta text-white'
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Skin Analysis ({analyses.filter(a => a.type === 'skin').length})
+            </button>
+            <button
+              onClick={() => setFilter('products')}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                filter === 'products'
+                  ? 'bg-terracotta text-white'
+                  : 'bg-white border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Product Analysis ({analyses.filter(a => a.type === 'products').length})
+            </button>
           </div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-sm text-slate-600 mb-1">Pending</div>
-          <div className="text-2xl font-bold text-yellow-600">
-            {analyses.filter(a => a.status === 'pending').length}
-          </div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-sm text-slate-600 mb-1">Errors</div>
-          <div className="text-2xl font-bold text-red-600">
-            {analyses.filter(a => a.status === 'error').length}
-          </div>
-        </div>
-      </div>
 
-      {/* Analysis List */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Total Analyses</div>
+              <div className="text-2xl font-bold text-terracotta">{analyses.length}</div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Completed</div>
+              <div className="text-2xl font-bold text-green-600">
+                {analyses.filter(a => a.status === 'completed').length}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Pending</div>
+              <div className="text-2xl font-bold text-yellow-600">
+                {analyses.filter(a => a.status === 'pending').length}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Errors</div>
+              <div className="text-2xl font-bold text-red-600">
+                {analyses.filter(a => a.status === 'error').length}
+              </div>
+            </div>
+          </div>
+
+          {/* Analysis List */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
         {filteredAnalyses.length === 0 ? (
           <div className="p-8 text-center text-slate-600">
             No analyses found
@@ -217,7 +339,119 @@ export default function SkinAnalysesPage() {
             </table>
           </div>
         )}
-      </div>
+          </div>
+        </>
+      ) : (
+        /* Requests Tab */
+        <div className="space-y-6">
+          {/* Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Total Requests</div>
+              <div className="text-2xl font-bold text-terracotta">{requests.length}</div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Pending</div>
+              <div className="text-2xl font-bold text-yellow-600">
+                {requests.filter(r => r.status === 'pending').length}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-sm text-slate-600 mb-1">Approved</div>
+              <div className="text-2xl font-bold text-green-600">
+                {requests.filter(r => r.status === 'approved').length}
+              </div>
+            </div>
+          </div>
+
+          {/* Requests List */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            {requests.length === 0 ? (
+              <div className="p-8 text-center text-slate-600">
+                No analysis requests yet
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Date Requested
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Customer
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Reason
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {requests.map((request) => (
+                      <tr key={request.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                          {formatDate(request.requestedAt)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                          <div>
+                            {request.customerEmail || 'Unknown'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm">
+                          <div className="max-w-xs truncate">
+                            {request.reason || 'No reason provided'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            request.status === 'approved'
+                              ? 'bg-green-100 text-green-800'
+                              : request.status === 'pending'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {request.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                          {request.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => handleApproveRequest(request)}
+                                className="text-green-600 hover:underline font-medium"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleRejectRequest(request.id)}
+                                className="text-red-600 hover:underline font-medium"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => handleDeleteRequest(request.id)}
+                            className="text-slate-600 hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Analysis Detail Modal */}
       {selectedAnalysis && (

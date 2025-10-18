@@ -11,29 +11,65 @@ export const findOrCreateCustomer = onCall(
   async (req) => {
     const { email, name, phone } = req.data || {};
     
-    if (!email) {
-      throw new HttpsError('invalid-argument', 'Email is required');
+    // Require at least email or phone
+    if (!email && !phone) {
+      throw new HttpsError('invalid-argument', 'Either email or phone is required');
     }
     
     try {
-      // Check if customer exists
-      const existingCustomers = await db.collection('customers')
-        .where('email', '==', email)
-        .limit(1)
-        .get();
+      // Check if customer exists by email or phone
+      let existingCustomers;
       
-      if (!existingCustomers.empty) {
-        // Customer exists, return their ID
+      if (email) {
+        // Try to find by email first
+        existingCustomers = await db.collection('customers')
+          .where('email', '==', email)
+          .limit(1)
+          .get();
+      }
+      
+      // If not found by email and phone is provided, try phone
+      if ((!existingCustomers || existingCustomers.empty) && phone) {
+        existingCustomers = await db.collection('customers')
+          .where('phone', '==', phone)
+          .limit(1)
+          .get();
+      }
+      
+      if (existingCustomers && !existingCustomers.empty) {
+        // Customer exists, update if new info provided
         const customerId = existingCustomers.docs[0].id;
+        const existingData = existingCustomers.docs[0].data();
+        
+        // Update customer data if new fields provided
+        const updates: any = {
+          updatedAt: new Date().toISOString(),
+        };
+        
+        if (email && !existingData.email) {
+          updates.email = email;
+        }
+        if (phone && !existingData.phone) {
+          updates.phone = phone;
+        }
+        if (name && !existingData.name) {
+          updates.name = name;
+        }
+        
+        // Only update if there are actual changes
+        if (Object.keys(updates).length > 1) {
+          await db.collection('customers').doc(customerId).update(updates);
+        }
+        
         return { customerId, isNew: false };
       }
       
       // Customer doesn't exist, create new one
       const newCustomerRef = await db.collection('customers').add({
         name: name || 'Guest',
-        email,
+        email: email || null,
         phone: phone || null,
-        status: 'guest',
+        status: 'pending',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });

@@ -1,18 +1,403 @@
-import React from 'react';
-import MessagingInterface from '../components/MessagingInterface';
+import { useEffect, useState, useRef } from 'react';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { collection, query, orderBy, onSnapshot, where, addDoc, updateDoc, doc, getDocs } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { formatMessageTime } from '@buenobrows/shared/messaging';
+import type { Message } from '@buenobrows/shared/messaging';
+
+interface Conversation {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  lastMessage?: string;
+  lastMessageTime?: any;
+  unreadCount: number;
+  status: 'active' | 'resolved' | 'archived';
+  hasAIResponse?: boolean;
+}
 
 export default function Messages() {
-  return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Customer Messages</h1>
-        <p className="text-gray-600 mt-1">
-          Communicate with your customers and provide support
-        </p>
-      </div>
+  const { db } = useFirebase();
+  const auth = getAuth();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<'all' | 'active' | 'ai'>('all');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load conversations
+  useEffect(() => {
+    const q = query(
+      collection(db, 'conversations'),
+      orderBy('lastMessageTime', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const convs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Conversation));
       
-      <div className="h-[calc(100vh-200px)]">
-        <MessagingInterface />
+      setConversations(convs);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [db]);
+
+  // Load messages for selected conversation
+  useEffect(() => {
+    if (!selectedConversation) {
+      setMessages([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'messages'),
+      where('customerId', '==', selectedConversation.customerId),
+      orderBy('timestamp', 'asc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Message));
+      
+      setMessages(msgs);
+      scrollToBottom();
+      
+      // Mark messages as read
+      markAsRead(selectedConversation.customerId);
+    });
+
+    return () => unsubscribe();
+  }, [selectedConversation, db]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const markAsRead = async (customerId: string) => {
+    try {
+      const adminId = auth.currentUser?.uid || 'admin';
+      
+      // Get unread customer messages
+      const q = query(
+        collection(db, 'messages'),
+        where('customerId', '==', customerId),
+        where('type', '==', 'customer'),
+        where('read', '==', false)
+      );
+
+      const snapshot = await getDocs(q);
+      const updatePromises = snapshot.docs.map(msgDoc => 
+        updateDoc(doc(db, 'messages', msgDoc.id), { 
+          read: true,
+          readBy: adminId,
+          readAt: new Date()
+        })
+      );
+
+      await Promise.all(updatePromises);
+
+      // Update conversation unread count
+      await updateDoc(doc(db, 'conversations', customerId), {
+        unreadCount: 0
+      });
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation) return;
+
+    try {
+      const adminId = auth.currentUser?.uid || 'admin';
+      const adminName = auth.currentUser?.displayName || 'Admin';
+
+      // Add message
+      await addDoc(collection(db, 'messages'), {
+        customerId: selectedConversation.customerId,
+        customerName: selectedConversation.customerName,
+        customerEmail: selectedConversation.customerEmail,
+        adminId,
+        adminName,
+        content: newMessage.trim(),
+        timestamp: new Date(),
+        read: false,
+        type: 'admin',
+        priority: 'medium',
+        isAI: false
+      });
+
+      // Update conversation
+      await updateDoc(doc(db, 'conversations', selectedConversation.customerId), {
+        lastMessage: newMessage.trim(),
+        lastMessageTime: new Date(),
+        status: 'active',
+        hasAIResponse: false
+      });
+
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  };
+
+  const updateConversationStatus = async (status: 'active' | 'resolved' | 'archived') => {
+    if (!selectedConversation) return;
+
+    try {
+      await updateDoc(doc(db, 'conversations', selectedConversation.customerId), {
+        status,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error updating conversation status:', error);
+    }
+  };
+
+  const filteredConversations = conversations.filter(conv => {
+    if (filter === 'all') return true;
+    if (filter === 'active') return conv.status === 'active';
+    if (filter === 'ai') return conv.hasAIResponse;
+    return true;
+  });
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-[calc(100vh-200px)] flex gap-4">
+      {/* Conversations List */}
+      <div className="w-1/3 bg-white rounded-lg shadow-soft overflow-hidden flex flex-col">
+        <div className="p-4 border-b border-gray-200">
+          <h2 className="text-xl font-serif font-semibold mb-3">Conversations</h2>
+          
+          {/* Filter Tabs */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-3 py-1 rounded-md text-sm ${
+                filter === 'all' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              All ({conversations.length})
+            </button>
+            <button
+              onClick={() => setFilter('active')}
+              className={`px-3 py-1 rounded-md text-sm ${
+                filter === 'active' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Active ({conversations.filter(c => c.status === 'active').length})
+            </button>
+            <button
+              onClick={() => setFilter('ai')}
+              className={`px-3 py-1 rounded-md text-sm ${
+                filter === 'ai' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              AI ({conversations.filter(c => c.hasAIResponse).length})
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {filteredConversations.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <p>No conversations yet</p>
+            </div>
+          ) : (
+            filteredConversations.map((conv) => (
+              <div
+                key={conv.id}
+                onClick={() => setSelectedConversation(conv)}
+                className={`p-4 border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors ${
+                  selectedConversation?.id === conv.id ? 'bg-blue-50' : ''
+                }`}
+              >
+                <div className="flex items-start justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-900">{conv.customerName}</h3>
+                    {conv.hasAIResponse && (
+                      <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full">
+                        AI
+                      </span>
+                    )}
+                  </div>
+                  {conv.unreadCount > 0 && (
+                    <span className="px-2 py-0.5 text-xs bg-red-500 text-white rounded-full">
+                      {conv.unreadCount}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-600 truncate mb-1">{conv.lastMessage}</p>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">
+                    {conv.lastMessageTime ? formatMessageTime(conv.lastMessageTime) : ''}
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    conv.status === 'active' ? 'bg-green-100 text-green-700' :
+                    conv.status === 'resolved' ? 'bg-gray-100 text-gray-700' :
+                    'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {conv.status}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Messages Panel */}
+      <div className="flex-1 bg-white rounded-lg shadow-soft overflow-hidden flex flex-col">
+        {selectedConversation ? (
+          <>
+            {/* Header */}
+            <div className="p-4 border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-900">{selectedConversation.customerName}</h3>
+                  <p className="text-sm text-gray-600">{selectedConversation.customerEmail}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => updateConversationStatus('active')}
+                    className={`px-3 py-1 rounded-md text-sm ${
+                      selectedConversation.status === 'active'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Active
+                  </button>
+                  <button
+                    onClick={() => updateConversationStatus('resolved')}
+                    className={`px-3 py-1 rounded-md text-sm ${
+                      selectedConversation.status === 'resolved'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Resolved
+                  </button>
+                  <button
+                    onClick={() => updateConversationStatus('archived')}
+                    className={`px-3 py-1 rounded-md text-sm ${
+                      selectedConversation.status === 'archived'
+                        ? 'bg-yellow-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Archive
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+              {messages.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No messages yet. Start the conversation!</p>
+                </div>
+              ) : (
+                messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.type === 'admin' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`max-w-md`}>
+                      <div
+                        className={`px-4 py-2 rounded-lg ${
+                          message.type === 'admin'
+                            ? message.isAI
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-blue-600 text-white'
+                            : 'bg-white text-gray-900 border border-gray-200'
+                        }`}
+                      >
+                        {message.type === 'admin' && (
+                          <p className={`text-xs mb-1 ${message.isAI ? 'text-purple-200' : 'text-blue-200'}`}>
+                            {message.adminName || 'Admin'}
+                            {message.isAI && ' 🤖'}
+                          </p>
+                        )}
+                        <p className="text-sm">{message.content}</p>
+                      </div>
+                      <p className={`text-xs mt-1 ${
+                        message.type === 'admin' ? 'text-right text-gray-400' : 'text-left text-gray-400'
+                      }`}>
+                        {formatMessageTime(message.timestamp)}
+                        {message.read && message.type === 'customer' && ' • Read'}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="p-4 border-t border-gray-200">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                  placeholder="Type your message..."
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!newMessage.trim()}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Send
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                💡 AI Assistant automatically responds to customer messages. You can follow up anytime.
+              </p>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-center h-full text-gray-500">
+            <div className="text-center">
+              <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+              <p>Select a conversation to start messaging</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

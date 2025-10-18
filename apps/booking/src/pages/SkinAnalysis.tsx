@@ -5,6 +5,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getFirestore, collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import type { SkinAnalysis } from '@shared/types';
+import { compressImage, getCompressionStats } from '@buenobrows/shared/imageUtils';
 
 type AnalysisType = 'skin' | 'products';
 
@@ -17,6 +18,7 @@ export default function SkinAnalysisPage() {
   const [error, setError] = useState<string>('');
   const [pastAnalyses, setPastAnalyses] = useState<SkinAnalysis[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [requestSubmitted, setRequestSubmitted] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const auth = getAuth();
@@ -50,12 +52,20 @@ export default function SkinAnalysisPage() {
         id: doc.id,
       })) as SkinAnalysis[];
       setPastAnalyses(analyses);
+      
+      // Automatically show the most recent completed analysis
+      if (analyses.length > 0 && !analysis) {
+        const mostRecent = analyses[0];
+        if (mostRecent.status === 'completed') {
+          setAnalysis(mostRecent);
+        }
+      }
     });
 
     return () => unsubscribe();
   }, [user]);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -65,21 +75,40 @@ export default function SkinAnalysisPage() {
       return;
     }
 
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Image size must be less than 5MB');
+    // Validate file size (max 10MB before compression)
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Image size must be less than 10MB');
       return;
     }
 
-    setSelectedImage(file);
     setError('');
+    setLoading(true);
 
-    // Create preview
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setImagePreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    try {
+      // Compress image to reduce storage costs
+      const compressedFile = await compressImage(file, {
+        maxWidth: 1920,
+        maxHeight: 1920,
+        quality: 0.85,
+      });
+
+      const stats = getCompressionStats(file.size, compressedFile.size);
+      console.log(`Image compressed: ${stats.savingsPercent}% reduction (${stats.originalMB}MB → ${stats.compressedMB}MB)`);
+
+      setSelectedImage(compressedFile);
+
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(compressedFile);
+    } catch (err) {
+      console.error('Compression error:', err);
+      setError('Failed to process image. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAnalyze = async () => {
@@ -90,6 +119,12 @@ export default function SkinAnalysisPage() {
 
     if (!user) {
       setError('Please log in to use skin analysis');
+      return;
+    }
+
+    // Check if user already has an analysis BEFORE creating anything
+    if (pastAnalyses.length > 0) {
+      setError('You already have a skin analysis. Please click "Request Another Analysis" if you\'d like a new one.');
       return;
     }
 
@@ -135,6 +170,12 @@ export default function SkinAnalysisPage() {
       });
 
       const analysisResult = (result.data as any).analysis;
+      const fromCache = (result.data as any).fromCache || false;
+      
+      if (fromCache) {
+        console.log('✅ Analysis retrieved from cache - no AI costs incurred!');
+      }
+      
       setAnalysis({
         ...analysisData,
         id: docRef.id,
@@ -155,8 +196,37 @@ export default function SkinAnalysisPage() {
     setImagePreview('');
     setAnalysis(null);
     setError('');
+    setShowHistory(false);
+    setRequestSubmitted(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const requestNewAnalysis = async () => {
+    if (!user) {
+      setError('Please log in to request a new analysis');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const functions = getFunctions();
+      const requestNewSkinAnalysis = httpsCallable(functions, 'requestNewSkinAnalysis');
+      
+      const result = await requestNewSkinAnalysis({
+        reason: 'Customer requested new skin analysis'
+      });
+
+      setRequestSubmitted(true);
+      console.log('Analysis request submitted:', result.data);
+    } catch (error: any) {
+      console.error('Error requesting analysis:', error);
+      setError(error.message || 'Failed to submit analysis request');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -174,23 +244,23 @@ export default function SkinAnalysisPage() {
   // Require login
   if (!user) {
     return (
-      <div className="max-w-2xl mx-auto py-16 px-4">
-        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          <div className="text-6xl mb-4">🔒</div>
-          <h1 className="text-3xl font-bold mb-4">Login Required</h1>
-          <p className="text-slate-600 mb-6">
+      <div className="max-w-2xl mx-auto py-12 md:py-16 px-4">
+        <div className="bg-white rounded-lg shadow-lg p-6 md:p-8 text-center">
+          <div className="text-4xl md:text-6xl mb-4">🔒</div>
+          <h1 className="text-2xl md:text-3xl font-bold mb-4">Login Required</h1>
+          <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">
             You need to be logged in to access AI Skin Analysis. This feature saves your results to your profile for future reference.
           </p>
           <div className="space-y-3">
             <button
               onClick={() => navigate('/login')}
-              className="w-full px-6 py-3 bg-terracotta text-white rounded-lg font-semibold hover:bg-terracotta/90 transition-colors"
+              className="w-full px-6 py-4 bg-terracotta text-white rounded-lg font-semibold hover:bg-terracotta/90 transition-colors text-base"
             >
               Login to Continue
             </button>
             <button
               onClick={() => navigate('/')}
-              className="w-full px-6 py-3 border border-gray-300 text-slate-700 rounded-lg font-semibold hover:bg-gray-50 transition-colors"
+              className="w-full px-6 py-4 border border-gray-300 text-slate-700 rounded-lg font-semibold hover:bg-gray-50 transition-colors text-base"
             >
               Back to Home
             </button>
@@ -201,20 +271,20 @@ export default function SkinAnalysisPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto py-8">
+    <div className="max-w-4xl mx-auto py-6 md:py-8">
       {/* Header */}
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold mb-4">
+      <div className="text-center mb-6 md:mb-8">
+        <h1 className="text-2xl md:text-4xl font-bold mb-4">
           <span className="font-brandBueno text-brand-bueno">AI</span>
           <span className="ml-2 font-brandBrows text-brand-brows">SKIN ANALYSIS</span>
         </h1>
-        <p className="text-slate-600 text-lg">
+        <p className="text-slate-600 text-base md:text-lg leading-relaxed">
           Get personalized skin care recommendations powered by AI
         </p>
         {pastAnalyses.length > 0 && (
           <button
             onClick={() => setShowHistory(!showHistory)}
-            className="mt-4 text-terracotta hover:underline text-sm"
+            className="mt-4 text-terracotta hover:underline text-base font-medium"
           >
             {showHistory ? 'Hide' : 'View'} Past Analyses ({pastAnalyses.length})
           </button>
@@ -229,7 +299,12 @@ export default function SkinAnalysisPage() {
             {pastAnalyses.map((past) => (
               <div
                 key={past.id}
-                onClick={() => setAnalysis(past)}
+                onClick={() => {
+                  setAnalysis(past);
+                  setShowHistory(false);
+                  // Scroll to top to see the full analysis
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 className="border rounded-lg p-4 cursor-pointer hover:border-terracotta transition-colors"
               >
                 <div className="flex items-center justify-between">
@@ -248,15 +323,20 @@ export default function SkinAnalysisPage() {
                       </div>
                     </div>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                    past.status === 'completed'
-                      ? 'bg-green-100 text-green-800'
-                      : past.status === 'pending'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {past.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-2">
+                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                      past.status === 'completed'
+                        ? 'bg-green-100 text-green-800'
+                        : past.status === 'pending'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      {past.status}
+                    </span>
+                    <span className="text-xs text-terracotta font-medium">
+                      Click to view full report
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -266,6 +346,23 @@ export default function SkinAnalysisPage() {
 
       {!analysis ? (
         <div className="bg-white rounded-lg shadow-lg p-8">
+          {/* Notice for customers who already have an analysis */}
+          {pastAnalyses.length > 0 && (
+            <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded">
+              <div className="flex items-start">
+                <svg className="h-5 w-5 text-yellow-500 mr-3 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <h3 className="text-sm font-semibold text-yellow-800">You Already Have an Analysis</h3>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    You already have {pastAnalyses.length} skin analysis. Click "View Past Analyses" above to see your results, or "Request Another Analysis" if you'd like a new one (requires admin approval).
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Analysis Type Selection */}
           <div className="mb-8">
             <h2 className="text-xl font-semibold mb-4">What would you like to analyze?</h2>
@@ -378,8 +475,9 @@ export default function SkinAnalysisPage() {
           {/* Analyze Button */}
           <button
             onClick={handleAnalyze}
-            disabled={!selectedImage || loading}
+            disabled={!selectedImage || loading || pastAnalyses.length > 0}
             className="w-full py-4 bg-terracotta text-white rounded-lg font-semibold text-lg hover:bg-terracotta/90 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            title={pastAnalyses.length > 0 ? "You already have an analysis. Please request a new one to continue." : ""}
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
@@ -389,46 +487,108 @@ export default function SkinAnalysisPage() {
                 </svg>
                 Analyzing...
               </span>
+            ) : pastAnalyses.length > 0 ? (
+              "Analysis Limit Reached - View Your Existing Analysis Above"
             ) : (
               `Analyze ${analysisType === 'skin' ? 'My Skin' : 'My Products'}`
             )}
           </button>
+          
+          {/* Request New Analysis CTA for existing customers */}
+          {pastAnalyses.length > 0 && (
+            <div className="mt-4 text-center">
+              <button
+                onClick={requestNewAnalysis}
+                disabled={loading}
+                className="text-terracotta hover:underline font-medium"
+              >
+                Want a new analysis? Click here to request one →
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         /* Analysis Results */
         <div className="space-y-6">
+          {/* Back Button */}
+          <div className="flex items-center justify-between">
+            <button
+              onClick={resetForm}
+              className="text-terracotta hover:underline font-medium flex items-center gap-2"
+            >
+              ← Back to New Analysis
+            </button>
+            <button
+              onClick={requestNewAnalysis}
+              disabled={loading}
+              className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            >
+              {loading ? 'Submitting Request...' : 'Request Another Analysis'}
+            </button>
+          </div>
+
           {/* Summary Card */}
           <div className="bg-white rounded-lg shadow-lg p-8">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-terracotta">Your Analysis Results</h2>
-              <button
-                onClick={resetForm}
-                className="px-4 py-2 border border-terracotta text-terracotta rounded-lg hover:bg-terracotta hover:text-white transition-colors"
-              >
-                New Analysis
-              </button>
+              <h2 className="text-2xl font-bold text-terracotta">Your Complete Analysis Results</h2>
+              <span className="text-sm text-slate-600">
+                {analysis.createdAt && new Date(analysis.createdAt.toDate ? analysis.createdAt.toDate() : analysis.createdAt).toLocaleDateString()}
+              </span>
+            </div>
+
+            {/* Request Submitted Message */}
+            {requestSubmitted && (
+              <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-start">
+                  <svg className="h-5 w-5 text-green-600 mr-3 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <div>
+                    <h3 className="text-sm font-semibold text-green-800">Request Submitted Successfully!</h3>
+                    <p className="text-sm text-green-700 mt-1">
+                      Your request for a new skin analysis has been submitted. An admin will review your request and once approved, you'll be able to create a fresh analysis. You can continue viewing your current analysis below.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Info Notice */}
+            <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
+              <div className="flex items-start">
+                <svg className="h-5 w-5 text-blue-500 mr-3 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <h3 className="text-sm font-semibold text-blue-800">Your Complete Analysis Report</h3>
+                  <p className="text-sm text-blue-700 mt-1">
+                    This is your full face analysis report with detailed recommendations. Scroll down to see all sections including skin tone analysis, foundation matching, facial features, and personalized service recommendations.
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Uploaded Image */}
             <div className="mb-6">
+              <h3 className="font-semibold text-lg mb-3 text-slate-800">Your Photo</h3>
               <img
                 src={analysis.imageUrl}
                 alt="Analyzed"
-                className="max-h-48 mx-auto rounded-lg"
+                className="max-h-64 mx-auto rounded-lg shadow-md"
               />
             </div>
 
             {/* Summary */}
-            <div className="mb-6 p-4 bg-terracotta/10 rounded-lg">
-              <h3 className="font-semibold text-lg mb-2">Summary</h3>
-              <p className="text-slate-700">{analysis.analysis.summary}</p>
+            <div className="mb-6 p-5 bg-terracotta/10 rounded-lg border-l-4 border-terracotta">
+              <h3 className="font-semibold text-lg mb-3 text-slate-800">📋 Summary</h3>
+              <p className="text-slate-700 leading-relaxed">{analysis.analysis.summary}</p>
             </div>
 
             {/* Skin Type */}
             {analysis.type === 'skin' && analysis.analysis.skinType && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-2">Your Skin Type</h3>
-                <div className="inline-block px-4 py-2 bg-green-100 text-green-800 rounded-full font-semibold">
+              <div className="mb-6 p-4 bg-green-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">✨ Your Skin Type</h3>
+                <div className="inline-block px-6 py-3 bg-green-100 text-green-800 rounded-full font-semibold text-lg">
                   {analysis.analysis.skinType}
                 </div>
               </div>
@@ -436,8 +596,8 @@ export default function SkinAnalysisPage() {
 
             {/* Skin Tone */}
             {analysis.type === 'skin' && analysis.analysis.skinTone && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Your Skin Tone</h3>
+              <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">🎨 Your Skin Tone Analysis</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="border rounded-lg p-4">
                     <div className="text-sm text-slate-600 mb-1">Category</div>
@@ -469,8 +629,8 @@ export default function SkinAnalysisPage() {
 
             {/* Foundation Match */}
             {analysis.type === 'skin' && analysis.analysis.foundationMatch && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Foundation Match</h3>
+              <div className="mb-6 p-4 bg-pink-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">💄 Foundation Match Recommendations</h3>
                 <div className="border rounded-lg p-4 bg-pink-50">
                   <div className="mb-3">
                     <div className="text-sm text-slate-600 mb-1">Shade Range</div>
@@ -499,8 +659,8 @@ export default function SkinAnalysisPage() {
 
             {/* Facial Features */}
             {analysis.type === 'skin' && analysis.analysis.facialFeatures && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Facial Features</h3>
+              <div className="mb-6 p-4 bg-indigo-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">👤 Your Facial Features</h3>
                 <div className="grid grid-cols-2 gap-3">
                   {analysis.analysis.facialFeatures.faceShape && (
                     <div className="border rounded-lg p-3">
@@ -532,18 +692,18 @@ export default function SkinAnalysisPage() {
 
             {/* Detailed Report */}
             {analysis.analysis.detailedReport && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Detailed Report</h3>
-                <div className="border rounded-lg p-4 bg-slate-50">
-                  <p className="text-slate-700 whitespace-pre-line">{analysis.analysis.detailedReport}</p>
+              <div className="mb-6 p-4 bg-amber-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">📝 Detailed Professional Analysis</h3>
+                <div className="border border-amber-200 rounded-lg p-5 bg-white">
+                  <p className="text-slate-700 whitespace-pre-line leading-relaxed">{analysis.analysis.detailedReport}</p>
                 </div>
               </div>
             )}
 
             {/* Concerns */}
             {analysis.analysis.concerns && analysis.analysis.concerns.length > 0 && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Identified Concerns</h3>
+              <div className="mb-6 p-4 bg-orange-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">⚠️ Areas to Address</h3>
                 <div className="flex flex-wrap gap-2">
                   {analysis.analysis.concerns.map((concern, idx) => (
                     <span
@@ -559,8 +719,8 @@ export default function SkinAnalysisPage() {
 
             {/* Recommendations */}
             {analysis.analysis.recommendations && analysis.analysis.recommendations.length > 0 && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Recommendations</h3>
+              <div className="mb-6 p-4 bg-teal-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">💡 Personalized Recommendations</h3>
                 <ul className="space-y-2">
                   {analysis.analysis.recommendations.map((rec, idx) => (
                     <li key={idx} className="flex items-start gap-2">
@@ -611,8 +771,8 @@ export default function SkinAnalysisPage() {
 
             {/* Recommended Services */}
             {analysis.analysis.recommendedServices && analysis.analysis.recommendedServices.length > 0 && (
-              <div className="mb-6">
-                <h3 className="font-semibold text-lg mb-3">Recommended Services</h3>
+              <div className="mb-6 p-4 bg-rose-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3 text-slate-800">💆‍♀️ Services Perfect for You</h3>
                 <div className="space-y-3">
                   {analysis.analysis.recommendedServices.map((service, idx) => (
                     <div key={idx} className="border border-terracotta rounded-lg p-4">

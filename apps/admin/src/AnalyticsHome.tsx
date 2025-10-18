@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
+import { onSnapshot, collection, query, where, orderBy, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { AnalyticsTargets, Appointment, Service } from '@buenobrows/shared/types';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isSameMonth, parseISO, differenceInDays, } from 'date-fns';
 import AppointmentDetailModal from '@/components/AppointmentDetailModal';
@@ -13,11 +14,14 @@ export default function AnalyticsHome() {
   const [targets, setTargets] = useState<AnalyticsTargets | null>(null);
   const [services, setServices] = useState<Record<string, Service>>({});
   const [appts, setAppts] = useState<Appointment[]>([]);
+  const [allAppts, setAllAppts] = useState<Appointment[]>([]); // For displaying appointments list
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   // Get memoized Firebase instance
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
+  const functions = getFunctions(app, 'us-central1');
 
   // Watch targets
   useEffect(() => {
@@ -40,10 +44,24 @@ export default function AnalyticsHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Watch ALL appointments (past 30 days + future) for the appointment lists
+  useEffect(() => {
+    const ref = collection(db, 'appointments');
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const qy = query(ref, where('start', '>=', thirtyDaysAgo.toISOString()), orderBy('start', 'asc'));
+    return onSnapshot(qy, (snap) => {
+      const rows: Appointment[] = [];
+      snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
+      setAllAppts(rows);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Compute range based on period
   const { fromISO, toISO } = useMemo(() => computeRange(period), [period]);
 
-  // Watch appointments for the selected period
+  // Watch appointments for the selected period (for metrics only)
   useEffect(() => {
     const ref = collection(db, 'appointments');
     const qy = query(ref, where('start', '>=', fromISO), where('start', '<=', toISO), orderBy('start', 'asc'));
@@ -57,7 +75,7 @@ export default function AnalyticsHome() {
 
   // Metrics
   const { revenue, cancelledValue, uniqueCustomers, avgCustomerValue, expectedCogs, targetValue, progressPct, topServices } = useMemo(() => {
-    const confirmed = appts.filter((a) => a.status === 'confirmed');
+    const confirmed = appts.filter((a) => a.status === 'confirmed' || a.status === 'pending');
     const cancelled = appts.filter((a) => a.status === 'cancelled');
 
     const sum = (rows: Appointment[]) => rows.reduce((acc, a) => acc + (a.bookedPrice ?? services[a.serviceId]?.price ?? 0), 0);
@@ -89,15 +107,82 @@ export default function AnalyticsHome() {
     return { revenue, cancelledValue, uniqueCustomers, avgCustomerValue, expectedCogs, targetValue, progressPct, topServices };
   }, [appts, services, targets, period, fromISO, toISO]);
 
+  // Sync availability function
+  const syncAvailability = async () => {
+    setSyncing(true);
+    try {
+      const syncFunction = httpsCallable(functions, 'quickSyncAvailability');
+      const result = await syncFunction({});
+      
+      console.log('Sync result:', result.data);
+      alert(`✅ Sync complete! ${result.data.message}`);
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      alert(`❌ Sync failed: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Clear all holds function using Cloud Function
+  const clearAllHolds = async () => {
+    if (!confirm('Are you sure you want to clear all active holds? This will release all time slots.')) {
+      return;
+    }
+    
+    setSyncing(true);
+    try {
+      const clearAllHoldsFn = httpsCallable(functions, 'clearAllHolds');
+      const result = await clearAllHoldsFn({});
+      const data = result.data as any;
+      
+      console.log('Clear holds result:', data);
+      alert(`✅ ${data.message}`);
+    } catch (error: any) {
+      console.error('Clear holds error:', error);
+      alert(`❌ Failed to clear holds: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div className="grid gap-6">
-      {/* Period tabs */}
-      <div className="flex flex-wrap gap-2">
-        {(['day','week','month','year','all'] as Period[]).map((p) => (
-          <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 rounded-md border text-sm ${p===period ? 'bg-terracotta text-white border-terracotta' : 'bg-white hover:bg-cream'}`}>
-            {labelFor(p)}
+      {/* Period tabs and sync button */}
+      <div className="flex flex-wrap gap-2 items-center justify-between">
+        <div className="flex flex-wrap gap-2">
+          {(['day','week','month','year','all'] as Period[]).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 rounded-md border text-sm ${p===period ? 'bg-terracotta text-white border-terracotta' : 'bg-white hover:bg-cream'}`}>
+              {labelFor(p)}
+            </button>
+          ))}
+        </div>
+        
+        <div className="flex gap-2">
+          <button 
+            onClick={syncAvailability}
+            disabled={syncing}
+            className={`px-4 py-2 rounded-md text-sm font-medium ${
+              syncing 
+                ? 'bg-gray-400 text-white cursor-not-allowed' 
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {syncing ? '🔄 Syncing...' : '🔄 Sync Availability'}
           </button>
-        ))}
+          
+          <button 
+            onClick={clearAllHolds}
+            disabled={syncing}
+            className={`px-4 py-2 rounded-md text-sm font-medium ${
+              syncing 
+                ? 'bg-gray-400 text-white cursor-not-allowed' 
+                : 'bg-red-600 text-white hover:bg-red-700'
+            }`}
+          >
+            {syncing ? '⏳ Working...' : '🗑️ Clear All Holds'}
+          </button>
+        </div>
       </div>
 
       {/* KPI cards */}
@@ -114,36 +199,82 @@ export default function AnalyticsHome() {
       </section>
 
       {/* Schedule Snapshot */}
-      <section className="bg-white rounded-xl shadow-soft p-4">
-        <h3 className="font-serif text-xl mb-3">Upcoming Appointments</h3>
-        {appts.filter(a => a.status === 'confirmed').length === 0 ? (
-          <div className="text-slate-500 text-sm">No upcoming appointments for this period.</div>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {appts
-              .filter(a => a.status === 'confirmed')
-              .slice(0, 10)
-              .map((a) => (
-                <div 
-                  key={a.id} 
-                  onClick={() => setSelectedAppointment(a)}
-                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm">{format(parseISO(a.start), 'MMM d, h:mm a')}</div>
-                    <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
-                    {a.customerName && (
-                      <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                    )}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Upcoming Appointments */}
+        <section className="bg-white rounded-xl shadow-soft p-4">
+          <h3 className="font-serif text-xl mb-3">Upcoming Appointments</h3>
+          {allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date()).length === 0 ? (
+            <div className="text-slate-500 text-sm">No upcoming appointments.</div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {allAppts
+                .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date())
+                .slice(0, 10)
+                .map((a) => (
+                  <div 
+                    key={a.id} 
+                    onClick={() => setSelectedAppointment(a)}
+                    className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">
+                        {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                      </div>
+                      <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                      {a.customerName && (
+                        <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                      )}
+                      {a.status === 'pending' && (
+                        <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold text-terracotta">
+                      {fmtCurrency(a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-terracotta">
-                    {fmtCurrency(a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                ))}
+            </div>
+          )}
+        </section>
+
+        {/* Past Appointments */}
+        <section className="bg-white rounded-xl shadow-soft p-4">
+          <h3 className="font-serif text-xl mb-3">Recent Past Appointments</h3>
+          {allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date()).length === 0 ? (
+            <div className="text-slate-500 text-sm">No past appointments.</div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {allAppts
+                .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date())
+                .reverse()
+                .slice(0, 10)
+                .map((a) => (
+                  <div 
+                    key={a.id} 
+                    onClick={() => setSelectedAppointment(a)}
+                    className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">
+                        {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                      </div>
+                      <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                      {a.customerName && (
+                        <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                      )}
+                      {a.status === 'pending' && (
+                        <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold text-terracotta">
+                      {fmtCurrency(a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                    </div>
                   </div>
-                </div>
-              ))}
-          </div>
-        )}
-      </section>
+                ))}
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* Appointment Detail Modal */}
       <AppointmentDetailModal

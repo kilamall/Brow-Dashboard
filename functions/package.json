@@ -16,9 +16,10 @@
     "lint": "echo 'Linting functions...' && exit 0"
   },
   "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "aws-sdk": "^2.1691.0",
     "firebase-admin": "^12.5.0",
-    "firebase-functions": "^5.0.1",
-    "aws-sdk": "^2.1691.0"
+    "firebase-functions": "^6.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

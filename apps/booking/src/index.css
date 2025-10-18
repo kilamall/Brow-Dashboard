@@ -7,3 +7,56 @@ html, body, #root { height: 100%; }
 body {
   @apply bg-cream text-slate-800 antialiased;
 }
+
+/* Mobile optimizations */
+@layer base {
+  /* Improve touch targets */
+  button, a, input, select, textarea {
+    @apply min-h-[44px];
+  }
+  
+  /* Better mobile text rendering */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  
+  /* Prevent zoom on input focus on iOS */
+  input, select, textarea {
+    font-size: 16px;
+  }
+  
+  /* Improve mobile scrolling */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@layer components {
+  /* Mobile-friendly button styles */
+  .btn-mobile {
+    @apply min-h-[44px] px-4 py-3 text-base font-medium rounded-lg;
+  }
+  
+  /* Mobile-friendly input styles */
+  .input-mobile {
+    @apply min-h-[44px] px-4 py-3 text-base rounded-lg border border-slate-300;
+  }
+  
+  /* Service worker update animation */
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

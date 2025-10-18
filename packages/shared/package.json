@@ -15,11 +15,17 @@
       "*": ["./src/*"]
     }
   },
-  "peerDependencies": {
+  "dependencies": {
+    "react": "^18.2.0",
     "firebase": "^11.0.0",
     "date-fns": "^3.6.0"
   },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
   "devDependencies": {
+    "@types/react": "^18.2.66",
     "typescript": "^5.4.5"
   }
 }

@@ -18,6 +18,7 @@ export default function CustomerMessaging({
   appointmentId,
   className = '' 
 }: CustomerMessagingProps) {
+  const { db, app } = useFirebase();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [messagingService, setMessagingService] = useState<MessagingService | null>(null);
@@ -26,7 +27,6 @@ export default function CustomerMessaging({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const { db, app } = useFirebase();
     const service = new MessagingService(db, app);
     setMessagingService(service);
 
@@ -56,7 +56,7 @@ export default function CustomerMessaging({
       unsubscribeMessages();
       unsubscribeForeground();
     };
-  }, [customerId]);
+  }, [customerId, db, app]);
 
   useEffect(() => {
     scrollToBottom();
@@ -70,25 +70,37 @@ export default function CustomerMessaging({
     if (!newMessage.trim() || !messagingService) return;
 
     try {
-      await messagingService.sendMessage({
+      const messageData: any = {
         customerId,
         customerName,
         customerEmail,
         content: newMessage.trim(),
         type: 'customer',
         priority: 'medium',
-        appointmentId
-      });
+        read: false,
+      };
+
+      // Only include appointmentId if it exists
+      if (appointmentId) {
+        messageData.appointmentId = appointmentId;
+      }
+
+      await messagingService.sendMessage(messageData);
 
       // Update conversation
-      await messagingService.updateConversation(customerId, {
+      const conversationData: any = {
         customerId,
         customerName,
         customerEmail,
         content: newMessage.trim(),
         type: 'customer',
-        appointmentId
-      });
+      };
+
+      if (appointmentId) {
+        conversationData.appointmentId = appointmentId;
+      }
+
+      await messagingService.updateConversation(customerId, conversationData);
 
       setNewMessage('');
     } catch (error) {

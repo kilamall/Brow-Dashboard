@@ -70,7 +70,9 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
           <div className="bg-slate-50 rounded-lg p-4">
             <div className="text-sm text-slate-500 mb-1">Date & Time</div>
             <div className="font-semibold text-lg">{format(parseISO(appointment.start), 'EEEE, MMMM d, yyyy')}</div>
-            <div className="text-slate-600">{format(parseISO(appointment.start), 'h:mm a')}</div>
+            <div className="text-slate-600">
+              {format(parseISO(appointment.start), 'h:mm a')} - {format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a')}
+            </div>
             <div className="text-xs text-slate-500 mt-1">Duration: {appointment.duration} minutes</div>
           </div>
 
@@ -87,7 +89,19 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
           {appointment.customerName && (
             <div>
               <div className="text-sm text-slate-500 mb-1">Customer</div>
-              <div className="font-medium">{appointment.customerName}</div>
+              {appointment.customerId ? (
+                <button
+                  onClick={() => {
+                    nav(`/customers/${appointment.customerId}`);
+                    onClose();
+                  }}
+                  className="font-medium text-terracotta hover:text-terracotta/80 hover:underline transition-colors text-left"
+                >
+                  {appointment.customerName}
+                </button>
+              ) : (
+                <div className="font-medium">{appointment.customerName}</div>
+              )}
               {appointment.customerEmail && (
                 <div className="text-sm text-slate-600">{appointment.customerEmail}</div>
               )}

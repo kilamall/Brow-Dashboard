@@ -2,15 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import type { Appointment, BusinessHours, Service } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Service, ConsentFormTemplate } from '@buenobrows/shared/types';
+import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 import {
   watchServices,
   watchBusinessHours,
-  watchAppointmentsByDay,
   findCustomerByEmail,
   createCustomer,
 } from '@buenobrows/shared/firestoreActions';
-import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
+import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
+import { watchAvailabilityByDay } from '@buenobrows/shared/availabilityHelpers';
 import { isValidBookingDate, getNextValidBookingDate, getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
 import { formatBusinessHoursForDate, isBusinessCurrentlyOpen } from '@buenobrows/shared/businessHoursFormatter';
 
@@ -22,11 +23,18 @@ import {
   findOrCreateCustomerClient,
 } from '@buenobrows/shared/functionsClient';
 
+import {
+  getActiveConsentForm,
+  recordCustomerConsent,
+  hasValidConsent,
+} from '@buenobrows/shared/consentFormHelpers';
+
 import { format, parseISO } from 'date-fns';
 import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
+import { collection, addDoc } from 'firebase/firestore';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
-
+import ConsentForm from '../components/ConsentForm';
 
 type Slot = { startISO: string; endISO?: string; resourceId?: string | null };
 type Hold = { id: string; expiresAt: string }; // from Cloud Function
@@ -42,7 +50,19 @@ export default function Book() {
   useEffect(() => watchServices(db, { activeOnly: true }, setServices), []);
   useEffect(() => watchBusinessHours(db, setBh), []);
 
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
+    // Restore selected services from sessionStorage on mount
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        return cart.selectedServiceIds || [];
+      } catch (e) {
+        console.error('Failed to restore cart:', e);
+      }
+    }
+    return [];
+  });
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
     [services, selectedServiceIds]
@@ -71,6 +91,16 @@ export default function Book() {
 
   // Initialize with the next valid booking date
   const [dateStr, setDateStr] = useState<string>(() => {
+    // Try to restore date from cart
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        if (cart.dateStr) return cart.dateStr;
+      } catch (e) {
+        console.error('Failed to restore date:', e);
+      }
+    }
     const today = new Date().toISOString().slice(0, 10);
     return today;
   });
@@ -88,26 +118,106 @@ export default function Book() {
     }
   }, [bh, selectedServices]); // Removed dateStr from dependencies to prevent infinite loop
 
-  const [dayAppts, setDayAppts] = useState<Appointment[]>([]);
-  useEffect(() => watchAppointmentsByDay(db, dayDate, setDayAppts), [dayDate]);
+  // Use availability collection instead of appointments for privacy
+  const [bookedSlots, setBookedSlots] = useState<AvailabilitySlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(true);
+  
+  useEffect(() => {
+    setSlotsLoading(true);
+    console.log('🔍 Querying availability for dayDate:', dayDate.toISOString());
+    console.log('🔍 Day date local:', dayDate.toString());
+    const unsubscribe = watchAvailabilityByDay(db, dayDate, (slots) => {
+      console.log(`Loaded ${slots.length} booked slots for ${dayDate.toISOString().slice(0, 10)}`);
+      console.log('Raw availability data:', slots);
+      setBookedSlots(slots);
+      setSlotsLoading(false);
+    });
+    return unsubscribe;
+  }, [dayDate, db]);
 
   // slots for this day
   const slots = useMemo<Slot[]>(
-    () =>
-      bh && selectedServices.length > 0
-        ? availableSlotsForDay(dayDate, totalDuration, bh, dayAppts).map((startISO) => ({
-            startISO,
-            resourceId: null,
-          }))
-        : [],
-    [bh, selectedServices, totalDuration, dayAppts, dayDate]
+    () => {
+      if (!bh || selectedServices.length === 0) {
+        return [];
+      }
+      
+      const availableSlots = availableSlotsFromAvailability(dayDate, totalDuration, bh, bookedSlots);
+      console.log(`Calculated ${availableSlots.length} available slots (${bookedSlots.length} booked slots)`);
+      console.log('Booked slots:', bookedSlots.map(s => ({ start: s.start, end: s.end, status: s.status })));
+      console.log('Available slots:', availableSlots);
+      console.log('Day date:', dayDate.toISOString());
+      console.log('Total duration:', totalDuration);
+      
+      return availableSlots.map((startISO) => ({
+        startISO,
+        resourceId: null,
+      }));
+    },
+    [bh, selectedServices, totalDuration, bookedSlots, dayDate]
   );
 
   // ---------- Hold state (server-backed) ----------
   const sessionId = useMemo(getOrCreateSessionId, []);
-  const [chosen, setChosen] = useState<Slot | null>(null);
-  const [hold, setHold] = useState<Hold | null>(null);
+  const [isCreatingHold, setIsCreatingHold] = useState(false);
+  const lastHoldCreationRef = useRef<number>(0);
+  const [chosen, setChosen] = useState<Slot | null>(() => {
+    // Try to restore chosen slot from cart
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        if (cart.chosenSlot) return cart.chosenSlot;
+      } catch (e) {
+        console.error('Failed to restore chosen slot:', e);
+      }
+    }
+    return null;
+  });
+  const [hold, setHold] = useState<Hold | null>(() => {
+    // Try to restore hold from cart
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        if (cart.hold) {
+          // Only restore if not expired AND has at least 30 seconds left
+          const holdExpiry = new Date(cart.hold.expiresAt).getTime();
+          const now = Date.now();
+          const timeLeft = holdExpiry - now;
+          
+          // Don't restore if expired or about to expire (< 30 seconds)
+          if (timeLeft > 30000) {
+            console.log('Restoring hold with', Math.round(timeLeft/1000), 'seconds remaining');
+            return cart.hold;
+          } else {
+            console.log('Hold expired or expiring soon, not restoring');
+            // Clear the expired hold from storage
+            const updatedCart = { ...cart, hold: null };
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to restore hold:', e);
+      }
+    }
+    return null;
+  });
   const [error, setError] = useState('');
+
+  // Save booking cart to sessionStorage whenever selections change
+  useEffect(() => {
+    if (selectedServiceIds.length > 0 || dateStr || chosen || hold) {
+      const cart = {
+        selectedServiceIds,
+        dateStr,
+        chosenSlot: chosen,
+        hold: hold, // Save hold so it persists through auth flow
+        timestamp: Date.now(),
+      };
+      sessionStorage.setItem('bb_booking_cart', JSON.stringify(cart));
+    }
+  }, [selectedServiceIds, dateStr, chosen, hold]);
 
   // countdown from server `expiresAt`
   const [countdown, setCountdown] = useState('');
@@ -138,12 +248,75 @@ export default function Book() {
     };
   }, [hold]);
 
+  // Cleanup hold when component unmounts
+  useEffect(() => {
+    return () => {
+      if (hold) {
+        console.log('Component unmounting, releasing hold:', hold.id);
+        releaseHoldClient(hold.id).catch(e => console.warn('Failed to release hold on unmount:', e));
+      }
+    };
+  }, [hold]);
+
   // reserve (create server hold) when a time is clicked
   async function pickSlot(slot: Slot) {
+    // Prevent rapid-fire hold creation (debounce)
+    const now = Date.now();
+    if (now - lastHoldCreationRef.current < 1000) {
+      console.log('🚫 Hold creation too soon after last one, ignoring');
+      return;
+    }
+    
+    // Prevent multiple simultaneous hold creation attempts
+    if (isCreatingHold) {
+      console.log('🚫 Hold creation already in progress, ignoring duplicate request');
+      return;
+    }
+    
+    // If we already have a valid hold for this exact slot, don't recreate
+    if (hold && chosen?.startISO === slot.startISO && new Date(hold.expiresAt).getTime() > Date.now()) {
+      console.log('🚫 Valid hold already exists for this slot');
+      return;
+    }
+    
+    // If we're clicking the same slot that's already chosen, don't recreate
+    if (chosen?.startISO === slot.startISO) {
+      console.log('🚫 Same slot already chosen, not recreating hold');
+      return;
+    }
+    
+    // Additional check: if we're already holding this exact slot, don't recreate
+    if (hold && hold.id && slot.startISO === chosen?.startISO) {
+      console.log('🚫 Already holding this exact slot, not recreating');
+      return;
+    }
+    
+    // If switching to a different slot, release the old hold first
+    if (hold && chosen && chosen.startISO !== slot.startISO) {
+      console.log('🔄 Switching slots, releasing old hold:', hold.id);
+      console.log('🔄 Old slot:', chosen.startISO, '→ New slot:', slot.startISO);
+      try {
+        const releaseResult = await releaseHoldClient(hold.id);
+        console.log('✅ Successfully released old hold:', releaseResult);
+        setHold(null);
+        // Small delay to ensure the hold is fully released
+        await new Promise(resolve => setTimeout(resolve, 200));
+        console.log('⏳ Waited 200ms for hold release to propagate');
+      } catch (e) {
+        console.warn('❌ Failed to release old hold:', e);
+        setHold(null);
+      }
+    }
+    
     setError('');
     setChosen(slot);
+    setIsCreatingHold(true);
     
     try {
+      console.log('🚀 Creating new hold for slot:', slot.startISO);
+      console.log('🚀 Session ID:', sessionId);
+      console.log('🚀 Service ID:', selectedServices[0]!.id);
+      
       // For multiple services, we'll use the first service ID for the hold
       // The actual services will be handled during finalization
       const h = await createSlotHoldClient({
@@ -154,16 +327,86 @@ export default function Book() {
         resourceId: slot.resourceId ?? null,
       });
       setHold({ id: h.id, expiresAt: h.expiresAt });
-      console.log('Hold updated:', h.id);
+      lastHoldCreationRef.current = Date.now();
+      console.log('✅ Hold created/updated:', h.id);
     } catch (e: any) {
-      setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to hold slot.');
-      setChosen(null);
+      console.error('Hold creation error:', e);
+      // 409 errors might mean the hold already exists - this can happen after auth return
+      // Don't treat this as a fatal error
+      if (e?.message?.includes('409') || e?.code === 409) {
+        console.log('Hold might already exist (409), will retry on next interaction');
+        setError('Refreshing hold status...');
+        // Don't clear chosen slot on 409, let user retry
+      } else {
+        setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to hold slot.');
+        setChosen(null);
+      }
+    } finally {
+      setIsCreatingHold(false);
     }
   }
 
+  // Track if we've already attempted to auto-recreate the hold
+  const [hasAttemptedAutoRecreate, setHasAttemptedAutoRecreate] = useState(false);
+  
+  // Auto-recreate hold if we have a chosen slot but no valid hold (e.g., after auth return)
+  useEffect(() => {
+    // Only run once on mount if we have a chosen slot from sessionStorage but no hold
+    // and we haven't already attempted this
+    if (chosen && !hold && !isCreatingHold && !hasAttemptedAutoRecreate && selectedServices.length > 0 && slots.length > 0) {
+      console.log('🔄 Restoring hold for previously selected slot after navigation');
+      setHasAttemptedAutoRecreate(true);
+      
+      // Check if the chosen slot is still available in the current slots list
+      const slotStillAvailable = slots.some(s => s.startISO === chosen.startISO);
+      
+      if (slotStillAvailable) {
+        // Small delay to avoid race conditions with other initializations
+        const timer = setTimeout(() => {
+          console.log('🔄 Auto-restoring hold for slot:', chosen.startISO);
+          pickSlot(chosen);
+        }, 1000); // Increased delay to 1 second
+        return () => clearTimeout(timer);
+      } else {
+        console.log('❌ Previously chosen slot is no longer available');
+        setError('Your previously selected time is no longer available. Please choose another time.');
+        setChosen(null);
+        // Clear from storage
+        const saved = sessionStorage.getItem('bb_booking_cart');
+        if (saved) {
+          try {
+            const cart = JSON.parse(saved);
+            const updatedCart = { ...cart, chosenSlot: null, hold: null };
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
+          } catch (e) {
+            console.error('Failed to clear unavailable slot:', e);
+          }
+        }
+      }
+    }
+  }, [slots, chosen, hold, isCreatingHold, hasAttemptedAutoRecreate]); // Only run when these change
+
   // ---------- Auth / magic-link ----------
   const [user, setUser] = useState<User | null>(null);
+  const [customerId, setCustomerId] = useState<string | null>(null);
   useEffect(() => onAuthStateChanged(auth, setUser), [auth]);
+
+  // Get customer ID when user changes
+  useEffect(() => {
+    if (user?.email) {
+      findOrCreateCustomerClient({
+        email: user.email,
+        name: user.displayName || 'Customer',
+        phone: undefined,
+      }).then(result => {
+        setCustomerId(result.customerId);
+      }).catch(err => {
+        console.error('Failed to get customer ID:', err);
+      });
+    } else {
+      setCustomerId(null);
+    }
+  }, [user]);
 
   const [linkFlow, setLinkFlow] = useState(false);
   const [verifyEmail, setVerifyEmail] = useState('');
@@ -183,6 +426,40 @@ export default function Book() {
   const [gPhone, setGPhone] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
 
+  // ---------- Consent form ----------
+  const [consentForm, setConsentForm] = useState<ConsentFormTemplate | null>(null);
+  const [showConsentForm, setShowConsentForm] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [hasExistingConsent, setHasExistingConsent] = useState(false);
+
+  // Load active consent form
+  useEffect(() => {
+    getActiveConsentForm(db, 'brow_services').then(form => {
+      setConsentForm(form);
+    }).catch(error => {
+      console.warn('Failed to load consent form:', error);
+      // Set to null so booking can proceed without consent form
+      setConsentForm(null);
+    });
+  }, [db]);
+
+  // Check if customer already has consent when customerId changes
+  useEffect(() => {
+    if (customerId) {
+      hasValidConsent(db, customerId, 'brow_services').then(valid => {
+        setHasExistingConsent(valid);
+        setConsentGiven(valid);
+      }).catch(error => {
+        console.warn('Failed to check existing consent:', error);
+        // Default to no existing consent
+        setHasExistingConsent(false);
+        setConsentGiven(false);
+      });
+    } else {
+      setHasExistingConsent(false);
+    }
+  }, [customerId, db]);
+
   // ensure we use a Customers doc id (not auth uid)
   async function ensureCustomerId(): Promise<string> {
     // Signed in: use Cloud Function to find or create customer
@@ -190,22 +467,23 @@ export default function Book() {
       const result = await findOrCreateCustomerClient({
         email: user.email,
         name: user.displayName || 'Customer',
-        phone: null,
+        phone: undefined,
       });
       return result.customerId;
     }
     // Guest path: use Cloud Function to find or create customer
-    if (gEmail) {
+    // Only phone number is required for guests
+    if (gPhone) {
       const result = await findOrCreateCustomerClient({
-        email: gEmail,
+        email: gEmail || undefined,
         name: gName || 'Guest',
-        phone: gPhone || null,
+        phone: gPhone,
       });
       
       // Log SMS consent if opted in
-      if (smsConsent && gPhone) {
+      if (smsConsent) {
         try {
-          await db.collection('sms_consents').add({
+          await addDoc(collection(db, 'sms_consents'), {
             customerId: result.customerId,
             phone: gPhone,
             consentMethod: 'booking_form',
@@ -220,22 +498,103 @@ export default function Book() {
       
       return result.customerId;
     }
-    throw new Error('Missing customer email.');
+    throw new Error('Missing customer phone number.');
+  }
+
+  async function handleConsentAgree(signature: string) {
+    if (!consentForm) return;
+    
+    try {
+      // Get customer ID first (create guest customer if needed)
+      const custId = await ensureCustomerId();
+      
+      // Record consent
+      const consentData: any = {
+        customerId: custId,
+        customerName: user?.displayName || gName || 'Guest',
+        consentFormId: consentForm.id,
+        consentFormVersion: consentForm.version,
+        consentFormCategory: consentForm.category,
+        agreed: true,
+        signature,
+        userAgent: navigator.userAgent,
+        consentedAt: new Date().toISOString(),
+      };
+      
+      // Only include optional fields if they have values
+      if (user?.email || gEmail) {
+        consentData.customerEmail = user?.email || gEmail;
+      }
+      if (gPhone) {
+        consentData.customerPhone = gPhone;
+      }
+      
+      await recordCustomerConsent(db, consentData);
+      
+      setConsentGiven(true);
+      setShowConsentForm(false);
+      
+      // Now proceed with booking
+      await proceedWithBooking(custId);
+    } catch (error: any) {
+      console.error('Error recording consent:', error);
+      setError('Failed to record consent. Please try again.');
+    }
+  }
+
+  async function proceedWithBooking(customerId: string) {
+    if (!hold || selectedServiceIds.length === 0 || !chosen) return;
+    
+    try {
+      console.log('Calling finalizeBookingFromHoldClient...', {
+        holdId: hold.id,
+        customerId,
+        customer: {
+          name: user?.displayName || gName || undefined,
+          email: user?.email || gEmail || undefined,
+          phone: gPhone || undefined,
+        },
+        price: totalPrice,
+      });
+      
+      const out = await finalizeBookingFromHoldClient({
+        holdId: hold.id,
+        customerId,
+        customer: {
+          name: user?.displayName || gName || undefined,
+          email: user?.email || gEmail || undefined,
+          phone: gPhone || undefined,
+        },
+        price: totalPrice,
+        autoConfirm: true,
+      });
+      
+      console.log('Booking finalized successfully:', out);
+      nav(`/confirmation?id=${encodeURIComponent(out.appointmentId)}`);
+    } catch (e: any) {
+      console.error('finalizeBooking error:', e);
+      setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to finalize booking.');
+      // try to free the hold
+      try {
+        if (hold) await releaseHoldClient(hold.id);
+      } catch {}
+      setHold(null);
+    }
   }
 
   async function finalizeBooking() {
     if (!hold || selectedServiceIds.length === 0 || !chosen) return;
     setError('');
     
-    // Check if user is signed in or guest form is filled
-    if (!user && !gEmail) {
-      setError('Please sign in or fill out the guest form below.');
+    // Check if user is signed in or guest form is filled (only phone required for guests)
+    if (!user && !gPhone) {
+      setError('Please sign in or provide your phone number in the guest form below.');
       setGuestOpen(true); // Open guest form
       return;
     }
     
     try {
-      console.log('Starting finalizeBooking...', { user: user?.email, gEmail, gName });
+      console.log('Starting finalizeBooking...', { user: user?.email, gEmail, gName, gPhone });
       
       // If email-link verify is present
       if (!user && linkFlow && verifyEmail) {
@@ -245,34 +604,20 @@ export default function Book() {
       }
       
       console.log('Ensuring customer ID...');
-      const customerId = await ensureCustomerId();
-      console.log('Customer ID obtained:', customerId);
+      const custId = await ensureCustomerId();
+      console.log('Customer ID obtained:', custId);
       
-      console.log('Calling finalizeBookingFromHoldClient...', {
-        holdId: hold.id,
-        customerId,
-        customer: {
-          name: user?.displayName || gName || null,
-          email: user?.email || gEmail || null,
-          phone: gPhone || null,
-        },
-        price: totalPrice,
-      });
+      // Check if consent is required and not yet given
+      const needsConsent = consentForm && !consentGiven;
       
-      const out = await finalizeBookingFromHoldClient({
-        holdId: hold.id,
-        customerId,
-        customer: {
-          name: user?.displayName || gName || null,
-          email: user?.email || gEmail || null,
-          phone: gPhone || null,
-        },
-        price: totalPrice,
-        autoConfirm: true,
-      });
+      if (needsConsent) {
+        // Show consent form instead of booking immediately
+        setShowConsentForm(true);
+        return;
+      }
       
-      console.log('Booking finalized successfully:', out);
-      nav(`/confirmation?id=${encodeURIComponent(out.appointmentId)}`);
+      // Proceed with booking if consent is already given or not required
+      await proceedWithBooking(custId);
     } catch (e: any) {
       console.error('finalizeBooking error:', e);
       setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to finalize booking.');
@@ -333,6 +678,15 @@ export default function Book() {
                             } else {
                               setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
                             }
+                            
+                            // Release hold when services change
+                            if (hold) {
+                              console.log('Services changed, releasing hold:', hold.id);
+                              releaseHoldClient(hold.id)
+                                .then(() => console.log('Successfully released hold on service change'))
+                                .catch(e => console.warn('Failed to release hold:', e));
+                            }
+                            
                             setChosen(null);
                             setHold(null);
                             setError('');
@@ -467,8 +821,17 @@ export default function Book() {
                 const selectedDate = new Date(e.target.value + 'T00:00:00');
                 // Always update the date string to show the selected date
                 setDateStr(e.target.value);
+                
+                // Release hold when date changes
+                if (hold) {
+                  console.log('Date changed, releasing hold:', hold.id);
+                  releaseHoldClient(hold.id)
+                    .then(() => console.log('Successfully released hold on date change'))
+                    .catch(e => console.warn('Failed to release hold:', e));
+                }
+                
                 setChosen(null);
-                if (hold) setHold(null);
+                setHold(null);
                 
                 // Clear any previous errors - the top display will show the status
                 setError('');
@@ -494,8 +857,13 @@ export default function Book() {
               <button
                 key={slot.startISO}
                 onClick={() => pickSlot(slot)}
-                className={`rounded-md border py-2 text-sm ${
-                  chosen?.startISO === slot.startISO ? 'bg-terracotta text-white' : 'hover:bg-cream'
+                disabled={isCreatingHold}
+                className={`rounded-md border py-2 text-sm transition-colors ${
+                  chosen?.startISO === slot.startISO 
+                    ? 'bg-terracotta text-white' 
+                    : isCreatingHold 
+                    ? 'opacity-50 cursor-not-allowed' 
+                    : 'hover:bg-cream'
                 }`}
               >
                 {prettyTime(slot.startISO)}
@@ -575,21 +943,33 @@ export default function Book() {
                   />
                 )}
 
-                <button
-                  className="rounded-xl bg-terracotta px-4 py-2 text-white disabled:opacity-60"
-                  onClick={() => void finalizeBooking()}
-                  disabled={!hold || holdExpired}
-                >
-                  Book now
-                </button>
+                {!user ? (
+                  <>
+                    <button
+                      className="rounded-xl bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90"
+                      onClick={() => nav('/login?returnTo=/book')}
+                      disabled={!hold || holdExpired}
+                    >
+                      Sign in to book
+                    </button>
 
-                <button
-                  className="rounded-xl border border-terracotta/60 px-4 py-2 text-terracotta disabled:opacity-60"
-                  onClick={() => setGuestOpen((x) => !x)}
-                  disabled={!hold || holdExpired}
-                >
-                  Book as guest
-                </button>
+                    <button
+                      className="rounded-xl border border-terracotta/60 px-4 py-2 text-terracotta disabled:opacity-60 hover:bg-terracotta/10"
+                      onClick={() => setGuestOpen((x) => !x)}
+                      disabled={!hold || holdExpired}
+                    >
+                      Book as guest
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="rounded-xl bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90"
+                    onClick={() => void finalizeBooking()}
+                    disabled={!hold || holdExpired}
+                  >
+                    Book now
+                  </button>
+                )}
               </div>
             </div>
 
@@ -599,27 +979,32 @@ export default function Book() {
                 <div className="grid gap-2 sm:grid-cols-3">
                   <input
                     className="rounded-md border p-2"
-                    placeholder="Full name"
+                    placeholder="Full name (optional)"
                     value={gName}
                     onChange={(e) => setGName(e.target.value)}
                   />
                   <input
                     className="rounded-md border p-2"
-                    placeholder="Email"
+                    placeholder="Email (optional)"
                     value={gEmail}
                     onChange={(e) => setGEmail(e.target.value)}
                     inputMode="email"
                     autoComplete="email"
                   />
                   <input
-                    className="rounded-md border p-2"
-                    placeholder="Phone"
+                    className="rounded-md border p-2 border-terracotta/50 bg-terracotta/5"
+                    placeholder="Phone (required)*"
                     value={gPhone}
                     onChange={(e) => setGPhone(e.target.value)}
                     inputMode="tel"
                     autoComplete="tel"
+                    required
                   />
                 </div>
+                
+                <p className="text-xs text-slate-600 -mt-2">
+                  * Phone number is required to confirm your booking and send you appointment reminders
+                </p>
                 
                 {/* SMS Consent */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -640,7 +1025,7 @@ export default function Book() {
                   <button
                     className="rounded-md bg-terracotta px-4 py-2 text-white disabled:opacity-60"
                     onClick={() => void finalizeBooking()}
-                    disabled={!gName || !gEmail}
+                    disabled={!gPhone}
                   >
                     Confirm guest booking
                   </button>
@@ -660,15 +1045,29 @@ export default function Book() {
       </section>
 
       {/* Customer Messaging Widget - Only for authenticated users */}
-      {user && (
+      {user && customerId && (
         <div className="fixed bottom-4 right-4 w-80 z-50">
           <CustomerMessaging
-            customerId={user.uid}
+            customerId={customerId}
             customerName={user.displayName || 'Customer'}
             customerEmail={user.email || ''}
             appointmentId={hold?.id}
           />
         </div>
+      )}
+
+      {/* Consent Form Modal */}
+      {consentForm && (
+        <ConsentForm
+          template={consentForm}
+          customerName={user?.displayName || gName || 'Guest'}
+          onAgree={handleConsentAgree}
+          onDecline={() => {
+            setShowConsentForm(false);
+            setError('Consent is required to proceed with booking. Please review and accept the consent form.');
+          }}
+          isOpen={showConsentForm}
+        />
       )}
     </div>
   );

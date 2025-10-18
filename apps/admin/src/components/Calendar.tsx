@@ -110,12 +110,14 @@ export default function Schedule() {
               </div>
               {/* Hover popover */}
               {hoverDate && isSameDay(hoverDate, d) && todaysAppts.length > 0 && (
-                <div className="absolute z-10 left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border rounded-xl shadow-lg p-2">
+                <div className="absolute z-10 left-1/2 -translate-x-1/2 top-full mt-1 w-64 bg-white border rounded-xl shadow-lg p-2">
                   <div className="text-xs font-medium mb-1">{format(d, 'PP')}</div>
                   <ul className="max-h-48 overflow-auto space-y-1">
                     {todaysAppts.map((a) => (
                       <li key={a.id} className="text-xs flex justify-between gap-2">
-                        <span className="truncate">{format(new Date(a.start), 'h:mm a')}</span>
+                        <span className="truncate">
+                          {format(new Date(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                        </span>
                         <span className="truncate text-right">{services[a.serviceId]?.name || 'Service'}</span>
                       </li>
                     ))}

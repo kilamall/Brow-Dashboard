@@ -28,6 +28,7 @@ export default function Sidebar() {
         <LinkItem to="/sms">SMS Support</LinkItem>
         <LinkItem to="/ai-conversations">AI Conversations</LinkItem>
         <LinkItem to="/skin-analyses">Skin Analyses</LinkItem>
+        <LinkItem to="/consent-forms">Consent Forms</LinkItem>
         <LinkItem to="/settings">Settings</LinkItem>
       </nav>
     </aside>

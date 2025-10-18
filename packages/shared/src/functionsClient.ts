@@ -34,7 +34,7 @@ export type FinalizeHoldInput = {
 export type FinalizeHoldResult = { appointmentId: string };
 
 export type FindOrCreateCustomerInput = {
-  email: string;
+  email?: string;
   name?: string;
   phone?: string;
 };
@@ -42,6 +42,20 @@ export type FindOrCreateCustomerInput = {
 export type FindOrCreateCustomerResult = {
   customerId: string;
   isNew: boolean;
+};
+
+export type InitializeConsentFormsResult = {
+  success: boolean;
+  alreadyExists: boolean;
+  message: string;
+  form: {
+    id: string;
+    name: string;
+    version: string;
+    sections: number;
+    requiredSections?: number;
+    createdAt: string;
+  };
 };
 
 // -------------- internals --------------
@@ -104,6 +118,66 @@ export async function findOrCreateCustomerClient(input: FindOrCreateCustomerInpu
     const fn = httpsCallable(getFns(), 'findOrCreateCustomer');
     const res = await fn(input);
     return res.data as FindOrCreateCustomerResult;
+  } catch (e: any) {
+    throw mapError(e);
+  }
+}
+
+/**
+ * Initialize consent forms (admin only)
+ * Creates the default consent form template
+ */
+export async function initializeConsentFormsClient(): Promise<InitializeConsentFormsResult> {
+  const fns = getFns();
+  const fn = httpsCallable<void, InitializeConsentFormsResult>(fns, 'initializeConsentForms');
+  try {
+    const res = await fn();
+    return res.data;
+  } catch (e: any) {
+    throw mapError(e);
+  }
+}
+
+export type CreateCustomConsentFormInput = {
+  name: string;
+  version?: string;
+  category?: string;
+  title: string;
+  content?: string;
+  sections: Array<{
+    heading: string;
+    content: string;
+    required: boolean;
+  }>;
+  assignedServices?: string[];
+  assignedCategories?: string[];
+};
+
+export type CreateCustomConsentFormResult = {
+  success: boolean;
+  message: string;
+  form: {
+    id: string;
+    name: string;
+    version: string;
+    category: string;
+    sections: number;
+    requiredSections: number;
+    assignedServices: number;
+    assignedCategories: number;
+    createdAt: string;
+  };
+};
+
+/**
+ * Create custom consent form (admin only)
+ */
+export async function createCustomConsentFormClient(input: CreateCustomConsentFormInput): Promise<CreateCustomConsentFormResult> {
+  const fns = getFns();
+  const fn = httpsCallable<CreateCustomConsentFormInput, CreateCustomConsentFormResult>(fns, 'createCustomConsentForm');
+  try {
+    const res = await fn(input);
+    return res.data;
   } catch (e: any) {
     throw mapError(e);
   }

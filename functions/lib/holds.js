@@ -8,8 +8,8 @@ try {
 }
 catch { }
 const db = getFirestore();
-// How long a hold lasts (ms)
-const HOLD_MS = 5 * 60 * 1000;
+// How long a hold lasts (ms) - reduced to 2 minutes for better UX
+const HOLD_MS = 2 * 60 * 1000;
 // ---------- Small helpers ----------
 function nowISO() { return new Date().toISOString(); }
 function addMsISO(iso, ms) {
@@ -33,7 +33,7 @@ function sha256Hex(s) {
     return crypto.createHash('sha256').update(s).digest('hex');
 }
 // Query conflicts inside the transaction (active holds + appointments)
-async function anyConflictsTx(tx, startISO, endISO, resourceId) {
+async function anyConflictsTx(tx, startISO, endISO, resourceId, excludeHoldId) {
     // Active holds that overlap and haven't expired
     const holdsQ = (() => {
         let q = db.collection('holds')
@@ -50,6 +50,9 @@ async function anyConflictsTx(tx, startISO, endISO, resourceId) {
     const apptsQ = apptsBase.where('start', '>=', new Date(new Date(startISO).getTime() - 24 * 3600 * 1000).toISOString());
     const [holdsSnap, apptsSnap] = await Promise.all([tx.get(holdsQ), tx.get(apptsQ)]);
     const hasHold = holdsSnap.docs.some(d => {
+        // Exclude the current hold being finalized
+        if (excludeHoldId && d.id === excludeHoldId)
+            return false;
         const h = d.data();
         return overlaps(startISO, endISO, h.start, h.end);
     });
@@ -61,7 +64,7 @@ async function anyConflictsTx(tx, startISO, endISO, resourceId) {
     return hasHold || hasAppt;
 }
 // ------------- createSlotHold -------------
-export const createSlotHold = onCall({ region: 'us-central1', cors: true, enforceAppCheck: true }, async (req) => {
+export const createSlotHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
     const { serviceId, resourceId = null, startISO, durationMinutes, sessionId } = req.data || {};
     const userId = req.auth?.uid || null;
     assert(serviceId && startISO && durationMinutes && sessionId, 'Missing required fields');
@@ -103,7 +106,7 @@ export const createSlotHold = onCall({ region: 'us-central1', cors: true, enforc
     return created;
 });
 // ------------- finalizeBookingFromHold -------------
-export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: true, enforceAppCheck: true }, async (req) => {
+export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
     const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
     // Your Appointment schema requires customerId; enforce it here
     assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
@@ -115,8 +118,8 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
         const hold = snap.data();
         assert(hold.status === 'active', 'Hold not active');
         assert(new Date(hold.expiresAt).getTime() > Date.now(), 'Hold expired');
-        // Re-check conflicts
-        const conflict = await anyConflictsTx(tx, hold.start, hold.end, hold.resourceId || null);
+        // Re-check conflicts (excluding the current hold being finalized)
+        const conflict = await anyConflictsTx(tx, hold.start, hold.end, hold.resourceId || null, holdId);
         if (conflict)
             throw new HttpsError('aborted', 'E_OVERLAP');
         // Validate price against service (prevent client tampering)
@@ -134,7 +137,7 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
             customerId: customerId,
             start: hold.start,
             duration,
-            status: autoConfirm ? 'confirmed' : 'pending',
+            status: 'pending', // Always create as pending, admin must confirm
             bookedPrice,
             // Small snapshot for convenience (optional)
             customerName: customer.name || null,
@@ -143,22 +146,31 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
             createdAt: nowISO(),
             updatedAt: nowISO(),
         };
+        // Create availability slot (no customer data, just time blocking)
+        const availRef = db.collection('availability').doc(apptRef.id);
+        const availSlot = {
+            start: hold.start,
+            end: hold.end,
+            status: 'booked',
+            createdAt: nowISO(),
+        };
         tx.set(apptRef, appt);
+        tx.set(availRef, availSlot); // Add availability slot
         tx.update(holdRef, { status: 'finalized', expiresAt: nowISO() });
         return { appointmentId: apptRef.id };
     });
     return result;
 });
 // ------------- releaseHold -------------
-export const releaseHold = onCall({ region: 'us-central1', cors: true, enforceAppCheck: true }, async (req) => {
+export const releaseHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
     const { holdId } = req.data || {};
     assert(holdId, 'Missing holdId');
     const ref = db.collection('holds').doc(holdId);
-    await ref.update({ status: 'canceled', expiresAt: nowISO() });
+    await ref.update({ status: 'released', expiresAt: nowISO() });
     return { ok: true };
 });
 // ------------- extendHold (one-time) -------------
-export const extendHold = onCall({ region: 'us-central1', cors: true, enforceAppCheck: true }, async (req) => {
+export const extendHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
     const { holdId, extraSeconds = 90 } = req.data || {};
     assert(holdId, 'Missing holdId');
     const ref = db.collection('holds').doc(holdId);

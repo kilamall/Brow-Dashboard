@@ -1,12 +1,18 @@
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import { defineSecret } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as crypto from 'crypto';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
 
+// Cache configuration for AI chatbot responses
+const CHATBOT_CACHE_COLLECTION = 'chatbot_ai_cache';
+const CHATBOT_CACHE_TTL_HOURS = 24;
+
 // Gemini AI Configuration
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
 
 // Business Context for AI
@@ -193,10 +199,74 @@ async function getCustomerContext(phoneNumber: string): Promise<CustomerContext>
   }
 }
 
-// Call Gemini AI API
-async function callGeminiAPI(prompt: string, context: any): Promise<string> {
+// Generate cache key for chatbot messages
+function generateChatbotCacheKey(message: string): string {
+  const normalizedMessage = message.toLowerCase().trim();
+  const hash = crypto.createHash('md5');
+  hash.update(normalizedMessage);
+  return hash.digest('hex');
+}
+
+// Check chatbot response cache
+async function checkChatbotCache(cacheKey: string): Promise<string | null> {
   try {
-    if (!GEMINI_API_KEY) {
+    const cacheDoc = await db.collection(CHATBOT_CACHE_COLLECTION).doc(cacheKey).get();
+    
+    if (!cacheDoc.exists) {
+      return null;
+    }
+    
+    const cacheData = cacheDoc.data();
+    if (!cacheData) {
+      return null;
+    }
+    
+    const cachedAt = cacheData.cachedAt?.toDate();
+    if (!cachedAt) {
+      return null;
+    }
+    
+    const now = new Date();
+    const ageInHours = (now.getTime() - cachedAt.getTime()) / (1000 * 60 * 60);
+    
+    if (ageInHours > CHATBOT_CACHE_TTL_HOURS) {
+      await db.collection(CHATBOT_CACHE_COLLECTION).doc(cacheKey).delete();
+      return null;
+    }
+    
+    console.log(`Chatbot cache hit for key: ${cacheKey}`);
+    return cacheData.response;
+  } catch (error) {
+    console.error('Error checking chatbot cache:', error);
+    return null;
+  }
+}
+
+// Save chatbot response to cache
+async function saveChatbotToCache(cacheKey: string, response: string): Promise<void> {
+  try {
+    await db.collection(CHATBOT_CACHE_COLLECTION).doc(cacheKey).set({
+      response,
+      cachedAt: new Date(),
+      cacheKey,
+    });
+  } catch (error) {
+    console.error('Error saving chatbot to cache:', error);
+  }
+}
+
+// Call Gemini AI API
+async function callGeminiAPI(prompt: string, context: any, apiKey: string): Promise<string> {
+  try {
+    // Check cache for common questions
+    const cacheKey = generateChatbotCacheKey(prompt);
+    const cachedResponse = await checkChatbotCache(cacheKey);
+    
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    
+    if (!apiKey) {
       console.log('Gemini API key not configured, returning fallback response');
       return generateFallbackResponse(prompt);
     }
@@ -253,7 +323,7 @@ Customer message: ${prompt}`;
       }
     };
 
-    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -268,7 +338,21 @@ Customer message: ${prompt}`;
     const data = await response.json() as any;
     const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || generateFallbackResponse(prompt);
     
-    return aiResponse.trim();
+    const trimmedResponse = aiResponse.trim();
+    
+    // Cache common queries
+    const lowerPrompt = prompt.toLowerCase();
+    const isCacheable = lowerPrompt.includes('hours') || 
+                        lowerPrompt.includes('price') || 
+                        lowerPrompt.includes('cost') ||
+                        lowerPrompt.includes('service') ||
+                        lowerPrompt.includes('location');
+    
+    if (isCacheable) {
+      await saveChatbotToCache(cacheKey, trimmedResponse);
+    }
+    
+    return trimmedResponse;
   } catch (error) {
     console.error('Error calling Gemini API:', error);
     return generateFallbackResponse(prompt);
@@ -300,8 +384,9 @@ function generateFallbackResponse(prompt: string): string {
 
 // Main AI chatbot function
 export const aiChatbot = onRequest(
-  { region: 'us-central1', cors: true },
+  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
   async (req, res) => {
+    const apiKey = geminiApiKey.value();
     console.log('AI Chatbot request received:', req.method, req.body);
     
     if (req.method !== 'POST') {
@@ -330,7 +415,7 @@ export const aiChatbot = onRequest(
       };
       
       // Get AI response
-      const aiResponse = await callGeminiAPI(message, aiContext);
+      const aiResponse = await callGeminiAPI(message, aiContext, apiKey);
       
       // Store conversation
       await Promise.all([
@@ -372,8 +457,14 @@ export const aiChatbot = onRequest(
 
 // Test AI chatbot function
 export const testAIChatbot = onCall(
-  { region: 'us-central1', cors: true },
+  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
   async (req) => {
+    // SECURITY FIX: Require authentication
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    
+    const apiKey = geminiApiKey.value();
     const { phoneNumber, message } = req.data || {};
     
     if (!phoneNumber || !message) {
@@ -391,7 +482,7 @@ export const testAIChatbot = onCall(
         business: businessData
       };
       
-      const aiResponse = await callGeminiAPI(message, aiContext);
+      const aiResponse = await callGeminiAPI(message, aiContext, apiKey);
       
       return {
         success: true,
@@ -419,6 +510,14 @@ export const getAIConversation = onCall(
     
     if (!customerId) {
       throw new HttpsError('invalid-argument', 'Missing customer ID');
+    }
+    
+    // SECURITY FIX: Prevent IDOR - only allow access to own data or admin
+    const isAdmin = req.auth?.token?.role === 'admin';
+    const isOwnData = userId === customerId;
+    
+    if (!isAdmin && !isOwnData) {
+      throw new HttpsError('permission-denied', 'Cannot access other customers\' conversations');
     }
     
     try {

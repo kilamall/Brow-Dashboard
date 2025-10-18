@@ -1,9 +1,15 @@
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
+import { defineSecret } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as crypto from 'crypto';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
+
+// Cache configuration for SMS AI responses
+const SMS_CACHE_COLLECTION = 'sms_ai_cache';
+const SMS_CACHE_TTL_HOURS = 24; // Cache SMS responses for 24 hours
 
 // AWS SNS configuration
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
@@ -12,7 +18,7 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const BUSINESS_PHONE_NUMBER = process.env.BUSINESS_PHONE_NUMBER;
 
 // Gemini AI configuration
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
 
 // Business context
@@ -84,10 +90,78 @@ async function getCustomerContext(phoneNumber: string): Promise<any> {
   }
 }
 
-// Call Gemini AI
-async function callGeminiAI(message: string, context: any): Promise<string> {
+// Generate cache key for SMS messages
+function generateSMSCacheKey(message: string, phoneNumber: string): string {
+  const normalizedMessage = message.toLowerCase().trim();
+  const hash = crypto.createHash('md5');
+  hash.update(normalizedMessage + phoneNumber);
+  return hash.digest('hex');
+}
+
+// Check SMS response cache
+async function checkSMSCache(cacheKey: string): Promise<string | null> {
   try {
-    if (!GEMINI_API_KEY) {
+    const cacheDoc = await db.collection(SMS_CACHE_COLLECTION).doc(cacheKey).get();
+    
+    if (!cacheDoc.exists) {
+      return null;
+    }
+    
+    const cacheData = cacheDoc.data();
+    if (!cacheData) {
+      return null;
+    }
+    
+    // Check if cache is still valid
+    const cachedAt = cacheData.cachedAt?.toDate();
+    if (!cachedAt) {
+      return null;
+    }
+    
+    const now = new Date();
+    const ageInHours = (now.getTime() - cachedAt.getTime()) / (1000 * 60 * 60);
+    
+    if (ageInHours > SMS_CACHE_TTL_HOURS) {
+      // Cache expired
+      await db.collection(SMS_CACHE_COLLECTION).doc(cacheKey).delete();
+      return null;
+    }
+    
+    console.log(`SMS cache hit for key: ${cacheKey} (${ageInHours.toFixed(1)} hours old)`);
+    return cacheData.response;
+  } catch (error) {
+    console.error('Error checking SMS cache:', error);
+    return null;
+  }
+}
+
+// Save SMS response to cache
+async function saveSMSToCache(cacheKey: string, response: string): Promise<void> {
+  try {
+    await db.collection(SMS_CACHE_COLLECTION).doc(cacheKey).set({
+      response,
+      cachedAt: new Date(),
+      cacheKey,
+    });
+    console.log(`SMS response cached with key: ${cacheKey}`);
+  } catch (error) {
+    console.error('Error saving SMS to cache:', error);
+  }
+}
+
+// Call Gemini AI
+async function callGeminiAI(message: string, context: any, phoneNumber: string, apiKey: string): Promise<string> {
+  try {
+    // Check cache first for common queries
+    const cacheKey = generateSMSCacheKey(message, 'generic'); // Use 'generic' for common questions
+    const cachedResponse = await checkSMSCache(cacheKey);
+    
+    if (cachedResponse) {
+      console.log('Using cached SMS response');
+      return cachedResponse;
+    }
+    
+    if (!apiKey) {
       return generateFallbackResponse(message);
     }
 
@@ -127,7 +201,7 @@ Customer message: ${message}`;
       }
     };
 
-    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -138,7 +212,23 @@ Customer message: ${message}`;
     }
 
     const data = await response.json() as any;
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
+    const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
+    
+    // Cache the response for common queries
+    // Only cache for non-personalized queries (e.g., hours, pricing, services)
+    const lowerMessage = message.toLowerCase();
+    const isCacheable = lowerMessage.includes('hours') || 
+                        lowerMessage.includes('price') || 
+                        lowerMessage.includes('cost') ||
+                        lowerMessage.includes('service') ||
+                        lowerMessage.includes('location') ||
+                        lowerMessage.includes('address');
+    
+    if (isCacheable) {
+      await saveSMSToCache(cacheKey, aiResponse);
+    }
+    
+    return aiResponse;
   } catch (error) {
     console.error('Error calling Gemini AI:', error);
     return generateFallbackResponse(message);
@@ -234,8 +324,9 @@ function generateAvailableSlots(services: any[], businessHours: any, appointment
 
 // Main SMS + AI integration function
 export const smsAIWebhook = onRequest(
-  { region: 'us-central1', cors: true },
+  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
   async (req, res) => {
+    const apiKey = geminiApiKey.value();
     console.log('SMS AI webhook received:', req.method, req.body);
     
     if (req.method !== 'POST') {
@@ -275,7 +366,7 @@ export const smsAIWebhook = onRequest(
       };
       
       // Get AI response
-      const aiResponse = await callGeminiAI(body, aiContext);
+      const aiResponse = await callGeminiAI(body, aiContext, from, apiKey);
       
       // Send SMS response
       const smsSent = await sendSMS(from, aiResponse);
@@ -321,8 +412,14 @@ export const smsAIWebhook = onRequest(
 
 // Test SMS + AI integration
 export const testSMSAI = onCall(
-  { region: 'us-central1', cors: true },
+  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
   async (req) => {
+    // SECURITY FIX: Require authentication
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    
+    const apiKey = geminiApiKey.value();
     const { phoneNumber, message } = req.data || {};
     
     if (!phoneNumber || !message) {
@@ -348,7 +445,7 @@ export const testSMSAI = onCall(
         availableSlots
       };
       
-      const aiResponse = await callGeminiAI(message, aiContext);
+      const aiResponse = await callGeminiAI(message, aiContext, phoneNumber, apiKey);
       const smsSent = await sendSMS(phoneNumber, aiResponse);
       
       return {
@@ -378,6 +475,14 @@ export const getAISMSConversation = onCall(
     
     if (!customerId) {
       throw new HttpsError('invalid-argument', 'Missing customer ID');
+    }
+    
+    // SECURITY FIX: Prevent IDOR - only allow access to own data or admin
+    const isAdmin = req.auth?.token?.role === 'admin';
+    const isOwnData = userId === customerId;
+    
+    if (!isAdmin && !isOwnData) {
+      throw new HttpsError('permission-denied', 'Cannot access other customers\' conversations');
     }
     
     try {

@@ -1,16 +1,47 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, updateProfile } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  updateProfile,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  PhoneAuthProvider,
+  signInWithCredential
+} from 'firebase/auth';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+
+// Extend Window interface for reCAPTCHA
+declare global {
+  interface Window {
+    recaptchaVerifier: RecaptchaVerifier | undefined;
+    grecaptcha: any;
+  }
+}
+
+type AuthMode = 'email' | 'phone';
 
 export default function Login() {
   const { db } = useFirebase();
   const auth = getAuth();
   const nav = useNavigate();
+  
+  // Get return URL from query params
+  const searchParams = new URLSearchParams(window.location.search);
+  const returnTo = searchParams.get('returnTo') || '/book';
+  
+  const [authMode, setAuthMode] = useState<AuthMode>('email');
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationId, setVerificationId] = useState('');
+  const [showVerification, setShowVerification] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -29,7 +60,8 @@ export default function Login() {
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
-      nav('/book');
+      // Redirect back to return URL with cart intact
+      nav(returnTo);
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
     } finally {
@@ -42,11 +74,101 @@ export default function Login() {
     setLoading(true);
 
     try {
+      console.log('🔍 Starting Google Auth...');
+      console.log('🔍 Auth instance:', auth);
+      console.log('🔍 Auth domain:', auth.app.options.authDomain);
+      
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      nav('/book');
+      console.log('🔍 Provider created:', provider);
+      
+      const result = await signInWithPopup(auth, provider);
+      console.log('🔍 Auth successful:', result.user?.email);
+      // Redirect back to return URL with cart intact
+      nav(returnTo);
     } catch (err: any) {
-      setError(err.message || 'Google sign-in failed');
+      console.error('🔍 Google Auth Error:', err);
+      console.error('🔍 Error code:', err.code);
+      console.error('🔍 Error message:', err.message);
+      setError(`${err.code}: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Setup reCAPTCHA verifier
+  useEffect(() => {
+    if (authMode === 'phone' && !window.recaptchaVerifier) {
+      try {
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          size: 'invisible',
+          callback: () => {
+            // reCAPTCHA solved
+          },
+          'expired-callback': () => {
+            setError('reCAPTCHA expired. Please try again.');
+          }
+        });
+      } catch (err) {
+        console.error('Error setting up reCAPTCHA:', err);
+      }
+    }
+    
+    return () => {
+      if (window.recaptchaVerifier) {
+        try {
+          window.recaptchaVerifier.clear();
+        } catch (e) {
+          // ignore cleanup errors
+        }
+        window.recaptchaVerifier = undefined;
+      }
+    };
+  }, [authMode, auth]);
+
+  const handlePhoneAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      // Format phone number to E.164 format if not already
+      let formattedPhone = phone.trim();
+      if (!formattedPhone.startsWith('+')) {
+        // Assume US number if no country code
+        formattedPhone = '+1' + formattedPhone.replace(/\D/g, '');
+      }
+
+      const appVerifier = window.recaptchaVerifier;
+      const confirmationResult = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+      setVerificationId(confirmationResult.verificationId);
+      setShowVerification(true);
+      setError('');
+    } catch (err: any) {
+      console.error('Phone auth error:', err);
+      setError(err.message || 'Failed to send verification code');
+      // Reset reCAPTCHA on error
+      if (window.recaptchaVerifier) {
+        window.recaptchaVerifier.render().then((widgetId: any) => {
+          window.grecaptcha.reset(widgetId);
+        }).catch(() => {});
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const credential = PhoneAuthProvider.credential(verificationId, verificationCode);
+      await signInWithCredential(auth, credential);
+      // Redirect back to return URL with cart intact
+      nav(returnTo);
+    } catch (err: any) {
+      setError(err.message || 'Invalid verification code');
     } finally {
       setLoading(false);
     }
@@ -66,7 +188,43 @@ export default function Login() {
           </p>
         </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleEmailAuth}>
+        {/* Auth Mode Toggle */}
+        <div className="flex gap-2 p-1 bg-slate-100 rounded-lg">
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('email');
+              setError('');
+              setShowVerification(false);
+            }}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              authMode === 'email'
+                ? 'bg-white text-terracotta shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Email
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('phone');
+              setError('');
+              setShowVerification(false);
+            }}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              authMode === 'phone'
+                ? 'bg-white text-terracotta shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Phone
+          </button>
+        </div>
+
+        {/* Email Auth Form */}
+        {authMode === 'email' && (
+          <form className="mt-8 space-y-6" onSubmit={handleEmailAuth}>
           {isSignUp && (
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-slate-700">
@@ -133,6 +291,117 @@ export default function Login() {
             {loading ? 'Please wait...' : isSignUp ? 'Sign Up' : 'Sign In'}
           </button>
         </form>
+        )}
+
+        {/* Phone Auth Form */}
+        {authMode === 'phone' && (
+          <>
+            {!showVerification ? (
+              <form className="mt-8 space-y-6" onSubmit={handlePhoneAuth}>
+                {isSignUp && (
+                  <div>
+                    <label htmlFor="phone-name" className="block text-sm font-medium text-slate-700">
+                      Full Name
+                    </label>
+                    <input
+                      id="phone-name"
+                      name="name"
+                      type="text"
+                      required={isSignUp}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                      placeholder="John Doe"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
+                    Phone Number
+                  </label>
+                  <input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                    placeholder="+1 (555) 123-4567"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Enter your phone number with country code (e.g., +1 for US)
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="rounded-md bg-red-50 p-4">
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-terracotta hover:bg-terracotta/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-terracotta disabled:opacity-50"
+                >
+                  {loading ? 'Sending code...' : 'Send Verification Code'}
+                </button>
+                <div id="recaptcha-container"></div>
+              </form>
+            ) : (
+              <form className="mt-8 space-y-6" onSubmit={handleVerifyCode}>
+                <div>
+                  <label htmlFor="verification-code" className="block text-sm font-medium text-slate-700">
+                    Verification Code
+                  </label>
+                  <input
+                    id="verification-code"
+                    name="code"
+                    type="text"
+                    required
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                    placeholder="123456"
+                    maxLength={6}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Enter the 6-digit code sent to {phone}
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="rounded-md bg-red-50 p-4">
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-terracotta hover:bg-terracotta/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-terracotta disabled:opacity-50"
+                >
+                  {loading ? 'Verifying...' : 'Verify & Sign In'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVerification(false);
+                    setVerificationCode('');
+                    setError('');
+                  }}
+                  className="w-full text-sm text-slate-600 hover:text-slate-800"
+                >
+                  ← Back to phone number
+                </button>
+              </form>
+            )}
+          </>
+        )}
 
         <div className="mt-6">
           <div className="relative">
@@ -172,17 +441,19 @@ export default function Login() {
           </button>
         </div>
 
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={() => setIsSignUp(!isSignUp)}
-            className="text-sm text-terracotta hover:text-terracotta/80"
-          >
-            {isSignUp
-              ? 'Already have an account? Sign in'
-              : "Don't have an account? Sign up"}
-          </button>
-        </div>
+        {authMode === 'email' && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setIsSignUp(!isSignUp)}
+              className="text-sm text-terracotta hover:text-terracotta/80"
+            >
+              {isSignUp
+                ? 'Already have an account? Sign in'
+                : "Don't have an account? Sign up"}
+            </button>
+          </div>
+        )}
 
         <div className="text-center">
           <button

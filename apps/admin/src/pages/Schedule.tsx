@@ -111,7 +111,7 @@ export default function Schedule() {
                     }}
                     className="text-[11px] truncate border rounded px-1 py-0.5 cursor-pointer hover:bg-slate-100 transition-colors"
                   >
-                    {format(new Date(a.start), 'h:mma')} · {services[a.serviceId]?.name || 'Service'}
+                    {format(new Date(a.start), 'h:mma')}-{format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mma')} · {services[a.serviceId]?.name || 'Service'}
                   </div>
                 ))}
                 {todaysAppts.length > 3 && (
@@ -133,7 +133,9 @@ export default function Schedule() {
                         className="text-xs flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-md hover:bg-slate-100 group cursor-pointer"
                       >
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{format(new Date(a.start), 'h:mm a')}</div>
+                          <div className="font-medium truncate">
+                            {format(new Date(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                          </div>
                           <div className="text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
                           {a.customerName && (
                             <div className="text-slate-500 truncate text-[10px]">{a.customerName}</div>
@@ -162,6 +164,72 @@ export default function Schedule() {
           );
         })}
       </div>
+
+      {/* Appointment Confirmation Section */}
+      <section className="bg-white rounded-xl shadow-soft p-6">
+        <h3 className="font-serif text-xl mb-4">Appointment Confirmations</h3>
+        {appts.filter(a => a.status === 'pending').length === 0 ? (
+          <div className="text-slate-500 text-sm">No pending appointments to confirm.</div>
+        ) : (
+          <div className="space-y-3">
+            {appts
+              .filter(a => a.status === 'pending')
+              .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+              .map((a) => (
+                <div 
+                  key={a.id} 
+                  className="flex items-center justify-between p-4 bg-yellow-50 border border-yellow-200 rounded-lg"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm">{format(new Date(a.start), 'MMM d, h:mm a')}</div>
+                    <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                    {a.customerName && (
+                      <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                    )}
+                    {a.customerEmail && (
+                      <div className="text-xs text-slate-500 truncate">{a.customerEmail}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-sm font-semibold text-terracotta">
+                      {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          if (confirm('Confirm this appointment?')) {
+                            updateDoc(doc(db, 'appointments', a.id), { 
+                              status: 'confirmed',
+                              confirmedAt: new Date().toISOString(),
+                              confirmedBy: 'admin'
+                            });
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-md hover:bg-green-700 transition-colors"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('Cancel this appointment?')) {
+                            updateDoc(doc(db, 'appointments', a.id), { 
+                              status: 'cancelled',
+                              cancelledAt: new Date().toISOString(),
+                              cancelledBy: 'admin'
+                            });
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-md hover:bg-red-700 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </section>
 
       {/* Add appointment modal */}
       <AddAppointmentModal

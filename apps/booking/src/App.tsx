@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import ServiceWorkerUpdate from './components/ServiceWorkerUpdate';
 import Home from '@/pages/Home';
 import ServicesPage from '@/pages/Services';
 import Book from '@/pages/Book';
@@ -15,7 +16,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-cream text-slate-800">
       <Navbar />
-      <main className="max-w-6xl mx-auto p-6">
+      <ServiceWorkerUpdate />
+      <main className="max-w-6xl mx-auto px-4 py-6 md:px-6">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/services" element={<ServicesPage />} />
@@ -29,7 +31,7 @@ export default function App() {
         </Routes>
       </main>
       <footer className="border-t bg-white/60 mt-12">
-        <div className="max-w-6xl mx-auto p-6 text-xs text-slate-600">
+        <div className="max-w-6xl mx-auto px-4 py-6 md:px-6 text-sm text-slate-600">
           © {new Date().getFullYear()} 
           <span className="ml-2 font-brandBueno text-brand-bueno">BUENO</span>
           <span className="ml-1 font-brandBrows text-brand-brows">BROWS</span>

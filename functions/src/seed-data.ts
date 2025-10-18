@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -10,15 +10,10 @@ try { initializeApp(); } catch {}
  * 
  * ⚠️ REMOVE THIS FUNCTION AFTER RUNNING!
  */
-export const seedInitialData = functions.https.onRequest(async (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  
-  if (req.method === 'OPTIONS') {
-    res.set('Access-Control-Allow-Methods', 'POST');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.status(204).send('');
-    return;
-  }
+export const seedInitialData = onRequest(
+  { region: 'us-central1', cors: true },
+  async (req, res) => {
+  // CORS is handled by the function configuration
 
   try {
     const db = getFirestore();
@@ -104,5 +99,6 @@ export const seedInitialData = functions.https.onRequest(async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+  }
+);
 
