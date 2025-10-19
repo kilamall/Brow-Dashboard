@@ -276,6 +276,8 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
             <div className="p-4 border-t border-gray-200">
               <div className="flex space-x-2">
                 <input
+                  id="sms-message-input"
+                  name="sms-message-input"
                   type="text"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}

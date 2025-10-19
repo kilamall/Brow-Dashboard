@@ -213,10 +213,12 @@ export default function Reviews() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label htmlFor="review-name" className="block text-sm font-medium text-slate-700 mb-1">
                     Your Name *
                   </label>
                   <input
+                    id="review-name"
+                    name="review-name"
                     type="text"
                     required
                     value={formData.name}
@@ -226,10 +228,12 @@ export default function Reviews() {
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label htmlFor="review-email" className="block text-sm font-medium text-slate-700 mb-1">
                     Email
                   </label>
                   <input
+                    id="review-email"
+                    name="review-email"
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
@@ -239,10 +243,12 @@ export default function Reviews() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="review-service" className="block text-sm font-medium text-slate-700 mb-1">
                   Service (Optional)
                 </label>
                 <input
+                  id="review-service"
+                  name="review-service"
                   type="text"
                   value={formData.serviceName}
                   onChange={(e) => setFormData(prev => ({ ...prev, serviceName: e.target.value }))}
@@ -252,18 +258,21 @@ export default function Reviews() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="review-rating-1" className="block text-sm font-medium text-slate-700 mb-1">
                   Rating
                 </label>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1" role="group" aria-label="Rating">
                   {Array.from({ length: 5 }, (_, i) => (
                     <button
                       key={i}
+                      id={`review-rating-${i + 1}`}
+                      name={`review-rating-${i + 1}`}
                       type="button"
                       onClick={() => setFormData(prev => ({ ...prev, rating: i + 1 }))}
                       className={`text-2xl ${
                         i < formData.rating ? 'text-yellow-400' : 'text-gray-300'
                       } hover:text-yellow-400 transition-colors`}
+                      aria-label={`Rate ${i + 1} stars`}
                     >
                       ★
                     </button>
@@ -272,10 +281,12 @@ export default function Reviews() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="review-comment" className="block text-sm font-medium text-slate-700 mb-1">
                   Your Review *
                 </label>
                 <textarea
+                  id="review-comment"
+                  name="review-comment"
                   required
                   rows={4}
                   value={formData.comment}

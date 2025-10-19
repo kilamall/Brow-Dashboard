@@ -3,6 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 try {
     initializeApp();
 }
@@ -65,6 +66,8 @@ async function anyConflictsTx(tx, startISO, endISO, resourceId, excludeHoldId) {
 }
 // ------------- createSlotHold -------------
 export const createSlotHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
+    // SECURITY: Rate limit hold creation (10 per minute per IP/user)
+    await consumeRateLimit(rateLimiters.createHold, getUserIdentifier(req));
     const { serviceId, resourceId = null, startISO, durationMinutes, sessionId } = req.data || {};
     const userId = req.auth?.uid || null;
     assert(serviceId && startISO && durationMinutes && sessionId, 'Missing required fields');
@@ -107,59 +110,88 @@ export const createSlotHold = onCall({ region: 'us-central1', cors: true }, asyn
 });
 // ------------- finalizeBookingFromHold -------------
 export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: true }, async (req) => {
-    const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
-    // Your Appointment schema requires customerId; enforce it here
-    assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
-    const holdRef = db.collection('holds').doc(holdId);
-    const apptRef = db.collection('appointments').doc();
-    const result = await db.runTransaction(async (tx) => {
-        const snap = await tx.get(holdRef);
-        assert(snap.exists, 'Hold not found');
-        const hold = snap.data();
-        assert(hold.status === 'active', 'Hold not active');
-        assert(new Date(hold.expiresAt).getTime() > Date.now(), 'Hold expired');
-        // Re-check conflicts (excluding the current hold being finalized)
-        const conflict = await anyConflictsTx(tx, hold.start, hold.end, hold.resourceId || null, holdId);
-        if (conflict)
-            throw new HttpsError('aborted', 'E_OVERLAP');
-        // Validate price against service (prevent client tampering)
-        const svcRef = db.collection('services').doc(hold.serviceId);
-        const svcSnap = await tx.get(svcRef);
-        assert(svcSnap.exists, 'Service not found');
-        const svc = svcSnap.data();
-        const bookedPrice = typeof price === 'number' ? price : svc.price;
-        if (typeof price === 'number' && price !== svc.price) {
-            // coerce to current service price (or throw if you want strict equality)
+    try {
+        // SECURITY: Rate limit booking finalization (5 per minute per IP/user)
+        await consumeRateLimit(rateLimiters.finalizeBooking, getUserIdentifier(req));
+        const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
+        // Your Appointment schema requires customerId; enforce it here
+        assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
+        console.log('📋 Finalizing booking for hold:', holdId);
+        const holdRef = db.collection('holds').doc(holdId);
+        const apptRef = db.collection('appointments').doc();
+        const result = await db.runTransaction(async (tx) => {
+            const snap = await tx.get(holdRef);
+            assert(snap.exists, 'Hold not found');
+            const hold = snap.data();
+            // Log hold status for debugging
+            const now = Date.now();
+            const expiresAt = new Date(hold.expiresAt).getTime();
+            console.log('🔍 Hold status in finalization:', {
+                holdId,
+                status: hold.status,
+                expiresAt: hold.expiresAt,
+                timeRemaining: `${Math.round((expiresAt - now) / 1000)}s`,
+                isExpired: expiresAt <= now
+            });
+            assert(hold.status === 'active', `Hold not active (status: ${hold.status})`);
+            assert(new Date(hold.expiresAt).getTime() > Date.now(), 'Hold expired');
+            // Re-check conflicts (excluding the current hold being finalized)
+            const conflict = await anyConflictsTx(tx, hold.start, hold.end, hold.resourceId || null, holdId);
+            if (conflict)
+                throw new HttpsError('aborted', 'E_OVERLAP');
+            // Validate price against service (prevent client tampering)
+            const svcRef = db.collection('services').doc(hold.serviceId);
+            const svcSnap = await tx.get(svcRef);
+            assert(svcSnap.exists, 'Service not found');
+            const svc = svcSnap.data();
+            const bookedPrice = typeof price === 'number' ? price : svc.price;
+            if (typeof price === 'number' && price !== svc.price) {
+                // coerce to current service price (or throw if you want strict equality)
+            }
+            const duration = Math.round((new Date(hold.end).getTime() - new Date(hold.start).getTime()) / 60000);
+            const appt = {
+                serviceId: hold.serviceId,
+                customerId: customerId,
+                start: hold.start,
+                duration,
+                status: 'pending', // Always create as pending, admin must confirm
+                bookedPrice,
+                // Small snapshot for convenience (optional)
+                customerName: customer.name || null,
+                customerEmail: customer.email || null,
+                customerPhone: customer.phone || null,
+                createdAt: nowISO(),
+                updatedAt: nowISO(),
+            };
+            // Create availability slot (no customer data, just time blocking)
+            const availRef = db.collection('availability').doc(apptRef.id);
+            const availSlot = {
+                start: hold.start,
+                end: hold.end,
+                status: 'booked',
+                createdAt: nowISO(),
+            };
+            tx.set(apptRef, appt);
+            tx.set(availRef, availSlot); // Add availability slot
+            tx.update(holdRef, { status: 'finalized', expiresAt: nowISO() });
+            return { appointmentId: apptRef.id };
+        });
+        console.log('✅ Booking finalized successfully:', result.appointmentId);
+        return result;
+    }
+    catch (error) {
+        console.error('❌ Error finalizing booking:', error);
+        console.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            stack: error.stack
+        });
+        // Re-throw as HttpsError for proper client handling
+        if (error instanceof HttpsError) {
+            throw error;
         }
-        const duration = Math.round((new Date(hold.end).getTime() - new Date(hold.start).getTime()) / 60000);
-        const appt = {
-            serviceId: hold.serviceId,
-            customerId: customerId,
-            start: hold.start,
-            duration,
-            status: 'pending', // Always create as pending, admin must confirm
-            bookedPrice,
-            // Small snapshot for convenience (optional)
-            customerName: customer.name || null,
-            customerEmail: customer.email || null,
-            customerPhone: customer.phone || null,
-            createdAt: nowISO(),
-            updatedAt: nowISO(),
-        };
-        // Create availability slot (no customer data, just time blocking)
-        const availRef = db.collection('availability').doc(apptRef.id);
-        const availSlot = {
-            start: hold.start,
-            end: hold.end,
-            status: 'booked',
-            createdAt: nowISO(),
-        };
-        tx.set(apptRef, appt);
-        tx.set(availRef, availSlot); // Add availability slot
-        tx.update(holdRef, { status: 'finalized', expiresAt: nowISO() });
-        return { appointmentId: apptRef.id };
-    });
-    return result;
+        throw new HttpsError('internal', `Failed to finalize booking: ${error.message}`);
+    }
 });
 // ------------- releaseHold -------------
 export const releaseHold = onCall({ region: 'us-central1', cors: true }, async (req) => {

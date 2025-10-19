@@ -2,6 +2,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -9,6 +10,9 @@ const db = getFirestore();
 export const findOrCreateCustomer = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
+    // SECURITY: Rate limit customer creation (10 per hour per IP/user)
+    await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
+
     const { email, name, phone } = req.data || {};
     
     // Require at least email or phone

@@ -141,18 +141,22 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
   return (
     <div className="grid gap-4 max-w-3xl">
       <div className="grid sm:grid-cols-2 gap-4">
-        <label className="grid gap-2">
+        <label htmlFor="business-name" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">Business Name</span>
           <input 
+            id="business-name"
+            name="business-name"
             type="text" 
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             value={info.name} 
             onChange={(e)=>setInfo({...info, name: e.target.value})} 
           />
         </label>
-        <label className="grid gap-2">
+        <label htmlFor="business-phone" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">Phone Number</span>
           <input 
+            id="business-phone"
+            name="business-phone"
             type="tel" 
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             value={info.phone} 
@@ -161,9 +165,11 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
         </label>
       </div>
 
-      <label className="grid gap-2">
+      <label htmlFor="business-email" className="grid gap-2">
         <span className="text-sm font-medium text-slate-700">Email Address</span>
         <input 
+          id="business-email"
+          name="business-email"
           type="email" 
           className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
           value={info.email} 
@@ -171,9 +177,11 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
         />
       </label>
 
-      <label className="grid gap-2">
+      <label htmlFor="business-address" className="grid gap-2">
         <span className="text-sm font-medium text-slate-700">Street Address</span>
         <input 
+          id="business-address"
+          name="business-address"
           type="text" 
           className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
           value={info.address} 
@@ -182,27 +190,33 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
       </label>
 
       <div className="grid sm:grid-cols-3 gap-4">
-        <label className="grid gap-2">
+        <label htmlFor="business-city" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">City</span>
           <input 
+            id="business-city"
+            name="business-city"
             type="text" 
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             value={info.city} 
             onChange={(e)=>setInfo({...info, city: e.target.value})} 
           />
         </label>
-        <label className="grid gap-2">
+        <label htmlFor="business-state" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">State</span>
           <input 
+            id="business-state"
+            name="business-state"
             type="text" 
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             value={info.state} 
             onChange={(e)=>setInfo({...info, state: e.target.value})} 
           />
         </label>
-        <label className="grid gap-2">
+        <label htmlFor="business-zip" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">ZIP Code</span>
           <input 
+            id="business-zip"
+            name="business-zip"
             type="text" 
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             value={info.zip} 
@@ -214,11 +228,13 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
       <div className="border-t pt-4 mt-2">
         <h3 className="text-sm font-semibold text-slate-700 mb-3">Social Media (usernames only)</h3>
         <div className="grid sm:grid-cols-3 gap-4">
-          <label className="grid gap-2">
+          <label htmlFor="business-instagram" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Instagram</span>
             <div className="flex items-center gap-2">
               <span className="text-slate-500">@</span>
               <input 
+                id="business-instagram"
+                name="business-instagram"
                 type="text" 
                 className="flex-1 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
                 placeholder="buenobrows"
@@ -227,11 +243,13 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
               />
             </div>
           </label>
-          <label className="grid gap-2">
+          <label htmlFor="business-tiktok" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">TikTok</span>
             <div className="flex items-center gap-2">
               <span className="text-slate-500">@</span>
               <input 
+                id="business-tiktok"
+                name="business-tiktok"
                 type="text" 
                 className="flex-1 border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
                 placeholder="buenobrows"
@@ -240,9 +258,11 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
               />
             </div>
           </label>
-          <label className="grid gap-2">
+          <label htmlFor="business-facebook" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Facebook</span>
             <input 
+              id="business-facebook"
+              name="business-facebook"
               type="text" 
               className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
               placeholder="buenobrows"
@@ -553,9 +573,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
         <p className="text-sm text-slate-600">The main heading and subtitle for your homepage. To change the hero image, go to the Media Gallery tab.</p>
         
         <div className="grid gap-4">
-          <label className="grid gap-2">
+          <label htmlFor="hero-title" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Hero Title</span>
             <input 
+              id="hero-title"
+              name="hero-title"
               type="text" 
               className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
               value={content.heroTitle} 
@@ -563,9 +585,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
             />
           </label>
 
-          <label className="grid gap-2">
+          <label htmlFor="hero-subtitle" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Hero Subtitle</span>
             <textarea 
+              id="hero-subtitle"
+              name="hero-subtitle"
               className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
               rows={2}
               value={content.heroSubtitle} 
@@ -583,18 +607,22 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
         </h3>
         
         <div className="grid sm:grid-cols-2 gap-4">
-          <label className="grid gap-2">
+          <label htmlFor="cta-primary" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Primary Button Text</span>
             <input 
+              id="cta-primary"
+              name="cta-primary"
               type="text" 
               className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
               value={content.ctaPrimary} 
               onChange={(e)=>setContent({...content, ctaPrimary: e.target.value})} 
             />
           </label>
-          <label className="grid gap-2">
+          <label htmlFor="cta-secondary" className="grid gap-2">
             <span className="text-sm font-medium text-slate-700">Secondary Button Text</span>
             <input 
+              id="cta-secondary"
+              name="cta-secondary"
               type="text" 
               className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
               value={content.ctaSecondary} 
@@ -611,9 +639,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
           About Section
         </h3>
         
-        <label className="grid gap-2">
+        <label htmlFor="about-text" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">About Text</span>
           <textarea 
+            id="about-text"
+            name="about-text"
             className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
             rows={3}
             value={content.aboutText} 
@@ -629,8 +659,10 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
             <span className="text-lg">🎁</span>
             Bueno Circle (Loyalty Program)
           </h3>
-          <label className="flex items-center gap-2">
+          <label htmlFor="bueno-circle-enabled" className="flex items-center gap-2">
             <input 
+              id="bueno-circle-enabled"
+              name="bueno-circle-enabled"
               type="checkbox" 
               className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
               checked={content.buenoCircleEnabled} 
@@ -642,9 +674,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
 
         {content.buenoCircleEnabled && (
           <div className="grid gap-4 pl-6 border-l-2 border-terracotta/30">
-            <label className="grid gap-2">
+            <label htmlFor="bueno-circle-title" className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">Section Title</span>
               <input 
+                id="bueno-circle-title"
+                name="bueno-circle-title"
                 type="text" 
                 className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
                 value={content.buenoCircleTitle} 
@@ -652,9 +686,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
               />
             </label>
 
-            <label className="grid gap-2">
+            <label htmlFor="bueno-circle-description" className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">Description</span>
               <textarea 
+                id="bueno-circle-description"
+                name="bueno-circle-description"
                 className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
                 rows={2}
                 value={content.buenoCircleDescription} 
@@ -662,9 +698,11 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
               />
             </label>
 
-            <label className="grid gap-2">
+            <label htmlFor="bueno-circle-discount" className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">Discount Percentage</span>
               <input 
+                id="bueno-circle-discount"
+                name="bueno-circle-discount"
                 type="number" 
                 min={0}
                 max={100}
@@ -718,21 +756,21 @@ function TargetsForm({ initial }: { initial: AnalyticsTargets }) {
 
   return (
     <div className="grid gap-4 max-w-2xl">
-      <label className="grid grid-cols-[200px_1fr] items-center gap-4">
+      <label htmlFor="daily-target" className="grid grid-cols-[200px_1fr] items-center gap-4">
         <span className="text-sm font-medium text-slate-700">Daily target ($)</span>
-        <input type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={dailyTarget} onChange={(e)=>setDailyTarget(parseFloat(e.target.value||'0'))} />
+        <input id="daily-target" name="daily-target" type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={dailyTarget} onChange={(e)=>setDailyTarget(parseFloat(e.target.value||'0'))} />
       </label>
-      <label className="grid grid-cols-[200px_1fr] items-center gap-4">
+      <label htmlFor="weekly-target" className="grid grid-cols-[200px_1fr] items-center gap-4">
         <span className="text-sm font-medium text-slate-700">Weekly target ($)</span>
-        <input type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={weeklyTarget} onChange={(e)=>setWeeklyTarget(parseFloat(e.target.value||'0'))} />
+        <input id="weekly-target" name="weekly-target" type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={weeklyTarget} onChange={(e)=>setWeeklyTarget(parseFloat(e.target.value||'0'))} />
       </label>
-      <label className="grid grid-cols-[200px_1fr] items-center gap-4">
+      <label htmlFor="monthly-target" className="grid grid-cols-[200px_1fr] items-center gap-4">
         <span className="text-sm font-medium text-slate-700">Monthly target ($)</span>
-        <input type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={monthlyTarget} onChange={(e)=>setMonthlyTarget(parseFloat(e.target.value||'0'))} />
+        <input id="monthly-target" name="monthly-target" type="number" min={0} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={monthlyTarget} onChange={(e)=>setMonthlyTarget(parseFloat(e.target.value||'0'))} />
       </label>
-      <label className="grid grid-cols-[200px_1fr] items-center gap-4">
+      <label htmlFor="default-cogs-rate" className="grid grid-cols-[200px_1fr] items-center gap-4">
         <span className="text-sm font-medium text-slate-700">Default COGS rate (%)</span>
-        <input type="number" min={0} max={100} step={0.1} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={defaultCogsRate} onChange={(e)=>setDefaultCogsRate(parseFloat(e.target.value||'0'))} />
+        <input id="default-cogs-rate" name="default-cogs-rate" type="number" min={0} max={100} step={0.1} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={defaultCogsRate} onChange={(e)=>setDefaultCogsRate(parseFloat(e.target.value||'0'))} />
       </label>
       <div className="flex items-center gap-3 pt-4">
         <button className="bg-terracotta text-white rounded-lg px-6 py-2 hover:bg-terracotta/90 transition-colors" onClick={save} disabled={saving}>
@@ -790,13 +828,13 @@ function BusinessHoursEditor({ initial }: { initial: BusinessHours }) {
   return (
     <div className="grid gap-6 max-w-4xl">
       <div className="grid sm:grid-cols-2 gap-4">
-        <label className="grid gap-2">
+        <label htmlFor="timezone" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">Timezone (IANA)</span>
-          <input className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" placeholder="America/Los_Angeles" value={timezone} onChange={(e)=>setTimezone(e.target.value)} />
+          <input id="timezone" name="timezone" className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" placeholder="America/Los_Angeles" value={timezone} onChange={(e)=>setTimezone(e.target.value)} />
         </label>
-        <label className="grid gap-2">
+        <label htmlFor="slot-interval" className="grid gap-2">
           <span className="text-sm font-medium text-slate-700">Slot interval (minutes)</span>
-          <input type="number" min={5} step={5} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={slotInterval} onChange={(e)=>setSlotInterval(parseInt(e.target.value||'15'))} />
+          <input id="slot-interval" name="slot-interval" type="number" min={5} step={5} className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" value={slotInterval} onChange={(e)=>setSlotInterval(parseInt(e.target.value||'15'))} />
         </label>
       </div>
 
@@ -875,12 +913,12 @@ function SlotPreview({ bh }: { bh: BusinessHours }) {
       <h4 className="font-medium text-slate-800 mb-3">Preview Available Slots</h4>
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <div className="text-sm text-slate-600 mb-1">Preview date</div>
-          <input type="date" className="border border-slate-300 rounded-lg p-2 text-sm" value={dateStr} onChange={(e)=>setDateStr(e.target.value)} />
+          <label htmlFor="preview-date" className="text-sm text-slate-600 mb-1 block">Preview date</label>
+          <input id="preview-date" name="preview-date" type="date" className="border border-slate-300 rounded-lg p-2 text-sm" value={dateStr} onChange={(e)=>setDateStr(e.target.value)} />
         </div>
         <div>
-          <div className="text-sm text-slate-600 mb-1">Service duration (minutes)</div>
-          <input type="number" min={5} step={5} className="border border-slate-300 rounded-lg p-2 text-sm w-32" value={duration} onChange={(e)=>setDuration(parseInt(e.target.value||'0'))} />
+          <label htmlFor="preview-duration" className="text-sm text-slate-600 mb-1 block">Service duration (minutes)</label>
+          <input id="preview-duration" name="preview-duration" type="number" min={5} step={5} className="border border-slate-300 rounded-lg p-2 text-sm w-32" value={duration} onChange={(e)=>setDuration(parseInt(e.target.value||'0'))} />
         </div>
       </div>
 

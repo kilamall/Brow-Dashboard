@@ -368,6 +368,8 @@ export default function Messages() {
             <div className="p-4 border-t border-gray-200">
               <div className="flex gap-2">
                 <input
+                  id="admin-message-input"
+                  name="admin-message-input"
                   type="text"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}

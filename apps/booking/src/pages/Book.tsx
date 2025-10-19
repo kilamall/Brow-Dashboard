@@ -37,12 +37,29 @@ import CustomerMessaging from '../components/CustomerMessaging';
 import ConsentForm from '../components/ConsentForm';
 
 type Slot = { startISO: string; endISO?: string; resourceId?: string | null };
-type Hold = { id: string; expiresAt: string }; // from Cloud Function
+type Hold = { id: string; expiresAt: string; status?: string }; // from Cloud Function
 
 export default function Book() {
   const { db } = useFirebase();
   const nav = useNavigate();
   const auth = getAuth();
+  
+  // Clear old holds from sessionStorage that don't have status field
+  useEffect(() => {
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        if (cart.hold && cart.hold.status === undefined) {
+          console.log('Clearing old hold without status field');
+          const updatedCart = { ...cart, hold: null };
+          sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
+        }
+      } catch (e) {
+        console.error('Failed to clean old holds:', e);
+      }
+    }
+  }, []);
 
   // ---------- Data ----------
   const [services, setServices] = useState<Service[]>([]);
@@ -160,6 +177,7 @@ export default function Book() {
   // ---------- Hold state (server-backed) ----------
   const sessionId = useMemo(getOrCreateSessionId, []);
   const [isCreatingHold, setIsCreatingHold] = useState(false);
+  const isFinalizingRef = useRef(false);
   const lastHoldCreationRef = useRef<number>(0);
   const [chosen, setChosen] = useState<Slot | null>(() => {
     // Try to restore chosen slot from cart
@@ -181,17 +199,18 @@ export default function Book() {
       try {
         const cart = JSON.parse(saved);
         if (cart.hold) {
-          // Only restore if not expired AND has at least 30 seconds left
+          // Only restore if not expired AND has at least 30 seconds left AND status is active
           const holdExpiry = new Date(cart.hold.expiresAt).getTime();
           const now = Date.now();
           const timeLeft = holdExpiry - now;
+          const isActive = !cart.hold.status || cart.hold.status === 'active';
           
-          // Don't restore if expired or about to expire (< 30 seconds)
-          if (timeLeft > 30000) {
+          // Don't restore if expired, about to expire (< 30 seconds), or not active
+          if (timeLeft > 30000 && isActive) {
             console.log('Restoring hold with', Math.round(timeLeft/1000), 'seconds remaining');
             return cart.hold;
           } else {
-            console.log('Hold expired or expiring soon, not restoring');
+            console.log('Hold expired, expiring soon, or not active - not restoring');
             // Clear the expired hold from storage
             const updatedCart = { ...cart, hold: null };
             sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
@@ -248,12 +267,14 @@ export default function Book() {
     };
   }, [hold]);
 
-  // Cleanup hold when component unmounts
+  // Cleanup hold when component unmounts (but not during finalization)
   useEffect(() => {
     return () => {
-      if (hold) {
+      if (hold && !isFinalizingRef.current) {
         console.log('Component unmounting, releasing hold:', hold.id);
         releaseHoldClient(hold.id).catch(e => console.warn('Failed to release hold on unmount:', e));
+      } else if (hold && isFinalizingRef.current) {
+        console.log('Component unmounting during finalization, keeping hold:', hold.id);
       }
     };
   }, [hold]);
@@ -326,9 +347,9 @@ export default function Book() {
         sessionId,
         resourceId: slot.resourceId ?? null,
       });
-      setHold({ id: h.id, expiresAt: h.expiresAt });
+      setHold({ id: h.id, expiresAt: h.expiresAt, status: h.status });
       lastHoldCreationRef.current = Date.now();
-      console.log('✅ Hold created/updated:', h.id);
+      console.log('✅ Hold created/updated:', h.id, 'status:', h.status);
     } catch (e: any) {
       console.error('Hold creation error:', e);
       // 409 errors might mean the hold already exists - this can happen after auth return
@@ -546,6 +567,24 @@ export default function Book() {
     if (!hold || selectedServiceIds.length === 0 || !chosen) return;
     
     try {
+      // Check hold status before finalizing
+      const now = Date.now();
+      const expiresAt = new Date(hold.expiresAt).getTime();
+      const timeRemaining = expiresAt - now;
+      
+      console.log('🔍 Hold status before finalization:', {
+        holdId: hold.id,
+        status: hold.status,
+        expiresAt: hold.expiresAt,
+        timeRemaining: `${Math.round(timeRemaining / 1000)}s`,
+        isExpired: timeRemaining <= 0,
+        isFinalizing: isFinalizingRef.current
+      });
+      
+      if (timeRemaining <= 0) {
+        throw new Error('Hold has expired. Please select the time slot again.');
+      }
+      
       console.log('Calling finalizeBookingFromHoldClient...', {
         holdId: hold.id,
         customerId,
@@ -570,6 +609,7 @@ export default function Book() {
       });
       
       console.log('Booking finalized successfully:', out);
+      // Don't reset finalizing flag here - let the navigation handle cleanup
       nav(`/confirmation?id=${encodeURIComponent(out.appointmentId)}`);
     } catch (e: any) {
       console.error('finalizeBooking error:', e);
@@ -579,17 +619,20 @@ export default function Book() {
         if (hold) await releaseHoldClient(hold.id);
       } catch {}
       setHold(null);
+      isFinalizingRef.current = false;
     }
   }
 
   async function finalizeBooking() {
     if (!hold || selectedServiceIds.length === 0 || !chosen) return;
     setError('');
+    isFinalizingRef.current = true;
     
     // Check if user is signed in or guest form is filled (only phone required for guests)
     if (!user && !gPhone) {
       setError('Please sign in or provide your phone number in the guest form below.');
       setGuestOpen(true); // Open guest form
+      isFinalizingRef.current = false;
       return;
     }
     
@@ -626,6 +669,7 @@ export default function Book() {
         if (hold) await releaseHoldClient(hold.id);
       } catch {}
       setHold(null);
+      isFinalizingRef.current = false;
     }
   }
 
@@ -671,6 +715,8 @@ export default function Book() {
                       <div className="flex-shrink-0 pt-1">
                         <input
                           type="checkbox"
+                          id={`service-${s.id}`}
+                          name={`service-${s.id}`}
                           checked={selectedServiceIds.includes(s.id)}
                           onChange={(e) => {
                             if (e.target.checked) {
@@ -809,6 +855,8 @@ export default function Book() {
             Date
             <input
               type="date"
+              id="appointment-date"
+              name="appointment-date"
               className="ml-2 rounded-md border p-2"
               value={dateStr}
               min={new Date().toISOString().slice(0, 10)}
@@ -933,6 +981,9 @@ export default function Book() {
                 {/* inline verify only for magic-link flow */}
                 {!user && linkFlow && (
                   <input
+                    type="email"
+                    id="verify-email"
+                    name="verify-email"
                     className="w-56 rounded-md border p-2"
                     placeholder="your@email.com"
                     value={verifyEmail}
@@ -978,12 +1029,19 @@ export default function Book() {
               <div className="mt-3 grid gap-3">
                 <div className="grid gap-2 sm:grid-cols-3">
                   <input
+                    type="text"
+                    id="guest-name"
+                    name="guest-name"
                     className="rounded-md border p-2"
                     placeholder="Full name (optional)"
                     value={gName}
                     onChange={(e) => setGName(e.target.value)}
+                    autoComplete="name"
                   />
                   <input
+                    type="email"
+                    id="guest-email"
+                    name="guest-email"
                     className="rounded-md border p-2"
                     placeholder="Email (optional)"
                     value={gEmail}
@@ -992,6 +1050,9 @@ export default function Book() {
                     autoComplete="email"
                   />
                   <input
+                    type="tel"
+                    id="guest-phone"
+                    name="guest-phone"
                     className="rounded-md border p-2 border-terracotta/50 bg-terracotta/5"
                     placeholder="Phone (required)*"
                     value={gPhone}
@@ -1011,6 +1072,8 @@ export default function Book() {
                   <label className="flex items-start gap-2 cursor-pointer">
                     <input
                       type="checkbox"
+                      id="sms-consent"
+                      name="sms-consent"
                       checked={smsConsent}
                       onChange={(e) => setSmsConsent(e.target.checked)}
                       className="mt-1"

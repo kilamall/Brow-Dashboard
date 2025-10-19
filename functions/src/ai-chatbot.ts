@@ -3,6 +3,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { rateLimiters, consumeRateLimit, getClientIP } from './rate-limiter.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -207,6 +208,24 @@ function generateChatbotCacheKey(message: string): string {
   return hash.digest('hex');
 }
 
+// SECURITY: Sanitize AI input to prevent prompt injection
+function sanitizeAIInput(input: string): string {
+  // Limit length to prevent abuse
+  const maxLength = 500;
+  let sanitized = input.substring(0, maxLength);
+  
+  // Remove potential prompt injection patterns
+  sanitized = sanitized.replace(/\[INST\]|\[\/INST\]/gi, '');
+  sanitized = sanitized.replace(/system:/gi, '');
+  sanitized = sanitized.replace(/assistant:/gi, '');
+  sanitized = sanitized.replace(/\<\|.*?\|\>/g, ''); // Remove special tokens
+  
+  // Remove excessive whitespace
+  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  
+  return sanitized;
+}
+
 // Check chatbot response cache
 async function checkChatbotCache(cacheKey: string): Promise<string | null> {
   try {
@@ -401,7 +420,23 @@ export const aiChatbot = onRequest(
       return;
     }
     
+    // SECURITY: Rate limit AI chatbot requests (20 per minute per phone/IP)
+    const rateLimitKey = phoneNumber ? `phone:${phoneNumber}` : `ip:${getClientIP(req)}`;
     try {
+      await consumeRateLimit(rateLimiters.aiChatbot, rateLimitKey);
+    } catch (error: any) {
+      res.status(429).json({
+        success: false,
+        error: 'Too many requests. Please slow down.',
+        retryAfter: error.retryAfter || 60
+      });
+      return;
+    }
+    
+    try {
+      // SECURITY: Sanitize user input to prevent prompt injection
+      const sanitizedMessage = sanitizeAIInput(message);
+      
       // Get customer context and business data
       const [customerContext, businessData] = await Promise.all([
         getCustomerContext(phoneNumber),
@@ -414,8 +449,8 @@ export const aiChatbot = onRequest(
         business: businessData
       };
       
-      // Get AI response
-      const aiResponse = await callGeminiAPI(message, aiContext, apiKey);
+      // Get AI response with sanitized input
+      const aiResponse = await callGeminiAPI(sanitizedMessage, aiContext, apiKey);
       
       // Store conversation
       await Promise.all([

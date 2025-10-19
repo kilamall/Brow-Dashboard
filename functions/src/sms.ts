@@ -2,6 +2,7 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
+import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -402,6 +403,9 @@ export const sendSMSToCustomer = onCall(
     if (!phoneNumber || !message) {
       throw new HttpsError('invalid-argument', 'Missing phone number or message');
     }
+    
+    // SECURITY: Rate limit SMS sending (5 per 5 minutes per phone number)
+    await consumeRateLimit(rateLimiters.sendSMS, `phone:${phoneNumber}`);
     
     try {
       const smsMessage: SMSMessage = {

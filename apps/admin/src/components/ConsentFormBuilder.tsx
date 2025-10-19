@@ -238,10 +238,12 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
             {/* Basic Information */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label htmlFor="consent-form-name" className="block text-sm font-medium text-slate-700 mb-2">
                   Form Name *
                 </label>
                 <input
+                  id="consent-form-name"
+                  name="consent-form-name"
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
@@ -252,10 +254,12 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
+                <label htmlFor="consent-form-title" className="block text-sm font-medium text-slate-700 mb-2">
                   Form Title *
                 </label>
                 <input
+                  id="consent-form-title"
+                  name="consent-form-title"
                   type="text"
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
@@ -267,10 +271,12 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label htmlFor="consent-form-description" className="block text-sm font-medium text-slate-700 mb-2">
                 Form Description
               </label>
               <textarea
+                id="consent-form-description"
+                name="consent-form-description"
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
                 placeholder="Brief description of what this consent form covers..."
@@ -315,6 +321,8 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
                   {services.map(service => (
                     <label key={service.id} className="flex items-center gap-2 py-1">
                       <input
+                        id={`service-${service.id}`}
+                        name={`service-${service.id}`}
                         type="checkbox"
                         checked={selectedServices.includes(service.id)}
                         onChange={() => handleServiceToggle(service.id)}
@@ -376,6 +384,8 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-slate-500">#{index + 1}</span>
                         <input
+                          id={`section-heading-${section.id}`}
+                          name={`section-heading-${section.id}`}
                           type="text"
                           value={section.heading}
                           onChange={(e) => updateSection(section.id, { heading: e.target.value })}
@@ -419,6 +429,8 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
                     </div>
                     
                     <textarea
+                      id={`section-content-${section.id}`}
+                      name={`section-content-${section.id}`}
                       value={section.content}
                       onChange={(e) => updateSection(section.id, { content: e.target.value })}
                       rows={4}
@@ -427,8 +439,10 @@ export default function ConsentFormBuilder({ onClose, onSuccess }: ConsentFormBu
                     />
                     
                     <div className="mt-2">
-                      <label className="flex items-center gap-2">
+                      <label htmlFor={`section-required-${section.id}`} className="flex items-center gap-2">
                         <input
+                          id={`section-required-${section.id}`}
+                          name={`section-required-${section.id}`}
                           type="checkbox"
                           checked={section.required}
                           onChange={(e) => updateSection(section.id, { required: e.target.checked })}

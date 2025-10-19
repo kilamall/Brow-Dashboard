@@ -178,8 +178,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                 <div className="grid gap-4">
                   {/* Customer search/create */}
                   <div>
-                    <label className="text-sm text-slate-600">Customer</label>
-                    <input className="border rounded-md p-2 w-full" placeholder="Type name or email…" value={customerTerm} onChange={(e)=>{ setCustomerTerm(e.target.value); setSelectedCustomer(null); }} />
+                    <label htmlFor="customer-search" className="text-sm text-slate-600">Customer</label>
+                    <input id="customer-search" name="customer-search" className="border rounded-md p-2 w-full" placeholder="Type name or email…" value={customerTerm} onChange={(e)=>{ setCustomerTerm(e.target.value); setSelectedCustomer(null); }} />
                     {suggestions.length > 0 && (
                       <div className="border rounded-md mt-1 max-h-40 overflow-auto">
                         {suggestions.map((c) => (
@@ -192,9 +192,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                     )}
                     {!selectedCustomer && (
                       <div className="grid sm:grid-cols-3 gap-2 mt-2">
-                        <input className="border rounded-md p-2" placeholder="Name" value={name} onChange={(e)=>setName(e.target.value)} />
-                        <input className="border rounded-md p-2" placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
-                        <input className="border rounded-md p-2" placeholder="Phone" value={phone} onChange={(e)=>setPhone(e.target.value)} />
+                        <input id="new-customer-name" name="new-customer-name" className="border rounded-md p-2" placeholder="Name" value={name} onChange={(e)=>setName(e.target.value)} />
+                        <input id="new-customer-email" name="new-customer-email" className="border rounded-md p-2" placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
+                        <input id="new-customer-phone" name="new-customer-phone" className="border rounded-md p-2" placeholder="Phone" value={phone} onChange={(e)=>setPhone(e.target.value)} />
                       </div>
                     )}
                     {selectedCustomer && (
@@ -349,16 +349,18 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                   {/* Date/time */}
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="text-sm text-slate-600">Date</label>
-                      <input type="date" className="border rounded-md p-2 w-full" value={format(date, 'yyyy-MM-dd')} onChange={(e)=>{ const d = new Date(e.target.value+'T00:00:00'); d.setHours(date.getHours(), date.getMinutes(), 0, 0); (date as any) = d; }} />
+                      <label htmlFor="appointment-date" className="text-sm text-slate-600">Date</label>
+                      <input id="appointment-date" name="appointment-date" type="date" className="border rounded-md p-2 w-full" value={format(date, 'yyyy-MM-dd')} onChange={(e)=>{ const d = new Date(e.target.value+'T00:00:00'); d.setHours(date.getHours(), date.getMinutes(), 0, 0); (date as any) = d; }} />
                     </div>
                     <div>
-                      <label className="text-sm text-slate-600">Time</label>
-                      <input type="time" className="border rounded-md p-2 w-full" value={timeHHMM} onChange={(e)=>setTimeHHMM(e.target.value)} />
+                      <label htmlFor="appointment-time" className="text-sm text-slate-600">Time</label>
+                      <input id="appointment-time" name="appointment-time" type="time" className="border rounded-md p-2 w-full" value={timeHHMM} onChange={(e)=>setTimeHHMM(e.target.value)} />
                     </div>
                     <div>
-                      <label className="text-sm text-slate-600">Duration (min)</label>
+                      <label htmlFor="appointment-duration" className="text-sm text-slate-600">Duration (min)</label>
                       <input 
+                        id="appointment-duration"
+                        name="appointment-duration"
                         type="number" 
                         min={5} 
                         step={5} 
@@ -389,8 +391,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
 
                   {/* Notes */}
                   <div>
-                    <label className="text-sm text-slate-600">Notes</label>
-                    <textarea className="border rounded-md p-2 w-full" rows={3} value={notes} onChange={(e)=>setNotes(e.target.value)} />
+                    <label htmlFor="appointment-notes" className="text-sm text-slate-600">Notes</label>
+                    <textarea id="appointment-notes" name="appointment-notes" className="border rounded-md p-2 w-full" rows={3} value={notes} onChange={(e)=>setNotes(e.target.value)} />
                   </div>
 
                   {err && <div className="text-red-600 text-sm">{err}</div>}

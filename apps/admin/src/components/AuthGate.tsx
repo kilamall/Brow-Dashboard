@@ -110,6 +110,8 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
         {/* Email/Password Sign In */}
         <form onSubmit={onSubmit}>
           <input 
+            id="admin-email"
+            name="admin-email"
             className="w-full border rounded-md p-2 mb-3" 
             placeholder="Email" 
             type="email"
@@ -118,6 +120,8 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
             disabled={loading}
           />
           <input 
+            id="admin-password"
+            name="admin-password"
             className="w-full border rounded-md p-2 mb-4" 
             type="password" 
             placeholder="Password" 

@@ -3,6 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -76,6 +77,9 @@ async function anyConflictsTx(
 export const createSlotHold = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
+    // SECURITY: Rate limit hold creation (10 per minute per IP/user)
+    await consumeRateLimit(rateLimiters.createHold, getUserIdentifier(req));
+
     const { serviceId, resourceId = null, startISO, durationMinutes, sessionId } = req.data || {};
     const userId = req.auth?.uid || null;
 
@@ -130,19 +134,36 @@ export const createSlotHold = onCall(
 export const finalizeBookingFromHold = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
-    const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
-    // Your Appointment schema requires customerId; enforce it here
-    assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
+    try {
+      // SECURITY: Rate limit booking finalization (5 per minute per IP/user)
+      await consumeRateLimit(rateLimiters.finalizeBooking, getUserIdentifier(req));
 
-    const holdRef = db.collection('holds').doc(holdId);
-    const apptRef = db.collection('appointments').doc();
+      const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
+      // Your Appointment schema requires customerId; enforce it here
+      assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
 
-    const result = await db.runTransaction(async (tx) => {
+      console.log('📋 Finalizing booking for hold:', holdId);
+
+      const holdRef = db.collection('holds').doc(holdId);
+      const apptRef = db.collection('appointments').doc();
+
+      const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(holdRef);
       assert(snap.exists, 'Hold not found');
       const hold = snap.data() as any;
 
-      assert(hold.status === 'active', 'Hold not active');
+      // Log hold status for debugging
+      const now = Date.now();
+      const expiresAt = new Date(hold.expiresAt).getTime();
+      console.log('🔍 Hold status in finalization:', {
+        holdId,
+        status: hold.status,
+        expiresAt: hold.expiresAt,
+        timeRemaining: `${Math.round((expiresAt - now) / 1000)}s`,
+        isExpired: expiresAt <= now
+      });
+
+      assert(hold.status === 'active', `Hold not active (status: ${hold.status})`);
       assert(new Date(hold.expiresAt).getTime() > Date.now(), 'Hold expired');
 
       // Re-check conflicts (excluding the current hold being finalized)
@@ -192,7 +213,22 @@ export const finalizeBookingFromHold = onCall(
       return { appointmentId: apptRef.id };
     });
 
+    console.log('✅ Booking finalized successfully:', result.appointmentId);
     return result;
+    
+    } catch (error: any) {
+      console.error('❌ Error finalizing booking:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      // Re-throw as HttpsError for proper client handling
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      throw new HttpsError('internal', `Failed to finalize booking: ${error.message}`);
+    }
   }
 );
 
