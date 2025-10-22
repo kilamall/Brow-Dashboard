@@ -2,7 +2,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getStorage } from 'firebase-admin/storage';
-import { v4 as uuidv4 } from 'uuid';
+// import { v4 as uuidv4 } from 'uuid';
 
 try { initializeApp(); } catch {}
 const storage = getStorage();
@@ -25,7 +25,7 @@ export const uploadImage = onCall(
     try {
       // Generate unique filename
       const fileExtension = fileName.split('.').pop() || 'jpg';
-      const uniqueFileName = `slideshow/${uuidv4()}.${fileExtension}`;
+      const uniqueFileName = `slideshow/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExtension}`;
       
       // Convert base64 to buffer
       const imageBuffer = Buffer.from(imageData, 'base64');

@@ -85,7 +85,7 @@ export async function sendAppointmentConfirmationEmail(
 
   // Format the appointment date/time nicely with proper timezone
   const appointmentDate = new Date(date);
-  const businessTimezone = 'America/Los_Angeles'; // Default timezone, should be passed from caller
+  const businessTimezone = appointmentDetails.businessTimezone || 'America/Los_Angeles';
   const formattedDate = appointmentDate.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -698,6 +698,7 @@ export const onAppointmentConfirmedSendEmail = onDocumentUpdated(
           duration: duration || 60,
           price: bookedPrice,
           notes,
+          businessTimezone,
         });
 
         console.log(`✅ Confirmation email sent for confirmed appointment ${event.params.appointmentId}`);

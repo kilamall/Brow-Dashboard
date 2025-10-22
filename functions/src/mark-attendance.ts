@@ -19,7 +19,7 @@ export const markAttendance = onCall(
       throw new HttpsError('permission-denied', 'Admin access required');
     }
 
-    const { appointmentId, attendance } = req.data || {};
+    const { appointmentId, attendance, actualPrice, tipAmount, notes } = req.data || {};
     
     if (!appointmentId || !attendance) {
       throw new HttpsError('invalid-argument', 'Missing appointmentId or attendance');
@@ -51,6 +51,20 @@ export const markAttendance = onCall(
         attendanceMarkedBy: req.auth.uid,
         updatedAt: now
       };
+
+      // Add financial tracking data if provided
+      if (attendance === 'attended' && actualPrice !== undefined) {
+        updateData.actualPrice = parseFloat(actualPrice) || 0;
+        updateData.priceDifference = (parseFloat(actualPrice) || 0) - (appointment.bookedPrice || 0);
+      }
+      
+      if (attendance === 'attended' && tipAmount !== undefined) {
+        updateData.tipAmount = parseFloat(tipAmount) || 0;
+      }
+      
+      if (attendance === 'attended' && notes) {
+        updateData.attendanceNotes = notes.trim();
+      }
 
       if (attendance === 'attended') {
         // Mark as completed and send post-service receipt

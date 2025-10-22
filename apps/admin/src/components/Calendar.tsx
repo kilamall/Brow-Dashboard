@@ -4,6 +4,7 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
+import CalendarDayHighlighting from '@/components/CalendarDayHighlighting';
 import {
   addMonths,
   endOfMonth,
@@ -131,14 +132,17 @@ export default function Schedule() {
           const inMonth = isSameMonth(d, month);
           const todaysAppts = appts.filter((a) => isSameDay(new Date(a.start), d) && a.status !== 'cancelled');
           return (
-            <div
+            <CalendarDayHighlighting
               key={idx}
-              ref={(el) => (cellRefs.current[idx] = el)}
-              className={`relative min-h-[108px] bg-white ${inMonth ? '' : 'bg-slate-50 text-slate-400'}`}
-              onMouseEnter={() => handleMouseEnter(d, idx)}
-              onMouseLeave={() => handleMouseLeave(d)}
-              onClick={() => setOpenAdd({ open: true, date: d })}
+              date={d}
+              className={`relative min-h-[108px] ${inMonth ? '' : 'bg-slate-50 text-slate-400'}`}
             >
+              <div
+                ref={(el) => (cellRefs.current[idx] = el)}
+                onMouseEnter={() => handleMouseEnter(d, idx)}
+                onMouseLeave={() => handleMouseLeave(d)}
+                onClick={() => setOpenAdd({ open: true, date: d })}
+              >
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs">{format(d, 'd')}</span>
                 {!!todaysAppts.length && (
@@ -156,7 +160,8 @@ export default function Schedule() {
                   <div className="text-[10px] text-slate-500">+{todaysAppts.length - 3} more…</div>
                 )}
               </div>
-            </div>
+              </div>
+            </CalendarDayHighlighting>
           );
         })}
       </div>

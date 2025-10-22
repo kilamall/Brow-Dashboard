@@ -11,6 +11,8 @@ import EditAppointmentModal from '@/components/EditAppointmentModal';
 import CalendarDayView from '@/components/CalendarDayView';
 import EditRequestConfirmModal from '@/components/EditRequestConfirmModal';
 import EditRequestsModal from '@/components/EditRequestsModal';
+import AttendanceConfirmationModal from '@/components/AttendanceConfirmationModal';
+import CalendarDayHighlighting from '@/components/CalendarDayHighlighting';
 import {
   addMonths,
   endOfDay,
@@ -54,24 +56,31 @@ export default function Schedule() {
   const [month, setMonth] = useState<Date>(() => new Date()); // current visible month
   const [confirmingIds, setConfirmingIds] = useState<Set<string>>(new Set());
   const [markingAttendanceIds, setMarkingAttendanceIds] = useState<Set<string>>(new Set());
+  const [attendanceModal, setAttendanceModal] = useState<{
+    open: boolean;
+    appointment: Appointment | null;
+    service: Service | null;
+  }>({ open: false, appointment: null, service: null });
 
-  const handleMarkAttended = async (appointmentId: string) => {
-    if (!confirm('Mark this appointment as attended? This will send a receipt to the customer.')) return;
-    setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
-    try {
-      const markAttendanceFn = httpsCallable(functions, 'markAttendance');
-      await markAttendanceFn({ appointmentId, attendance: 'attended' });
-      alert('Appointment marked as attended and customer notified!');
-    } catch (error: any) {
-      console.error('Error marking attendance:', error);
-      alert(`Failed to mark attendance: ${error.message}`);
-    } finally {
-      setMarkingAttendanceIds(prev => {
-        const next = new Set(prev);
-        next.delete(appointmentId);
-        return next;
-      });
+  const handleMarkAttended = (appointmentId: string) => {
+    const appointment = appts.find(a => a.id === appointmentId);
+    const service = appointment ? services[appointment.serviceId] : null;
+    
+    if (!appointment || !service) {
+      alert('Appointment or service not found');
+      return;
     }
+    
+    setAttendanceModal({
+      open: true,
+      appointment,
+      service
+    });
+  };
+
+  const handleAttendanceConfirmed = () => {
+    setAttendanceModal({ open: false, appointment: null, service: null });
+    // Data will auto-refresh from Firestore listener
   };
 
   const handleMarkNoShow = async (appointmentId: string) => {
@@ -551,7 +560,7 @@ export default function Schedule() {
 
       // ✅ NEW: Check if there's a pending appointment for this request
       // If so, cancel it
-      const appointment = Object.values(appointments).find((a: any) => a.id === request.appointmentId);
+      const appointment = appts.find((a: any) => a.id === request.appointmentId);
       if (appointment && appointment.status === 'pending') {
         await updateDoc(doc(db, 'appointments', request.appointmentId), {
           status: 'cancelled',
@@ -906,22 +915,25 @@ export default function Schedule() {
           const inMonth = isSameMonth(d, month);
           const todaysAppts = appts.filter((a) => isSameDay(safeParseDate(a.start), d) && a.status !== 'cancelled');
           return (
-            <div
+            <CalendarDayHighlighting
               key={idx}
-              className={`relative min-h-[108px] bg-white ${inMonth ? '' : 'bg-slate-50 text-slate-400'} cursor-pointer hover:bg-slate-50 transition-colors`}
-              onMouseEnter={(e) => {
-                setHoverDate(d);
-                if (todaysAppts.length > 0) {
-                  const position = calculateHoverPosition(e.currentTarget);
-                  setHoverPosition(position);
-                }
-              }}
-              onMouseLeave={() => {
-                setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev));
-                setHoverPosition(null);
-              }}
-              onClick={() => setOpenAdd({ open: true, date: d })}
+              date={d}
+              className={`relative min-h-[108px] ${inMonth ? '' : 'bg-slate-50 text-slate-400'} cursor-pointer transition-colors`}
             >
+              <div
+                onMouseEnter={(e) => {
+                  setHoverDate(d);
+                  if (todaysAppts.length > 0) {
+                    const position = calculateHoverPosition(e.currentTarget);
+                    setHoverPosition(position);
+                  }
+                }}
+                onMouseLeave={() => {
+                  setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev));
+                  setHoverPosition(null);
+                }}
+                onClick={() => setOpenAdd({ open: true, date: d })}
+              >
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs">{format(d, 'd')}</span>
                 {!!todaysAppts.length && (
@@ -949,7 +961,8 @@ export default function Schedule() {
                   <div className="text-[10px] text-slate-500">+{todaysAppts.length - 3} more…</div>
                 )}
               </div>
-            </div>
+              </div>
+            </CalendarDayHighlighting>
           );
         })}
       </div>
@@ -1305,6 +1318,15 @@ export default function Schedule() {
       <EditRequestsModal 
         isOpen={showEditRequestsModal} 
         onClose={() => setShowEditRequestsModal(false)} 
+      />
+
+      {/* Attendance Confirmation Modal */}
+      <AttendanceConfirmationModal
+        open={attendanceModal.open}
+        onClose={() => setAttendanceModal({ open: false, appointment: null, service: null })}
+        appointment={attendanceModal.appointment}
+        service={attendanceModal.service}
+        onConfirmed={handleAttendanceConfirmed}
       />
     </div>
   );
