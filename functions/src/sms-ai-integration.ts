@@ -149,22 +149,154 @@ async function saveSMSToCache(cacheKey: string, response: string): Promise<void>
   }
 }
 
-// Call Gemini AI
+// Call Trained AI (uses admin's SMS style)
 async function callGeminiAI(message: string, context: any, phoneNumber: string, apiKey: string): Promise<string> {
   try {
     // Check cache first for common queries
-    const cacheKey = generateSMSCacheKey(message, 'generic'); // Use 'generic' for common questions
+    const cacheKey = generateSMSCacheKey(message, 'generic');
     const cachedResponse = await checkSMSCache(cacheKey);
     
     if (cachedResponse) {
-      console.log('Using cached SMS response');
+      console.log('✅ Using cached SMS response');
       return cachedResponse;
     }
     
     if (!apiKey) {
+      console.log('⚠️ No API key, using fallback');
       return generateFallbackResponse(message);
     }
 
+    // ✨ NEW: Use trained AI system
+    console.log('🤖 Calling trained AI system...');
+    
+    // Check if AI is trained
+    const trainedPromptDoc = await db.collection('ai_training').doc('current_prompt').get();
+    
+    if (!trainedPromptDoc.exists) {
+      console.log('⚠️ AI not trained yet, using generic Gemini');
+      return await callGenericGemini(message, context, apiKey);
+    }
+    
+    // Use findOrCreateCustomer to get/create customer with canonical identifiers
+    const normalizedPhone = phoneNumber.replace(/\D/g, '');
+    const canonicalPhone = normalizedPhone.length === 10 ? `+1${normalizedPhone}` : `+${normalizedPhone}`;
+    
+    // Find or create customer
+    let customerId = context.customer.customerId;
+    let customerName = context.customer.name || 'Customer';
+    
+    try {
+      // Check if customer exists with canonical phone
+      const customerQuery = await db.collection('customers')
+        .where('canonicalPhone', '==', canonicalPhone)
+        .limit(1)
+        .get();
+      
+      if (!customerQuery.empty) {
+        const customerDoc = customerQuery.docs[0];
+        customerId = customerDoc.id;
+        customerName = customerDoc.data().name || customerName;
+        console.log('✅ Found customer by canonical phone:', customerId);
+      } else {
+        // Customer not found, use existing logic
+        customerId = context.customer.customerId;
+      }
+    } catch (err) {
+      console.log('⚠️ Error finding customer, using existing:', err);
+    }
+    
+    // Get trained AI response
+    const trainedPromptData = trainedPromptDoc.data();
+    const trainedPrompt = trainedPromptData?.prompt;
+    
+    if (!trainedPrompt) {
+      console.log('⚠️ No trained prompt found, using generic Gemini');
+      return await callGenericGemini(message, context, apiKey);
+    }
+    
+    // Build context for AI
+    const customerContext = {
+      name: customerName,
+      hasHistory: context.customer.customerId !== undefined
+    };
+    
+    const contextInfo = customerContext.hasHistory 
+      ? `Customer ${customerContext.name} is a returning client.`
+      : `Customer ${customerContext.name} is a new client.`;
+    
+    // Use trained prompt
+    const fullPrompt = `${trainedPrompt}\n\n## Current Message:\n${contextInfo}\nCustomer asks: "${message}"\n\nYour response (match admin's style, keep under 160 chars for SMS):`;
+    
+    const requestBody = {
+      contents: [{ parts: [{ text: fullPrompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 200,
+        topP: 0.9,
+        topK: 40
+      }
+    };
+
+    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status}`);
+    }
+
+    const data = await response.json() as any;
+    let aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
+    
+    // Ensure response fits SMS (160 chars)
+    if (aiResponse.length > 160) {
+      aiResponse = aiResponse.substring(0, 157) + '...';
+    }
+    
+    // Log interaction
+    try {
+      await db.collection('ai_interactions').add({
+        customerId,
+        customerName,
+        customerPhone: canonicalPhone,
+        customerMessage: message,
+        aiResponse,
+        isOutOfScope: false,
+        flagged: false,
+        timestamp: new Date(),
+        source: 'sms'
+      });
+    } catch (logErr) {
+      console.error('Failed to log AI interaction:', logErr);
+    }
+    
+    // Cache the response for common queries
+    const lowerMessage = message.toLowerCase();
+    const isCacheable = lowerMessage.includes('hours') || 
+                        lowerMessage.includes('price') || 
+                        lowerMessage.includes('cost') ||
+                        lowerMessage.includes('service') ||
+                        lowerMessage.includes('location') ||
+                        lowerMessage.includes('address');
+    
+    if (isCacheable) {
+      await saveSMSToCache(cacheKey, aiResponse);
+    }
+    
+    console.log('✅ Trained AI response generated');
+    return aiResponse;
+    
+  } catch (error) {
+    console.error('❌ Error calling trained AI:', error);
+    return generateFallbackResponse(message);
+  }
+}
+
+// Generic Gemini fallback (original logic)
+async function callGenericGemini(message: string, context: any, apiKey: string): Promise<string> {
+  try {
     const systemPrompt = `You are an AI assistant for Bueno Brows beauty salon. 
 
 BUSINESS INFO:
@@ -212,25 +344,9 @@ Customer message: ${message}`;
     }
 
     const data = await response.json() as any;
-    const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
-    
-    // Cache the response for common queries
-    // Only cache for non-personalized queries (e.g., hours, pricing, services)
-    const lowerMessage = message.toLowerCase();
-    const isCacheable = lowerMessage.includes('hours') || 
-                        lowerMessage.includes('price') || 
-                        lowerMessage.includes('cost') ||
-                        lowerMessage.includes('service') ||
-                        lowerMessage.includes('location') ||
-                        lowerMessage.includes('address');
-    
-    if (isCacheable) {
-      await saveSMSToCache(cacheKey, aiResponse);
-    }
-    
-    return aiResponse;
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
   } catch (error) {
-    console.error('Error calling Gemini AI:', error);
+    console.error('Error calling generic Gemini:', error);
     return generateFallbackResponse(message);
   }
 }
