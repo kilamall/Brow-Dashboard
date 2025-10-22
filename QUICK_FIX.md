@@ -16,7 +16,7 @@ You have a **pending** skin analysis in the database that's blocking new uploads
 ### Step 2: Find and Delete the Pending Analysis
 1. Click on the `skinAnalyses` collection
 2. Look for the document with:
-   - `customerEmail`: "malikgriffin1@gmail.com"
+   - `customerEmail`: "admin@yourdomain.com"
    - `status`: "pending"
 3. Click on that document
 4. Click the **trash/delete icon** (🗑️)

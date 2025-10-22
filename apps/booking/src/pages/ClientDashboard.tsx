@@ -1,12 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy } from 'firebase/firestore';
-import type { Appointment, Service, SkinAnalysis, CustomerConsent } from '@buenobrows/shared/types';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, addDoc } from 'firebase/firestore';
+import type { Appointment, Service, SkinAnalysis, CustomerConsent, AppointmentEditRequest } from '@buenobrows/shared/types';
 import { watchCustomerConsents } from '@buenobrows/shared/consentFormHelpers';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
+import EditRequestModal from '../components/EditRequestModal';
+
+// Safe date formatter that won't crash - with enhanced logging
+const safeFormatDate = (dateString: any, formatString: string, fallback: string = 'Invalid Date', context?: string): string => {
+  try {
+    if (!dateString) {
+      console.warn(`⚠️ ${context || 'Date'}: No date value provided`);
+      return fallback;
+    }
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      console.error(`❌ ${context || 'Date'}: Invalid date value:`, {
+        rawValue: dateString,
+        type: typeof dateString,
+        stringValue: String(dateString)
+      });
+      return fallback;
+    }
+    return format(date, formatString);
+  } catch (e) {
+    console.error(`❌ ${context || 'Date'}: Error formatting date:`, {
+      rawValue: dateString,
+      error: e
+    });
+    return fallback;
+  }
+};
 
 export default function ClientDashboard() {
   const { db } = useFirebase();
@@ -15,20 +42,54 @@ export default function ClientDashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Record<string, Service>>({});
-  const [skinAnalyses, setSkinAnalyses] = useState<SkinAnalysis[]>([]);
+  const [editRequests, setEditRequests] = useState<any[]>([]);
   const [consents, setConsents] = useState<CustomerConsent[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasCustomerRecord, setHasCustomerRecord] = useState(false);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [requestLoading, setRequestLoading] = useState(false);
+  const [editRequestModal, setEditRequestModal] = useState<{
+    open: boolean;
+    appointment: Appointment | null;
+  }>({ open: false, appointment: null });
+  const [editRequestLoading, setEditRequestLoading] = useState(false);
+  
+  // Ref to prevent multiple simultaneous fetches
+  const fetchingRef = useRef(false);
+  
+  // Collapsible sections state
+  const [collapsedSections, setCollapsedSections] = useState<{
+    upcoming: boolean;
+    past: boolean;
+    cancelled: boolean;
+    editRequests: boolean;
+    consentForms: boolean;
+  }>({
+    upcoming: false,
+    past: false,
+    cancelled: true, // Collapsed by default
+    editRequests: false,
+    consentForms: true, // Collapsed by default
+  });
+
+  const toggleSection = (section: keyof typeof collapsedSections) => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
   
   console.log('[ClientDashboard] Rendered, user:', user?.email, 'loading:', loading);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log('🔍 Auth state changed:', currentUser?.email || 'undefined');
       setUser(currentUser);
       if (!currentUser) {
+        console.log('🔍 No user, redirecting to login');
         nav('/login');
+      } else {
+        console.log('🔍 User authenticated, setting loading to false');
       }
       setLoading(false);
     });
@@ -38,25 +99,38 @@ export default function ClientDashboard() {
 
   // Fetch customer's appointments
   useEffect(() => {
-    if (!user?.email) return;
+    // Need authenticated user
+    if (!user?.uid) {
+      console.log('🔍 No user.uid, skipping customer fetch');
+      fetchingRef.current = false;
+      return;
+    }
 
+    // Prevent multiple simultaneous fetches
+    if (fetchingRef.current) {
+      console.log('🔍 Already fetching, skipping duplicate fetch');
+      return;
+    }
+
+    fetchingRef.current = true;
     let unsubscribeAppointments: (() => void) | null = null;
 
-    // Find customer by email
-    const customersRef = collection(db, 'customers');
-    const customerQuery = query(customersRef, where('email', '==', user.email));
+    // ✅ FIXED: Use auth.uid directly as customer ID (matches how we create customers in Login.tsx)
+    const custId = user.uid;
+    const customerRef = doc(db, 'customers', custId);
+    
+    console.log(`🔍 Looking for customer by auth.uid:`, custId);
 
-    const unsubscribeCustomer = onSnapshot(customerQuery, (snapshot) => {
-      if (snapshot.empty) {
-        console.log('No customer found for email:', user.email);
+    const unsubscribeCustomer = onSnapshot(customerRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        console.log(`No customer record found for uid:`, custId);
         setAppointments([]);
         setHasCustomerRecord(false);
         setCustomerId(null);
         return;
       }
 
-      const custId = snapshot.docs[0].id;
-      console.log('Found customer:', custId);
+      console.log('✅ Found customer:', custId);
       setHasCustomerRecord(true);
       setCustomerId(custId);
 
@@ -70,25 +144,53 @@ export default function ClientDashboard() {
       unsubscribeAppointments = onSnapshot(appointmentsQuery, (snapshot) => {
         const appts: Appointment[] = [];
         snapshot.forEach((doc) => {
-          appts.push({ id: doc.id, ...doc.data() } as Appointment);
+          const data = doc.data();
+          const apt = { id: doc.id, ...data } as Appointment;
+          
+          // ENHANCED LOGGING: Check for invalid dates at source
+          if (!apt.start) {
+            console.error(`🚨 INVALID APPOINTMENT: Missing 'start' field`, {
+              appointmentId: doc.id,
+              customerId: custId,
+              serviceId: apt.serviceId,
+              status: apt.status,
+              rawData: data
+            });
+          } else {
+            const testDate = new Date(apt.start);
+            if (isNaN(testDate.getTime())) {
+              console.error(`🚨 INVALID APPOINTMENT: Malformed 'start' date`, {
+                appointmentId: doc.id,
+                customerId: custId,
+                startValue: apt.start,
+                startType: typeof apt.start,
+                serviceId: apt.serviceId,
+                status: apt.status,
+                rawData: data
+              });
+            }
+          }
+          
+          appts.push(apt);
         });
-        console.log('Fetched appointments:', appts.length);
+        console.log(`✅ Fetched ${appts.length} appointments for customer ${custId}`);
         setAppointments(appts);
       });
     });
 
     return () => {
+      fetchingRef.current = false;
       unsubscribeCustomer();
       if (unsubscribeAppointments) {
         unsubscribeAppointments();
       }
     };
-  }, [user, db]);
+  }, [user?.uid, db]); // Only depend on user.uid, not the entire user object
 
   // Fetch services
   useEffect(() => {
     const servicesRef = collection(db, 'services');
-    const unsubscribe = onSnapshot(servicesRef, (snapshot) => {
+    const unsubscribe = onSnapshot(query(servicesRef, where('active', '==', true)), (snapshot) => {
       const servicesMap: Record<string, Service> = {};
       snapshot.forEach((doc) => {
         servicesMap[doc.id] = { id: doc.id, ...doc.data() } as Service;
@@ -99,36 +201,44 @@ export default function ClientDashboard() {
     return () => unsubscribe();
   }, [db]);
 
-  // Fetch user's skin analyses
-  useEffect(() => {
-    if (!user?.uid) return;
-
-    const skinAnalysesRef = collection(db, 'skinAnalyses');
-    const skinAnalysesQuery = query(
-      skinAnalysesRef,
-      where('customerId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(skinAnalysesQuery, (snapshot) => {
-      const analyses: SkinAnalysis[] = [];
-      snapshot.forEach((doc) => {
-        analyses.push({ id: doc.id, ...doc.data() } as SkinAnalysis);
-      });
-      console.log('Fetched skin analyses:', analyses.length);
-      setSkinAnalyses(analyses);
-    });
-
-    return () => unsubscribe();
-  }, [user, db]);
 
   // Fetch user's consent records
   useEffect(() => {
-    if (!customerId) return;
+    if (!customerId) return; // Use customerId for consistency
 
     const unsubscribe = watchCustomerConsents(db, customerId, (customerConsents) => {
       console.log('Fetched consents:', customerConsents.length);
       setConsents(customerConsents);
+    });
+
+    return () => unsubscribe();
+  }, [customerId, db]); // Changed dependency from user to customerId
+
+  // Fetch user's edit requests
+  useEffect(() => {
+    if (!customerId) {
+      console.log('🔍 Edit requests: No customerId, skipping fetch');
+      return;
+    }
+
+    console.log('🔍 Edit requests: Starting fetch for customerId:', customerId);
+
+    const editRequestsRef = collection(db, 'appointmentEditRequests');
+    const editRequestsQuery = query(
+      editRequestsRef,
+      where('customerId', '==', customerId),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(editRequestsQuery, (snapshot) => {
+      const requests: any[] = [];
+      snapshot.forEach((doc) => {
+        requests.push({ id: doc.id, ...doc.data() });
+      });
+      console.log('✅ Fetched edit requests:', requests.length, requests);
+      setEditRequests(requests);
+    }, (error) => {
+      console.error('❌ Error fetching edit requests:', error);
     });
 
     return () => unsubscribe();
@@ -143,27 +253,6 @@ export default function ClientDashboard() {
     }
   };
 
-  const requestNewAnalysis = async () => {
-    if (!user) return;
-
-    setRequestLoading(true);
-    try {
-      const functions = getFunctions();
-      const requestNewSkinAnalysis = httpsCallable(functions, 'requestNewSkinAnalysis');
-      
-      const result = await requestNewSkinAnalysis({
-        reason: 'Customer requested new skin analysis'
-      });
-
-      alert('Analysis request submitted successfully! An admin will review your request.');
-      console.log('Analysis request submitted:', result.data);
-    } catch (error: any) {
-      console.error('Error requesting analysis:', error);
-      alert(error.message || 'Failed to submit analysis request');
-    } finally {
-      setRequestLoading(false);
-    }
-  };
 
   const handleCancelAppointment = async (appointmentId: string) => {
     if (!confirm('Are you sure you want to cancel this appointment?')) return;
@@ -177,17 +266,49 @@ export default function ClientDashboard() {
     }
   };
 
-  const upcomingAppointments = appointments
-    .filter((apt) => apt.status !== 'cancelled' && new Date(apt.start) > new Date())
-    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  const handleEditRequest = async (appointment: Appointment, requestedChanges: {
+    start?: string;
+    serviceIds?: string[];
+    notes?: string;
+    reason?: string;
+  }) => {
+    if (!customerId) {
+      alert('Customer ID not found. Please try again.');
+      return;
+    }
 
-  const pastAppointments = appointments
-    .filter((apt) => new Date(apt.start) < new Date())
-    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+    setEditRequestLoading(true);
+    try {
+      // Filter out undefined values to prevent Firebase errors
+      const editRequestData: any = {
+        appointmentId: appointment.id,
+        customerId: customerId,
+        requestedChanges,
+        status: 'pending',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
 
-  const cancelledAppointments = appointments.filter((apt) => apt.status === 'cancelled');
+      // Only include reason if it's not undefined/empty
+      if (requestedChanges.reason && requestedChanges.reason.trim()) {
+        editRequestData.reason = requestedChanges.reason.trim();
+      }
 
-  if (loading) {
+      await addDoc(collection(db, 'appointmentEditRequests'), editRequestData);
+      
+      setEditRequestModal({ open: false, appointment: null });
+      alert('Edit request submitted successfully! We will review your request and get back to you soon.');
+    } catch (error) {
+      console.error('Error submitting edit request:', error);
+      alert('Failed to submit edit request. Please try again.');
+    } finally {
+      setEditRequestLoading(false);
+    }
+  };
+
+  // Only show loading if we don't have a user AND we're still loading
+  // If we have a user but loading is true, it might be a state fluctuation
+  if (loading && !user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-lg text-slate-600">Loading...</div>
@@ -195,28 +316,93 @@ export default function ClientDashboard() {
     );
   }
 
+  // Helper function to check if date is valid
+  const isValidDate = (dateString: any): boolean => {
+    if (!dateString) {
+      console.warn('❌ Appointment has no start date');
+      return false;
+    }
+    const date = new Date(dateString);
+    const isValid = !isNaN(date.getTime());
+    if (!isValid) {
+      console.error('❌ Invalid appointment start date:', dateString);
+    }
+    return isValid;
+  };
+
+  // Log all appointments to help find bad data
+  appointments.forEach((apt) => {
+    if (!isValidDate(apt.start)) {
+      console.error('🚨 BAD APPOINTMENT FOUND:', {
+        id: apt.id,
+        start: apt.start,
+        serviceId: apt.serviceId,
+        customerId: apt.customerId,
+        status: apt.status
+      });
+    }
+  });
+
+  const upcomingAppointments = appointments
+    .filter((apt) => isValidDate(apt.start) && apt.status !== 'cancelled' && new Date(apt.start) > new Date())
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  // Past appointments should only include confirmed/attended appointments (not cancelled)
+  const pastAppointments = appointments
+    .filter((apt) => isValidDate(apt.start) && new Date(apt.start) < new Date() && apt.status === 'confirmed')
+    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+
+  // Cancelled appointments should only appear in cancelled section
+  const cancelledAppointments = appointments.filter((apt) => apt.status === 'cancelled');
+
+  console.log('🔍 About to render main content:', {
+    user: user?.email,
+    loading,
+    hasCustomerRecord,
+    customerId,
+    appointmentsCount: appointments.length,
+    upcomingCount: upcomingAppointments.length
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-terracotta/10 to-cream/30 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+        {/* Compact Header */}
+        <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-4 mb-6">
           <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-serif text-terracotta">My Appointments</h1>
-              <p className="text-slate-600 mt-1">
-                Welcome back, {user?.displayName || user?.email}
-              </p>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <h1 className="text-xl font-semibold text-slate-800">My Bookings</h1>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                  {upcomingAppointments.length} Upcoming
+                </span>
+                {pastAppointments.length > 0 && (
+                  <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-full text-xs font-medium">
+                    {pastAppointments.length} Past
+                  </span>
+                )}
+                {cancelledAppointments.length > 0 && (
+                  <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs font-medium">
+                    {cancelledAppointments.length} Cancelled
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <button
                 onClick={() => nav('/book')}
-                className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"
+                className="px-3 py-1.5 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors text-sm font-medium"
               >
                 Book New
               </button>
               <button
                 onClick={handleSignOut}
-                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+                className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm"
               >
                 Sign Out
               </button>
@@ -226,16 +412,52 @@ export default function ClientDashboard() {
 
         {/* Upcoming Appointments */}
         <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
-          <h2 className="text-2xl font-serif text-terracotta mb-4">Upcoming</h2>
-          {!hasCustomerRecord ? (
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-serif text-terracotta">Upcoming</h2>
+            <button
+              onClick={() => toggleSection('upcoming')}
+              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              aria-label={collapsedSections.upcoming ? "Expand upcoming appointments" : "Collapse upcoming appointments"}
+            >
+              <svg 
+                className={`w-6 h-6 text-slate-600 transition-transform duration-200 ${collapsedSections.upcoming ? '' : 'rotate-180'}`}
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+          {!collapsedSections.upcoming && (!hasCustomerRecord ? (
             <div className="text-center py-8">
-              <div className="text-4xl mb-3">📅</div>
-              <p className="text-slate-600 mb-4">You haven't made a booking yet</p>
+              <div className="text-4xl mb-3">🔧</div>
+              <p className="text-slate-600 mb-4">Customer profile not found. Let's fix this!</p>
               <button
-                onClick={() => nav('/book')}
+                onClick={async () => {
+                  if (!user?.uid) return;
+                  try {
+                    const { doc, setDoc } = await import('firebase/firestore');
+                    const customerRef = doc(db, 'customers', user.uid);
+                    await setDoc(customerRef, {
+                      name: user.displayName || 'Customer',
+                      email: user.email,
+                      phone: user.phoneNumber || null,
+                      profilePictureUrl: user.photoURL || null,
+                      status: 'active',
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    });
+                    console.log('✅ Customer document created!');
+                    // The real-time listener will automatically detect the new customer document
+                  } catch (error) {
+                    console.error('❌ Failed to create customer document:', error);
+                    alert('Failed to create customer profile. Please try again.');
+                  }
+                }}
                 className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"
               >
-                Book Your First Appointment
+                Create Customer Profile
               </button>
             </div>
           ) : upcomingAppointments.length === 0 ? (
@@ -267,18 +489,31 @@ export default function ClientDashboard() {
                           </span>
                         </div>
 
-                        {/* Service Description */}
-                        {service?.description && (
-                          <p className="text-sm text-slate-600 mb-3">{service.description}</p>
-                        )}
+                        {/* Service Name with Read More */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-sm text-slate-600">
+                            {service?.name || 'Service'}
+                          </span>
+                          {service?.description && (
+                            <button
+                              onClick={() => {
+                                // You could implement a modal or expand functionality here
+                                alert(service.description);
+                              }}
+                              className="text-xs text-terracotta hover:text-terracotta/80 underline"
+                            >
+                              Read More
+                            </button>
+                          )}
+                        </div>
 
                         {/* Date & Time */}
                         <div className="mb-3">
                           <p className="text-slate-700 font-medium">
-                            📅 {format(parseISO(apt.start), 'EEEE, MMMM d, yyyy')}
+                            📅 {safeFormatDate(apt.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `Upcoming Apt ${apt.id}`)}
                           </p>
                           <p className="text-slate-600 text-sm mt-1">
-                            🕐 {format(parseISO(apt.start), 'h:mm a')} - {format(new Date(new Date(apt.start).getTime() + apt.duration * 60000), 'h:mm a')}
+                            🕐 {safeFormatDate(apt.start, 'h:mm a', 'Time TBD', `Upcoming Apt ${apt.id}`)} - {safeFormatDate(new Date(new Date(apt.start).getTime() + (apt.duration || 0) * 60000).toISOString(), 'h:mm a', 'End Time TBD', `Upcoming Apt ${apt.id} - End`)}
                           </p>
                         </div>
 
@@ -288,30 +523,58 @@ export default function ClientDashboard() {
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            ${apt.bookedPrice?.toFixed(2) || service?.price?.toFixed(2) || '0.00'}
+                            ${apt.totalPrice?.toFixed(2) || apt.bookedPrice?.toFixed(2) || service?.price?.toFixed(2) || '0.00'}
                           </span>
                         </div>
                       </div>
 
-                      {/* Cancel Button */}
-                      <button
-                        onClick={() => handleCancelAppointment(apt.id)}
-                        className="px-4 py-2 text-red-600 border-2 border-red-300 rounded-lg hover:bg-red-50 hover:border-red-400 transition-colors font-medium flex-shrink-0"
-                      >
-                        Cancel
-                      </button>
+                      {/* Action Buttons */}
+                      <div className="flex gap-2 flex-col sm:flex-row">
+                        <button
+                          onClick={() => {
+                            console.log('Edit button clicked for appointment:', apt.id);
+                            setEditRequestModal({ open: true, appointment: apt });
+                          }}
+                          className="px-4 py-2 bg-blue-600 text-white border-2 border-blue-600 rounded-lg hover:bg-blue-700 hover:border-blue-700 transition-colors font-medium flex-shrink-0"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => handleCancelAppointment(apt.id)}
+                          className="px-4 py-2 text-red-600 border-2 border-red-300 rounded-lg hover:bg-red-50 hover:border-red-400 transition-colors font-medium flex-shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
+          ))}
         </div>
 
         {/* Past Appointments */}
         {hasCustomerRecord && pastAppointments.length > 0 && (
           <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
-            <h2 className="text-2xl font-serif text-terracotta mb-4">Past Appointments</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-serif text-terracotta">Past Appointments</h2>
+              <button
+                onClick={() => toggleSection('past')}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label={collapsedSections.past ? "Expand past appointments" : "Collapse past appointments"}
+              >
+                <svg 
+                  className={`w-6 h-6 text-slate-600 transition-transform duration-200 ${collapsedSections.past ? '' : 'rotate-180'}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            {!collapsedSections.past && (
             <div className="space-y-4">
               {pastAppointments.map((apt) => {
                 const service = services[apt.serviceId];
@@ -321,23 +584,30 @@ export default function ClientDashboard() {
                     className="border border-slate-300 rounded-xl p-5 bg-slate-50/50"
                   >
                     <div className="flex-grow">
-                      {/* Service Name */}
-                      <h3 className="font-semibold text-lg text-slate-800 mb-2">
-                        {service?.name || 'Service'}
-                      </h3>
-
-                      {/* Service Description */}
-                      {service?.description && (
-                        <p className="text-sm text-slate-600 mb-3">{service.description}</p>
-                      )}
+                      {/* Service Name with Read More */}
+                      <div className="flex items-center gap-2 mb-3">
+                        <h3 className="font-semibold text-lg text-slate-800">
+                          {service?.name || 'Service'}
+                        </h3>
+                        {service?.description && (
+                          <button
+                            onClick={() => {
+                              alert(service.description);
+                            }}
+                            className="text-xs text-terracotta hover:text-terracotta/80 underline"
+                          >
+                            Read More
+                          </button>
+                        )}
+                      </div>
 
                       {/* Date & Time */}
                       <div className="mb-3">
                         <p className="text-slate-700 font-medium">
-                          📅 {format(parseISO(apt.start), 'EEEE, MMMM d, yyyy')}
+                          📅 {safeFormatDate(apt.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `Past Apt ${apt.id}`)}
                         </p>
                         <p className="text-slate-600 text-sm mt-1">
-                          🕐 {format(parseISO(apt.start), 'h:mm a')} - {format(new Date(new Date(apt.start).getTime() + apt.duration * 60000), 'h:mm a')}
+                          🕐 {safeFormatDate(apt.start, 'h:mm a', 'Time TBD', `Past Apt ${apt.id}`)} - {safeFormatDate(new Date(new Date(apt.start).getTime() + (apt.duration || 0) * 60000).toISOString(), 'h:mm a', 'End Time TBD', `Past Apt ${apt.id} - End`)}
                         </p>
                       </div>
 
@@ -355,13 +625,31 @@ export default function ClientDashboard() {
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
         {/* Cancelled Appointments */}
         {hasCustomerRecord && cancelledAppointments.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-6">
-            <h2 className="text-2xl font-serif text-terracotta mb-4">Cancelled</h2>
+          <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-serif text-terracotta">Cancelled</h2>
+              <button
+                onClick={() => toggleSection('cancelled')}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label={collapsedSections.cancelled ? "Expand cancelled appointments" : "Collapse cancelled appointments"}
+              >
+                <svg 
+                  className={`w-6 h-6 text-slate-600 transition-transform duration-200 ${collapsedSections.cancelled ? '' : 'rotate-180'}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            {!collapsedSections.cancelled && (
             <div className="space-y-4">
               {cancelledAppointments.map((apt) => {
                 const service = services[apt.serviceId];
@@ -373,26 +661,33 @@ export default function ClientDashboard() {
                     <div className="flex-grow">
                       {/* Service Name & Cancelled Badge */}
                       <div className="flex items-start justify-between mb-2">
-                        <h3 className="font-semibold text-lg text-slate-800">
-                          {service?.name || 'Service'}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-lg text-slate-800">
+                            {service?.name || 'Service'}
+                          </h3>
+                          {service?.description && (
+                            <button
+                              onClick={() => {
+                                alert(service.description);
+                              }}
+                              className="text-xs text-terracotta hover:text-terracotta/80 underline"
+                            >
+                              Read More
+                            </button>
+                          )}
+                        </div>
                         <span className="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
                           Cancelled
                         </span>
                       </div>
 
-                      {/* Service Description */}
-                      {service?.description && (
-                        <p className="text-sm text-slate-600 mb-3">{service.description}</p>
-                      )}
-
                       {/* Date & Time */}
                       <div className="mb-3">
                         <p className="text-slate-700 font-medium">
-                          📅 {format(parseISO(apt.start), 'EEEE, MMMM d, yyyy')}
+                          📅 {safeFormatDate(apt.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `Cancelled Apt ${apt.id}`)}
                         </p>
                         <p className="text-slate-600 text-sm mt-1">
-                          🕐 {format(parseISO(apt.start), 'h:mm a')} - {format(new Date(new Date(apt.start).getTime() + apt.duration * 60000), 'h:mm a')}
+                          🕐 {safeFormatDate(apt.start, 'h:mm a', 'Time TBD', `Cancelled Apt ${apt.id}`)} - {safeFormatDate(new Date(new Date(apt.start).getTime() + (apt.duration || 0) * 60000).toISOString(), 'h:mm a', 'End Time TBD', `Cancelled Apt ${apt.id} - End`)}
                         </p>
                       </div>
 
@@ -410,129 +705,157 @@ export default function ClientDashboard() {
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
-        {/* Skin Analysis History */}
-        {skinAnalyses.length > 0 && (
+        {/* Debug: Edit Requests State */}
+        {import.meta.env.DEV && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <h3 className="font-semibold text-yellow-800 mb-2">Debug: Edit Requests State</h3>
+            <p className="text-sm text-yellow-700">hasCustomerRecord: {hasCustomerRecord.toString()}</p>
+            <p className="text-sm text-yellow-700">editRequests.length: {editRequests.length}</p>
+            <p className="text-sm text-yellow-700">customerId: {customerId || 'null'}</p>
+            <p className="text-sm text-yellow-700">editRequests: {JSON.stringify(editRequests, null, 2)}</p>
+          </div>
+        )}
+
+        {/* Edit Requests */}
+        {hasCustomerRecord && editRequests.length > 0 && (
           <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-serif text-terracotta">Skin Analysis History</h2>
+              <h2 className="text-2xl font-serif text-terracotta">Edit Requests</h2>
               <button
-                onClick={requestNewAnalysis}
-                disabled={requestLoading}
-                className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => toggleSection('editRequests')}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label={collapsedSections.editRequests ? "Expand edit requests" : "Collapse edit requests"}
               >
-                {requestLoading ? 'Submitting Request...' : 'Request New Analysis'}
+                <svg 
+                  className={`w-6 h-6 text-slate-600 transition-transform duration-200 ${collapsedSections.editRequests ? '' : 'rotate-180'}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
             </div>
+            {!collapsedSections.editRequests && (
             <div className="space-y-4">
-              {skinAnalyses.map((analysis) => (
-                <div
-                  key={analysis.id}
-                  className="border border-slate-300 rounded-xl p-5 bg-gradient-to-br from-white to-cream/30"
-                >
-                  <div className="flex items-start gap-4">
-                    {/* Analysis Image */}
-                    <div className="flex-shrink-0">
-                      <img
-                        src={analysis.imageUrl}
-                        alt="Skin analysis"
-                        className="w-20 h-20 object-cover rounded-lg border-2 border-slate-200"
-                      />
-                    </div>
-                    
-                    {/* Analysis Details */}
+              {editRequests.map((request) => {
+                const appointment = appointments.find(apt => apt.id === request.appointmentId);
+                const service = appointment ? services[appointment.serviceId] : null;
+                
+                return (
+                  <div
+                    key={request.id}
+                    className="border border-blue-200 rounded-xl p-5 bg-blue-50/30"
+                  >
                     <div className="flex-grow">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-semibold text-lg text-slate-800">
-                          {analysis.type === 'skin' ? 'Skin Analysis' : 'Product Analysis'}
-                        </h3>
-                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          {analysis.status}
+                      {/* Service Name & Status Badge */}
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-lg text-slate-800">
+                            {service?.name || 'Service'} - Edit Request
+                          </h3>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          request.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          request.status === 'approved' ? 'bg-green-100 text-green-800' :
+                          request.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {request.status || 'Pending'}
                         </span>
                       </div>
-                      
-                      {analysis.createdAt && (
-                        <p className="text-sm text-slate-600 mb-3">
-                          📅 {format(analysis.createdAt.toDate(), 'MMMM d, yyyy')}
-                        </p>
-                      )}
-                      
-                      {analysis.analysis && (
-                        <div className="text-sm text-slate-700">
-                          <p className="font-medium mb-1">Analysis Summary:</p>
-                          <div className="space-y-2">
-                            {analysis.analysis.summary && (
-                              <p>{analysis.analysis.summary}</p>
-                            )}
-                            {analysis.analysis.recommendations && (
-                              <div>
-                                <p className="font-medium">Recommendations:</p>
-                                <p>{analysis.analysis.recommendations}</p>
-                              </div>
-                            )}
-                            {analysis.analysis.skinType && (
-                              <div>
-                                <p className="font-medium">Skin Type:</p>
-                                <span className="inline-block px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">
-                                  {analysis.analysis.skinType}
-                                </span>
-                              </div>
-                            )}
-                            {analysis.analysis.skinTone && (
-                              <div>
-                                <p className="font-medium">Skin Tone:</p>
-                                <p>{analysis.analysis.skinTone.category} - {analysis.analysis.skinTone.description}</p>
-                              </div>
-                            )}
-                          </div>
+
+                      {/* Original Appointment Details */}
+                      {appointment && isValidDate(appointment.start) && (
+                        <div className="mb-3">
+                          <p className="text-slate-700 font-medium">
+                            📅 Original: {safeFormatDate(appointment.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `Edit Request ${request.id} - Original`)}
+                          </p>
+                          <p className="text-slate-600 text-sm mt-1">
+                            🕐 {safeFormatDate(appointment.start, 'h:mm a', 'Time TBD', `Edit Request ${request.id} - Original`)} - {safeFormatDate(new Date(new Date(appointment.start).getTime() + (appointment.duration || 0) * 60000).toISOString(), 'h:mm a', 'End Time TBD', `Edit Request ${request.id} - End Time`)}
+                          </p>
                         </div>
                       )}
+
+                      {/* Requested Changes */}
+                      {request.requestedChanges && (
+                        <div className="mb-3 p-3 bg-white rounded-lg border">
+                          <h4 className="font-medium text-slate-700 mb-2">Requested Changes:</h4>
+                          {request.requestedChanges.start && isValidDate(request.requestedChanges.start) && (
+                            <p className="text-sm text-slate-600">
+                              📅 New Date: {safeFormatDate(request.requestedChanges.start, 'EEEE, MMMM d, yyyy \'at\' h:mm a', 'Date & Time TBD', `Edit Request ${request.id} - Requested`)}
+                            </p>
+                          )}
+                          {request.requestedChanges.serviceIds && request.requestedChanges.serviceIds.length > 0 && (
+                            <p className="text-sm text-slate-600">
+                              🔧 New Services: {request.requestedChanges.serviceIds.map((serviceId: string) => services[serviceId]?.name || serviceId).join(', ')}
+                            </p>
+                          )}
+                          {request.requestedChanges.notes && (
+                            <p className="text-sm text-slate-600">
+                              📝 Notes: {request.requestedChanges.notes}
+                            </p>
+                          )}
+                          {request.reason && (
+                            <p className="text-sm text-slate-600">
+                              💭 Reason: {request.reason}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Submitted Date */}
+                      <div className="text-xs text-slate-500">
+                        Submitted: {safeFormatDate(request.createdAt, 'MMM d, yyyy \'at\' h:mm a', 'Date Unknown', `Edit Request ${request.id} - Submitted`)}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            )}
           </div>
         )}
 
-        {/* No Skin Analysis Message */}
-        {skinAnalyses.length === 0 && (
-          <div className="bg-white rounded-2xl shadow-xl p-6 mb-6 text-center">
-            <div className="mb-4">
-              <svg className="mx-auto h-16 w-16 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-              </svg>
-            </div>
-            <h3 className="text-lg font-semibold text-slate-800 mb-2">No Skin Analysis Yet</h3>
-            <p className="text-slate-600 mb-4">Get personalized skin care recommendations with our AI-powered analysis.</p>
-            <button
-              onClick={() => nav('/skin-analysis')}
-              className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors font-medium"
-            >
-              Start Skin Analysis
-            </button>
-          </div>
-        )}
 
         {/* Consent Forms Section */}
         {hasCustomerRecord && consents.length > 0 && (
           <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
-              <div>
+              <div className="flex-grow">
                 <h2 className="text-2xl font-serif text-terracotta">Consent Forms</h2>
                 <p className="text-sm text-slate-600 mt-1">Your signed consent forms and agreements</p>
               </div>
-              <div className="flex items-center gap-2">
-                <svg className="h-5 w-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span className="text-sm font-medium text-green-700">
-                  {consents.filter(c => c.agreed && !c.needsRenewal).length} Active
-                </span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <svg className="h-5 w-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-sm font-medium text-green-700">
+                    {consents.filter(c => c.agreed && !c.needsRenewal).length} Active
+                  </span>
+                </div>
+                <button
+                  onClick={() => toggleSection('consentForms')}
+                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                  aria-label={collapsedSections.consentForms ? "Expand consent forms" : "Collapse consent forms"}
+                >
+                  <svg 
+                    className={`w-6 h-6 text-slate-600 transition-transform duration-200 ${collapsedSections.consentForms ? '' : 'rotate-180'}`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               </div>
             </div>
+            {!collapsedSections.consentForms && (
             <div className="space-y-3">
               {consents.map((consent) => (
                 <div
@@ -567,8 +890,8 @@ export default function ClientDashboard() {
                         </p>
                         <p>
                           <span className="font-medium">Signed:</span>{' '}
-                          {format(new Date(consent.consentedAt), 'MMMM d, yyyy')} at{' '}
-                          {format(new Date(consent.consentedAt), 'h:mm a')}
+                          {safeFormatDate(consent.consentedAt, 'MMMM d, yyyy', 'Date Unknown', `Consent ${consent.id} - Signed Date`)} at{' '}
+                          {safeFormatDate(consent.consentedAt, 'h:mm a', 'Time Unknown', `Consent ${consent.id} - Signed Time`)}
                         </p>
                         {consent.signature && (
                           <p>
@@ -579,7 +902,7 @@ export default function ClientDashboard() {
                         {consent.expiresAt && (
                           <p>
                             <span className="font-medium">Expires:</span>{' '}
-                            {format(new Date(consent.expiresAt), 'MMMM d, yyyy')}
+                            {safeFormatDate(consent.expiresAt, 'MMMM d, yyyy', 'Date Unknown', `Consent ${consent.id} - Expires`)}
                           </p>
                         )}
                       </div>
@@ -614,7 +937,19 @@ export default function ClientDashboard() {
                 </div>
               ))}
             </div>
+            )}
           </div>
+        )}
+
+        {/* Edit Request Modal */}
+        {editRequestModal.open && editRequestModal.appointment && (
+          <EditRequestModal
+            appointment={editRequestModal.appointment}
+            services={services}
+            onClose={() => setEditRequestModal({ open: false, appointment: null })}
+            onSubmit={handleEditRequest}
+            loading={editRequestLoading}
+          />
         )}
       </div>
     </div>

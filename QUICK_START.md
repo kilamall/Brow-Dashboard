@@ -11,7 +11,7 @@ Both apps are **built, deployed, and working**. The booking flow is operational,
 ### Admin Dashboard
 - **Local**: http://localhost:5173
 - **Production**: https://bueno-brows-admin.web.app
-- **Login**: regina@buenobrows.com or malikgriffin1@gmail.com
+- **Login**: admin@yourdomain.com
 
 ### Booking App
 - **Local**: http://localhost:5176

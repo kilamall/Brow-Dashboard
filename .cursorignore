@@ -1,0 +1,25 @@
+# Cursor IDE - Files to ignore
+# These files won't be indexed or searched by Cursor
+
+# Service account keys and credentials
+service-account*.json
+*-key.json
+*.pem
+*-credentials.json
+secrets.json
+.secrets
+
+# Temporary files
+users-temp.json
+users-export.json
+
+# Large directories
+node_modules/
+.firebase/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+

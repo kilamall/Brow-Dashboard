@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Appointment Inspector</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #c17767; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin: 20px 0;
+    }
+    .stat-card {
+      padding: 20px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    .stat-card.valid { background: #d4edda; border: 2px solid #28a745; }
+    .stat-card.invalid { background: #f8d7da; border: 2px solid #dc3545; }
+    .stat-number { font-size: 32px; font-weight: bold; }
+    .stat-label { font-size: 14px; color: #666; }
+    .appointment-list { margin-top: 20px; }
+    .appointment-item {
+      padding: 15px;
+      margin: 10px 0;
+      background: #fff3cd;
+      border-left: 4px solid #ff6b6b;
+      border-radius: 4px;
+    }
+    .appointment-item pre {
+      background: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    button {
+      background: #c17767;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 5px;
+    }
+    button:hover { background: #a85d4f; }
+    button.danger { background: #dc3545; }
+    button.danger:hover { background: #c82333; }
+    .loading { text-align: center; padding: 40px; }
+    .error { background: #f8d7da; color: #721c24; padding: 15px; border-radius: 6px; margin: 10px 0; }
+    .success { background: #d4edda; color: #155724; padding: 15px; border-radius: 6px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 Appointment Date Inspector</h1>
+    <p>This tool inspects all appointments in your database for invalid date values.</p>
+    
+    <div id="loading" class="loading">
+      <p>🔄 Connecting to Firebase...</p>
+    </div>
+    
+    <div id="results" style="display: none;">
+      <div class="stats">
+        <div class="stat-card valid">
+          <div class="stat-number" id="validCount">0</div>
+          <div class="stat-label">Valid Appointments</div>
+        </div>
+        <div class="stat-card invalid">
+          <div class="stat-number" id="invalidCount">0</div>
+          <div class="stat-label">Invalid Appointments</div>
+        </div>
+      </div>
+      
+      <div id="invalidList" class="appointment-list"></div>
+      
+      <div id="actions" style="display: none; margin-top: 20px;">
+        <button onclick="downloadResults()">💾 Download Results</button>
+        <button class="danger" onclick="deleteInvalid()">🗑️ Delete Invalid Appointments</button>
+      </div>
+    </div>
+    
+    <div id="message"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, collection, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    // Your Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyCnx3e-yb4HKqh6aJ8nzxmVkIV5qv8Xsrc",
+      authDomain: "bueno-brows-7cce7.firebaseapp.com",
+      projectId: "bueno-brows-7cce7",
+      storageBucket: "bueno-brows-7cce7.firebasestorage.app",
+      messagingSenderId: "621278624044",
+      appId: "1:621278624044:web:f2e7f45e04d6b49c8faed5"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let invalidAppointments = [];
+
+    async function inspectAppointments() {
+      try {
+        document.getElementById('loading').style.display = 'block';
+        
+        const appointmentsSnap = await getDocs(collection(db, 'appointments'));
+        
+        const valid = [];
+        const invalid = [];
+        
+        appointmentsSnap.forEach(doc => {
+          const data = doc.data();
+          const apt = { id: doc.id, ...data };
+          
+          if (!apt.start) {
+            invalid.push({
+              id: doc.id,
+              issue: 'Missing start field',
+              customerId: apt.customerId,
+              serviceId: apt.serviceId,
+              status: apt.status,
+              data: apt
+            });
+          } else {
+            const testDate = new Date(apt.start);
+            if (isNaN(testDate.getTime())) {
+              invalid.push({
+                id: doc.id,
+                issue: 'Invalid start value',
+                startValue: apt.start,
+                startType: typeof apt.start,
+                customerId: apt.customerId,
+                serviceId: apt.serviceId,
+                status: apt.status,
+                data: apt
+              });
+            } else {
+              valid.push({ id: doc.id, start: apt.start });
+            }
+          }
+        });
+        
+        invalidAppointments = invalid;
+        displayResults(valid.length, invalid);
+        
+      } catch (error) {
+        showError('Error inspecting appointments: ' + error.message);
+      }
+    }
+
+    function displayResults(validCount, invalid) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('results').style.display = 'block';
+      
+      document.getElementById('validCount').textContent = validCount;
+      document.getElementById('invalidCount').textContent = invalid.length;
+      
+      const listEl = document.getElementById('invalidList');
+      
+      if (invalid.length === 0) {
+        listEl.innerHTML = '<div class="success"><strong>🎉 Great news!</strong> All appointments have valid dates.</div>';
+      } else {
+        listEl.innerHTML = '<h3>❌ Invalid Appointments:</h3>';
+        invalid.forEach((apt, index) => {
+          const html = `
+            <div class="appointment-item">
+              <strong>Appointment ${index + 1}</strong>
+              <p><strong>ID:</strong> ${apt.id}</p>
+              <p><strong>Issue:</strong> ${apt.issue}</p>
+              ${apt.startValue ? `<p><strong>Start Value:</strong> "${apt.startValue}" (${apt.startType})</p>` : ''}
+              <p><strong>Customer ID:</strong> ${apt.customerId || 'N/A'}</p>
+              <p><strong>Service ID:</strong> ${apt.serviceId || 'N/A'}</p>
+              <p><strong>Status:</strong> ${apt.status || 'N/A'}</p>
+              <details>
+                <summary>View Full Data</summary>
+                <pre>${JSON.stringify(apt.data, null, 2)}</pre>
+              </details>
+            </div>
+          `;
+          listEl.innerHTML += html;
+        });
+        
+        document.getElementById('actions').style.display = 'block';
+      }
+    }
+
+    function showError(message) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('message').innerHTML = `<div class="error">${message}</div>`;
+    }
+
+    function showSuccess(message) {
+      document.getElementById('message').innerHTML = `<div class="success">${message}</div>`;
+    }
+
+    window.downloadResults = function() {
+      const dataStr = JSON.stringify(invalidAppointments, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'invalid-appointments.json';
+      link.click();
+      showSuccess('✅ Results downloaded successfully!');
+    };
+
+    window.deleteInvalid = async function() {
+      if (!confirm(`⚠️ Are you SURE you want to delete ${invalidAppointments.length} invalid appointments? This cannot be undone!`)) {
+        return;
+      }
+      
+      showError('❌ Deletion from web interface is disabled for safety. Please use the Node.js script or Firebase Console.');
+    };
+
+    // Start inspection when page loads
+    inspectAppointments();
+  </script>
+</body>
+</html>
+

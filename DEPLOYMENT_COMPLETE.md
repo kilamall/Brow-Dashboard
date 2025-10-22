@@ -14,8 +14,7 @@
 - **Local Dev**: http://localhost:5173
 
 **Login Credentials:**
-- regina@buenobrows.com (password)
-- malikgriffin1@gmail.com (Google sign-in)
+- admin@yourdomain.com (password or Google sign-in)
 
 ### **Customer Booking Site**
 - **Production**: https://bueno-brows-7cce7.web.app  

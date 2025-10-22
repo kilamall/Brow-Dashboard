@@ -13,7 +13,7 @@
 
 3. **Save the Key**:
    - Rename the downloaded file to `service-account-key.json`
-   - Move it to: `/Users/kilam/Desktop/Admin-Github/Brow-Admin-Booking-Dashboard/`
+   - Move it to your project root directory
 
 4. **⚠️ Security Note**:
    - This file is already in `.gitignore` (should be)
@@ -24,10 +24,7 @@
 ## Then Run the Script:
 
 ```bash
-# Set regina@buenobrows.com as admin
-node set-admin-role.js regina@buenobrows.com
-
-# Set malikgriffin1@gmail.com as admin  
-node set-admin-role.js malikgriffin1@gmail.com
+# Set your admin email
+node set-admin-role.js admin@yourdomain.com
 ```
 

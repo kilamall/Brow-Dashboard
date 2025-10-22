@@ -229,7 +229,7 @@ firebase deploy --only functions
 // In browser console (one time only)
 const createFirstAdmin = firebase.functions().httpsCallable('createFirstAdmin');
 await createFirstAdmin({
-  email: 'regina@buenobrows.com',
+  email: 'admin@yourdomain.com',
   secret: 'YOUR_BOOTSTRAP_SECRET'
 });
 ```

@@ -149,13 +149,24 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
                 // coerce to current service price (or throw if you want strict equality)
             }
             const duration = Math.round((new Date(hold.end).getTime() - new Date(hold.start).getTime()) / 60000);
+            // ✅ FIXED: Use userId from hold if available, otherwise use client-provided customerId
+            const finalCustomerId = hold.userId || customerId;
+            console.log('🔍 Finalizing booking with customer ID:', {
+                holdUserId: hold.userId,
+                clientCustomerId: customerId,
+                finalCustomerId,
+                holdId
+            });
             const appt = {
                 serviceId: hold.serviceId,
-                customerId: customerId,
+                customerId: finalCustomerId,
                 start: hold.start,
                 duration,
                 status: 'pending', // Always create as pending, admin must confirm
                 bookedPrice,
+                totalPrice: bookedPrice, // Initially same as bookedPrice, can be updated with tips
+                tip: 0, // Default tip amount
+                isPriceEdited: false, // Not edited initially
                 // Small snapshot for convenience (optional)
                 customerName: customer.name || null,
                 customerEmail: customer.email || null,
@@ -176,7 +187,9 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
             tx.update(holdRef, { status: 'finalized', expiresAt: nowISO() });
             return { appointmentId: apptRef.id };
         });
-        console.log('✅ Booking finalized successfully:', result.appointmentId);
+        console.log('✅ Booking finalized successfully (PENDING admin confirmation):', result.appointmentId);
+        // NOTE: Confirmation SMS/email will be sent when admin approves the appointment
+        // This prevents customers from receiving confirmations for appointments that may be rejected
         return result;
     }
     catch (error) {

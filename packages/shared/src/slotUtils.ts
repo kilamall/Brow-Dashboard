@@ -1,14 +1,67 @@
-import type { Appointment, BusinessHours } from './types';
+import type { Appointment, BusinessHours, DayClosure, SpecialHours } from './types';
 import type { AvailabilitySlot } from './availabilityHelpers';
+
+/**
+ * Get effective hours for a date, considering special hours and closures.
+ * Returns null if the shop is closed for that date.
+ */
+export function getEffectiveHoursForDate(
+  date: Date,
+  bh: BusinessHours,
+  closures: DayClosure[],
+  specialHours: SpecialHours[]
+): [string, string][] | null {
+  const dateStr = formatDateYYYYMMDD(date);
+  
+  // Check if shop is closed for this date
+  if (closures.some(c => c.date === dateStr)) {
+    return null;
+  }
+  
+  // Check for special hours
+  const special = specialHours.find(s => s.date === dateStr);
+  if (special) {
+    return special.ranges;
+  }
+  
+  // Use regular business hours
+  const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()] as keyof BusinessHours['slots'];
+  return bh.slots[dayKey] || [];
+}
+
+/**
+ * Format date as YYYY-MM-DD
+ */
+function formatDateYYYYMMDD(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 /**
  * Generate available start-time ISO strings for a given date, duration, and business hours.
  * Excludes any slots that would overlap existing (non-cancelled) appointments.
+ * Respects day closures and special hours.
  */
-export function availableSlotsForDay(date: Date, durationMin: number, bh: BusinessHours, appts: Appointment[]): string[] {
+export function availableSlotsForDay(
+  date: Date,
+  durationMin: number,
+  bh: BusinessHours,
+  appts: Appointment[],
+  closures: DayClosure[] = [],
+  specialHours: SpecialHours[] = []
+): string[] {
   const tz = bh.timezone || 'America/Los_Angeles';
-  const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()] as keyof BusinessHours['slots'];
-  const ranges = bh.slots[dayKey] || [];
+  
+  // Get effective hours (considering closures and special hours)
+  const ranges = getEffectiveHoursForDate(date, bh, closures, specialHours);
+  
+  // If shop is closed, return no slots
+  if (ranges === null || ranges.length === 0) {
+    return [];
+  }
+  
   const step = Math.max(5, bh.slotInterval || 15);
 
   const slots: string[] = [];
@@ -49,16 +102,26 @@ function wallToDate(base: Date, hhmm: string, timeZone: string): Date {
 
 /**
  * Generate available slots using availability collection (more efficient, no customer data)
+ * Respects day closures and special hours.
  */
 export function availableSlotsFromAvailability(
   date: Date,
   durationMin: number,
   bh: BusinessHours,
-  bookedSlots: AvailabilitySlot[]
+  bookedSlots: AvailabilitySlot[],
+  closures: DayClosure[] = [],
+  specialHours: SpecialHours[] = []
 ): string[] {
   const tz = bh.timezone || 'America/Los_Angeles';
-  const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()] as keyof BusinessHours['slots'];
-  const ranges = bh.slots[dayKey] || [];
+  
+  // Get effective hours (considering closures and special hours)
+  const ranges = getEffectiveHoursForDate(date, bh, closures, specialHours);
+  
+  // If shop is closed, return no slots
+  if (ranges === null || ranges.length === 0) {
+    return [];
+  }
+  
   const step = Math.max(5, bh.slotInterval || 15);
 
   const slots: string[] = [];
@@ -75,21 +138,41 @@ export function availableSlotsFromAvailability(
 }
 
 function overlapsAvailability(startMs: number, endMs: number, slots: AvailabilitySlot[]): boolean {
+  const now = Date.now();
+  
   for (const slot of slots) {
+    // Skip slots that are not actually blocking
+    if (slot.status !== 'booked' && slot.status !== 'held') {
+      continue;
+    }
+    
+    // Skip expired slots (if they have an expiration)
+    if (slot.expiresAt && new Date(slot.expiresAt).getTime() < now) {
+      continue;
+    }
+    
     const slotStart = new Date(slot.start).getTime();
     const slotEnd = new Date(slot.end).getTime();
     const overlaps = slotStart < endMs && slotEnd > startMs;
     
-    // Debug logging
-    console.log('Checking overlap:', {
+    // Enhanced debug logging
+    console.log('🔍 Checking overlap:', {
+      slotId: slot.id,
+      slotStatus: slot.status,
       slotStart: new Date(slotStart).toISOString(),
       slotEnd: new Date(slotEnd).toISOString(),
-      startMs: new Date(startMs).toISOString(),
-      endMs: new Date(endMs).toISOString(),
-      overlaps
+      requestedStart: new Date(startMs).toISOString(),
+      requestedEnd: new Date(endMs).toISOString(),
+      overlaps,
+      slotDuration: `${Math.round((slotEnd - slotStart) / 60000)} min`,
+      requestedDuration: `${Math.round((endMs - startMs) / 60000)} min`,
+      isExpired: slot.expiresAt ? new Date(slot.expiresAt).getTime() < now : false
     });
     
-    if (overlaps) return true;
+    if (overlaps) {
+      console.log(`❌ OVERLAP DETECTED with slot ${slot.id} (${slot.status})`);
+      return true;
+    }
   }
   return false;
 }

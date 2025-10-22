@@ -12,26 +12,107 @@ import type { Appointment, BusinessHours, Customer, Service } from '@buenobrows/
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { collection, getDocs, limit, query, where, type Firestore } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 
-export default function AddAppointmentModal({ open, onClose, date, onCreated }: { open: boolean; onClose: () => void; date: Date; onCreated?: (id: string) => void; }) {
+interface AddAppointmentModalProps {
+  open: boolean;
+  onClose: () => void;
+  date: Date;
+  onCreated?: (id: string) => void;
+  prefillData?: {
+    customerId?: string;
+    customerName?: string;
+    customerEmail?: string;
+    customerPhone?: string;
+    serviceId?: string;
+  };
+}
+
+export default function AddAppointmentModal({ open, onClose, date, onCreated, prefillData }: AddAppointmentModalProps) {
   const { db } = useFirebase();
   // Data
   const [services, setServices] = useState<Service[]>([]);
   const [bh, setBh] = useState<BusinessHours | null>(null);
-  useEffect(() => watchServices(db, { activeOnly: true }, setServices), []);
-  useEffect(() => watchBusinessHours(db, setBh), []);
+  useEffect(() => watchServices(db, { activeOnly: true }, setServices), [db]);
+  useEffect(() => watchBusinessHours(db, setBh), [db]);
 
-  // Form
+  // Form - Initialize with prefilled data if provided
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [customerTerm, setCustomerTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [timeHHMM, setTimeHHMM] = useState('10:00');
+  const [selectedDate, setSelectedDate] = useState(format(date, 'yyyy-MM-dd')); // ✅ NEW: Editable date state
   const [notes, setNotes] = useState('');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  
+  // Load all customers for dropdown
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  
+  // Initialize form with prefilled data
+  useEffect(() => {
+    if (prefillData) {
+      if (prefillData.customerName) setName(prefillData.customerName);
+      if (prefillData.customerEmail) setEmail(prefillData.customerEmail);
+      if (prefillData.customerPhone) setPhone(prefillData.customerPhone);
+      if (prefillData.serviceId) setSelectedServiceIds([prefillData.serviceId]);
+      
+      // If customerId is provided, try to load the customer
+      if (prefillData.customerId && db) {
+        const loadCustomer = async () => {
+          try {
+            const { doc: getDocRef, getDoc } = await import('firebase/firestore');
+            const customerDoc = await getDoc(getDocRef(db, 'customers', prefillData.customerId!));
+            if (customerDoc.exists()) {
+              setSelectedCustomer({ id: customerDoc.id, ...customerDoc.data() } as Customer);
+            }
+          } catch (error) {
+            console.error('Failed to load customer:', error);
+          }
+        };
+        loadCustomer();
+      }
+    }
+  }, [prefillData, db]);
+
+  // ✅ NEW: Reset form when modal opens
+  useEffect(() => {
+    if (open) {
+      // Reset form to clean state
+      setCustomerTerm('');
+      setSelectedCustomer(null);
+      setName('');
+      setEmail('');
+      setPhone('');
+      setNotes('');
+      setSelectedServiceIds([]);
+      setTimeHHMM('09:00'); // Default time
+      setSelectedDate(format(date, 'yyyy-MM-dd')); // Reset to prop date
+      setErr('');
+      setSaving(false);
+      setShowDropdown(false);
+      
+      // Apply prefill data if provided (from clicking on customer)
+      if (prefillData) {
+        if (prefillData.customerId) {
+          const customer = allCustomers.find(c => c.id === prefillData.customerId);
+          if (customer) {
+            setSelectedCustomer(customer);
+            setName(customer.name);
+            setEmail(customer.email || '');
+            setPhone(customer.phone || '');
+          }
+        }
+        if (prefillData.serviceId) {
+          setSelectedServiceIds([prefillData.serviceId]);
+        }
+      }
+    }
+  }, [open, prefillData, allCustomers]);
 
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
@@ -71,36 +152,47 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
     });
   };
 
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    (async () => {
+      const q = query(collection(db, 'customers'), limit(100));
+      const snap = await getDocs(q);
+      const customers: Customer[] = [];
+      snap.forEach((d) => customers.push({ id: d.id, ...(d.data() as any) }));
+      if (alive) setAllCustomers(customers.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    })();
+    return () => { alive = false; };
+  }, [open, db]);
+
   // Suggestions for customers (name/email prefix search)
   const [suggestions, setSuggestions] = useState<Customer[]>([]);
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      const t = customerTerm.trim();
-      if (!t) { setSuggestions([]); return; }
-      const out: Customer[] = [];
-      // by email exact
-      if (t.includes('@')) {
-        const m = await findCustomerByEmail(db, t);
-        if (m) out.push(m);
-      }
-      // by name prefix
-      const byName = query(collection(db, 'customers'), where('name', '>=', t), where('name', '<=', t + '\uf8ff'), limit(5));
-      const snap = await getDocs(byName);
-      snap.forEach((d) => out.push({ id: d.id, ...(d.data() as any) }));
-      if (alive) setSuggestions(out);
-    })();
-    return () => { alive = false; };
-  }, [customerTerm]);
+    const t = customerTerm.trim().toLowerCase();
+    if (!t) { 
+      // Show all customers when empty
+      setSuggestions(allCustomers); 
+      return; 
+    }
+    
+    // Filter existing customers by name or email
+    const filtered = allCustomers.filter(c => 
+      (c.name || '').toLowerCase().includes(t) || 
+      (c.email || '').toLowerCase().includes(t) ||
+      (c.phone || '').includes(t)
+    ).slice(0, 10);
+    
+    setSuggestions(filtered);
+  }, [customerTerm, allCustomers]);
 
   // Slot helper (optional for admins, but useful)
   const [dayAppts, setDayAppts] = useState<Appointment[]>([]);
   useEffect(() => {
     // lazy on-demand: only when open
     if (!open) return;
-    // simple day fetch
-    const start = new Date(date); start.setHours(0,0,0,0);
-    const end = new Date(date); end.setHours(23,59,59,999);
+    // simple day fetch using selectedDate
+    const start = new Date(selectedDate + 'T00:00:00');
+    const end = new Date(selectedDate + 'T23:59:59');
     import('firebase/firestore').then(({ onSnapshot, collection, query, where, orderBy }) => {
       const qy = query(collection(db, 'appointments'), where('start', '>=', start.toISOString()), where('start', '<=', end.toISOString()), orderBy('start', 'asc'));
       const unsub = onSnapshot(qy, (snap) => {
@@ -110,9 +202,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
       });
       return () => unsub();
     });
-  }, [open, date]);
+  }, [open, selectedDate, db]);
 
-  const slots = useMemo(() => (bh ? availableSlotsForDay(date, totalDuration, bh, dayAppts) : []), [bh, date, totalDuration, dayAppts]);
+  const currentDateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate]);
+  const slots = useMemo(() => (bh ? availableSlotsForDay(currentDateObj, totalDuration, bh, dayAppts) : []), [bh, currentDateObj, totalDuration, dayAppts]);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -127,20 +220,37 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
         return;
       }
       
-      // Resolve customer
+      // Resolve customer using enhanced identity system
       let customerId: string;
-      if (selectedCustomer) customerId = selectedCustomer.id;
-      else {
-        // create a guest/approved customer on the fly if email provided, else name-only
-        const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
-        const ref = doc(collection(db, 'customers'));
-        await setDoc(ref, { name: name || customerTerm || 'Unnamed', email: email || null, phone: phone || null, status: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
-        customerId = ref.id;
+      if (selectedCustomer) {
+        customerId = selectedCustomer.id;
+      } else {
+        // Use Cloud Function to find or create customer with canonical identifiers
+        const findOrCreate = httpsCallable(getFunctions(), 'findOrCreateCustomer');
+        
+        const result = await findOrCreate({
+          email: email || null,
+          phone: phone || null,
+          name: name || customerTerm || 'Unnamed',
+          authUid: null // Admin doesn't have user's Auth UID yet
+        }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+        
+        customerId = result.data.customerId;
+        
+        if (result.data.merged) {
+          console.log('✅ Linked appointment to existing customer account');
+        } else if (result.data.isNew) {
+          console.log('✅ Created new customer record');
+        } else {
+          console.log('✅ Found existing customer record');
+        }
       }
 
-      // Compose ISO from date + time
-      const [hh, mm] = timeHHMM.split(':').map(Number);
-      const start = new Date(date); start.setHours(hh, mm, 0, 0);
+      // Compose ISO from selectedDate + time
+      const timeString = typeof timeHHMM === 'string' ? timeHHMM : '10:00';
+      const [hh, mm] = (timeString && typeof timeString === 'string') ? timeString.split(':').map(Number) : [10, 0];
+      const start = new Date(selectedDate + 'T00:00:00'); 
+      start.setHours(hh, mm, 0, 0);
 
       const id = await createAppointmentTx(db, {
         customerId,
@@ -150,8 +260,31 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
         duration: totalDuration,
         status: 'confirmed',
         bookedPrice: totalPrice,
+        totalPrice: totalPrice, // Initially same as bookedPrice
+        tip: 0, // Default tip amount
+        isPriceEdited: false, // Not edited initially
         notes,
       } as any);
+
+      // ✅ NEW: Send confirmation email
+      try {
+        const functions = getFunctions();
+        const sendConfirmation = httpsCallable(functions, 'sendAppointmentConfirmation');
+        await sendConfirmation({
+          appointmentId: id,
+          customerId: customerId,
+          customerEmail: email || selectedCustomer?.email,
+          customerName: name || selectedCustomer?.name || customerTerm,
+          start: start.toISOString(),
+          duration: totalDuration,
+          serviceNames: selectedServices.map(s => s.name).join(', '),
+          totalPrice: totalPrice
+        });
+        console.log('✅ Confirmation email sent for appointment:', id);
+      } catch (emailError) {
+        console.error('⚠️ Failed to send confirmation email:', emailError);
+        // Don't fail the appointment creation if email fails
+      }
 
       onCreated?.(id);
       onClose();
@@ -177,28 +310,87 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
 
                 <div className="grid gap-4">
                   {/* Customer search/create */}
-                  <div>
-                    <label htmlFor="customer-search" className="text-sm text-slate-600">Customer</label>
-                    <input id="customer-search" name="customer-search" className="border rounded-md p-2 w-full" placeholder="Type name or email…" value={customerTerm} onChange={(e)=>{ setCustomerTerm(e.target.value); setSelectedCustomer(null); }} />
-                    {suggestions.length > 0 && (
-                      <div className="border rounded-md mt-1 max-h-40 overflow-auto">
+                  <div className="relative">
+                    <label htmlFor="customer-search" className="text-sm font-medium text-slate-700 mb-1 flex items-center justify-between">
+                      <span>Customer {allCustomers.length > 0 && <span className="text-xs font-normal text-slate-500">({allCustomers.length} in database)</span>}</span>
+                      {selectedCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedCustomer(null); setCustomerTerm(''); }}
+                          className="text-xs text-terracotta hover:text-terracotta/80"
+                        >
+                          Clear selection
+                        </button>
+                      )}
+                    </label>
+                    <input 
+                      id="customer-search" 
+                      name="customer-search" 
+                      className="border border-slate-300 rounded-lg p-2 w-full focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+                      placeholder="Search existing customers or type name for new customer…" 
+                      value={customerTerm} 
+                      onChange={(e)=>{ setCustomerTerm(e.target.value); setSelectedCustomer(null); }}
+                      onFocus={() => setShowDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+                    />
+                    {showDropdown && suggestions.length > 0 && !selectedCustomer && (
+                      <div className="absolute z-10 w-full border border-slate-300 rounded-lg mt-1 max-h-60 overflow-auto bg-white shadow-lg">
+                        <div className="p-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-600 font-medium">
+                          {customerTerm ? `${suggestions.length} customer${suggestions.length !== 1 ? 's' : ''} found` : 'Select from existing customers'}
+                        </div>
                         {suggestions.map((c) => (
-                          <button key={c.id} className="w-full text-left px-2 py-1 hover:bg-cream" onClick={()=>{ setSelectedCustomer(c); setCustomerTerm(c.name || c.email || ''); }}>
-                            <div className="text-sm">{c.name}</div>
-                            <div className="text-xs text-slate-500">{c.email || c.phone || c.id}</div>
+                          <button 
+                            key={c.id} 
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-terracotta/5 border-b border-slate-100 last:border-b-0 transition-colors" 
+                            onClick={()=>{ 
+                              setSelectedCustomer(c); 
+                              setCustomerTerm(c.name || c.email || ''); 
+                              setShowDropdown(false);
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="text-sm font-medium text-slate-800">{c.name}</div>
+                                <div className="text-xs text-slate-500">
+                                  {c.email && <span>{c.email}</span>}
+                                  {c.email && c.phone && <span className="mx-1">•</span>}
+                                  {c.phone && <span>{c.phone}</span>}
+                                </div>
+                              </div>
+                              <div className="text-xs text-slate-400">
+                                {c.totalVisits || 0} visit{c.totalVisits !== 1 ? 's' : ''}
+                              </div>
+                            </div>
                           </button>
                         ))}
                       </div>
                     )}
                     {!selectedCustomer && (
-                      <div className="grid sm:grid-cols-3 gap-2 mt-2">
-                        <input id="new-customer-name" name="new-customer-name" className="border rounded-md p-2" placeholder="Name" value={name} onChange={(e)=>setName(e.target.value)} />
-                        <input id="new-customer-email" name="new-customer-email" className="border rounded-md p-2" placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
-                        <input id="new-customer-phone" name="new-customer-phone" className="border rounded-md p-2" placeholder="Phone" value={phone} onChange={(e)=>setPhone(e.target.value)} />
+                      <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                        <div className="text-xs font-medium text-slate-700 mb-2">Or create new customer</div>
+                        <div className="grid sm:grid-cols-3 gap-2">
+                          <input id="new-customer-name" name="new-customer-name" className="border border-slate-300 rounded-md p-2 text-sm" placeholder="Name *" value={name} onChange={(e)=>setName(e.target.value)} />
+                          <input id="new-customer-email" name="new-customer-email" className="border border-slate-300 rounded-md p-2 text-sm" placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
+                          <input id="new-customer-phone" name="new-customer-phone" className="border border-slate-300 rounded-md p-2 text-sm" placeholder="Phone" value={phone} onChange={(e)=>setPhone(e.target.value)} />
+                        </div>
                       </div>
                     )}
                     {selectedCustomer && (
-                      <div className="text-xs text-slate-600 mt-1">Selected: <span className="font-medium">{selectedCustomer.name}</span> ({selectedCustomer.email || selectedCustomer.phone || selectedCustomer.id})</div>
+                      <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-slate-800">{selectedCustomer.name}</div>
+                            <div className="text-xs text-slate-600">
+                              {selectedCustomer.email || selectedCustomer.phone || selectedCustomer.id}
+                              {selectedCustomer.totalVisits && <span className="ml-2">• {selectedCustomer.totalVisits} previous visits</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -350,11 +542,26 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div>
                       <label htmlFor="appointment-date" className="text-sm text-slate-600">Date</label>
-                      <input id="appointment-date" name="appointment-date" type="date" className="border rounded-md p-2 w-full" value={format(date, 'yyyy-MM-dd')} onChange={(e)=>{ const d = new Date(e.target.value+'T00:00:00'); d.setHours(date.getHours(), date.getMinutes(), 0, 0); (date as any) = d; }} />
+                      <input 
+                        id="appointment-date" 
+                        name="appointment-date" 
+                        type="date" 
+                        className="border rounded-md p-2 w-full" 
+                        value={selectedDate} 
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        min={(new Date().toISOString() && typeof new Date().toISOString() === 'string') ? new Date().toISOString().split('T')[0] : ''}
+                      />
                     </div>
                     <div>
                       <label htmlFor="appointment-time" className="text-sm text-slate-600">Time</label>
-                      <input id="appointment-time" name="appointment-time" type="time" className="border rounded-md p-2 w-full" value={timeHHMM} onChange={(e)=>setTimeHHMM(e.target.value)} />
+                      <input 
+                        id="appointment-time" 
+                        name="appointment-time" 
+                        type="time" 
+                        className="border rounded-md p-2 w-full" 
+                        value={timeHHMM} 
+                        onChange={(e)=>setTimeHHMM(e.target.value)} 
+                      />
                     </div>
                     <div>
                       <label htmlFor="appointment-duration" className="text-sm text-slate-600">Duration (min)</label>
@@ -377,22 +584,57 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated }: 
                   {/* Optional slot suggestions */}
                   {bh && (
                     <div>
-                      <div className="text-xs text-slate-600 mb-1">Available slots</div>
-                      <div className="grid grid-cols-4 gap-2">
-                        {availableSlotsForDay(date, totalDuration, bh, dayAppts).slice(0, 16).map((iso)=> (
-                          <button key={iso} className="border rounded-md py-1 text-sm hover:bg-cream" onClick={()=> setTimeHHMM(format(parseISO(iso), 'HH:mm'))}>
-                            {format(parseISO(iso), 'h:mm a')}
-                          </button>
-                        ))}
-                        {!availableSlotsForDay(date, totalDuration, bh, dayAppts).length && <div className="text-xs text-slate-500">No slots under business hours.</div>}
+                      <div className="text-xs text-slate-600 mb-1">
+                        Available slots for {format(currentDateObj, 'EEEE, MMMM d, yyyy')}
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-3">
+                        {slots.slice(0, 24).map((iso)=> {
+                          const slotTime = format(parseISO(iso), 'h:mm a');
+                          const slotTimeHHMM = format(parseISO(iso), 'HH:mm');
+                          const isSelected = timeHHMM === slotTimeHHMM;
+                          
+                          return (
+                            <button 
+                              key={iso} 
+                              type="button"
+                              className={`px-3 py-2 text-sm rounded-md border transition-colors ${
+                                isSelected
+                                  ? 'bg-terracotta text-white border-terracotta'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                              onClick={()=> setTimeHHMM(slotTimeHHMM)}
+                            >
+                              {slotTime}
+                            </button>
+                          );
+                        })}
+                        {!slots.length && (
+                          <div className="col-span-4 text-xs text-slate-500 py-2 text-center">
+                            No available slots under business hours for this date.
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {/* Notes */}
                   <div>
-                    <label htmlFor="appointment-notes" className="text-sm text-slate-600">Notes</label>
-                    <textarea id="appointment-notes" name="appointment-notes" className="border rounded-md p-2 w-full" rows={3} value={notes} onChange={(e)=>setNotes(e.target.value)} />
+                    <label htmlFor="appointment-notes" className="text-sm text-slate-600">
+                      Appointment-Specific Notes (optional)
+                    </label>
+                    <p className="text-xs text-slate-500 mb-1">
+                      For appointment-specific info only (e.g., "running late", "first-time client"). 
+                      Use Customer Notes for preferences, allergies, etc.
+                    </p>
+                    <textarea 
+                      id="appointment-notes" 
+                      name="appointment-notes" 
+                      className="border rounded-md p-2 w-full" 
+                      rows={3} 
+                      value={notes} 
+                      onChange={(e)=>setNotes(e.target.value)}
+                      placeholder="e.g., Customer running 10 minutes late..."
+                    />
                   </div>
 
                   {err && <div className="text-red-600 text-sm">{err}</div>}

@@ -5,6 +5,7 @@ import type { Firestore } from 'firebase/firestore';
 import type { Auth } from 'firebase/auth';
 import type { Functions } from 'firebase/functions';
 import type { Messaging } from 'firebase/messaging';
+import type { Analytics } from 'firebase/analytics';
 
 interface FirebaseContextType {
   app: FirebaseApp;
@@ -12,6 +13,7 @@ interface FirebaseContextType {
   auth: Auth;
   functions: Functions;
   messaging?: Messaging;
+  analytics?: Analytics;
 }
 
 const FirebaseContext = createContext<FirebaseContextType | null>(null);

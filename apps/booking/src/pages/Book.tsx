@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import SEO from '../components/SEO';
 import type { Appointment, BusinessHours, Service, ConsentFormTemplate } from '@buenobrows/shared/types';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 import {
@@ -22,6 +23,7 @@ import {
   getOrCreateSessionId,
   findOrCreateCustomerClient,
 } from '@buenobrows/shared/functionsClient';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import {
   getActiveConsentForm,
@@ -29,9 +31,9 @@ import {
   hasValidConsent,
 } from '@buenobrows/shared/consentFormHelpers';
 
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
 import ConsentForm from '../components/ConsentForm';
@@ -42,7 +44,15 @@ type Hold = { id: string; expiresAt: string; status?: string }; // from Cloud Fu
 export default function Book() {
   const { db } = useFirebase();
   const nav = useNavigate();
+  const location = useLocation();
   const auth = getAuth();
+  
+  // Get prepopulated data from navigation state
+  const locationState = location.state as {
+    preselectedServiceId?: string;
+    prefillCustomer?: { name?: string; email?: string; phone?: string };
+    initialDate?: string;
+  } | null;
   
   // Clear old holds from sessionStorage that don't have status field
   useEffect(() => {
@@ -63,11 +73,91 @@ export default function Book() {
 
   // ---------- Data ----------
   const [services, setServices] = useState<Service[]>([]);
+  const [servicesError, setServicesError] = useState<string | null>(null);
   const [bh, setBh] = useState<BusinessHours | null>(null);
-  useEffect(() => watchServices(db, { activeOnly: true }, setServices), []);
-  useEffect(() => watchBusinessHours(db, setBh), []);
+  const [bhError, setBhError] = useState<string | null>(null);
+  
+  // Verification settings
+  const [verificationSettings, setVerificationSettings] = useState<{
+    emailVerificationEnabled: boolean;
+    smsVerificationEnabled: boolean;
+    requireVerification: boolean;
+  } | null>(null);
+  
+  useEffect(() => {
+    if (!db) {
+      setServicesError('Unable to connect to database');
+      return;
+    }
+    try {
+      const unsubscribe = watchServices(db, { activeOnly: true }, (servicesList) => {
+        setServices(servicesList || []);
+        setServicesError(null);
+      });
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    } catch (error) {
+      console.error('Error loading services:', error);
+      setServicesError('Unable to load services. Please refresh the page.');
+    }
+  }, [db]);
+  
+  useEffect(() => {
+    if (!db) {
+      setBhError('Unable to connect to database');
+      return;
+    }
+    try {
+      const unsubscribe = watchBusinessHours(db, (businessHours) => {
+        setBh(businessHours);
+        setBhError(null);
+      });
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    } catch (error) {
+      console.error('Error loading business hours:', error);
+      setBhError('Unable to load booking schedule. Please refresh the page.');
+    }
+  }, [db]);
+
+  // Load verification settings
+  useEffect(() => {
+    if (!db) return;
+    
+    const loadVerificationSettings = async () => {
+      try {
+        const settingsDoc = await getDoc(doc(db, 'settings', 'verification'));
+        if (settingsDoc.exists()) {
+          setVerificationSettings(settingsDoc.data() as any);
+        } else {
+          // Default settings if not configured
+          setVerificationSettings({
+            emailVerificationEnabled: true,
+            smsVerificationEnabled: true,
+            requireVerification: true
+          });
+        }
+      } catch (error) {
+        console.error('Error loading verification settings:', error);
+        // Default settings on error
+        setVerificationSettings({
+          emailVerificationEnabled: true,
+          smsVerificationEnabled: true,
+          requireVerification: true
+        });
+      }
+    };
+
+    loadVerificationSettings();
+  }, [db]);
 
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
+    // Check for preselected service from navigation state first
+    if (locationState?.preselectedServiceId) {
+      return [locationState.preselectedServiceId];
+    }
     // Restore selected services from sessionStorage on mount
     const saved = sessionStorage.getItem('bb_booking_cart');
     if (saved) {
@@ -80,6 +170,8 @@ export default function Book() {
     }
     return [];
   });
+  const [selectedService, setSelectedService] = useState<Service | null>(null);
+  const [showServiceModal, setShowServiceModal] = useState(false);
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
     [services, selectedServiceIds]
@@ -92,6 +184,24 @@ export default function Book() {
     () => selectedServices.reduce((sum, service) => sum + service.price, 0),
     [selectedServices]
   );
+
+  // Helper function to truncate description for mobile
+  const truncateDescription = (description: string, maxLength: number = 100) => {
+    if (!description) return 'Beautiful brows, tailored to you.';
+    if (description.length <= maxLength) return description;
+    return description.substring(0, maxLength).trim() + '...';
+  };
+
+  // Handle service details modal
+  const handleServiceClick = (service: Service) => {
+    setSelectedService(service);
+    setShowServiceModal(true);
+  };
+
+  const closeServiceModal = () => {
+    setShowServiceModal(false);
+    setSelectedService(null);
+  };
 
   // Group services by category
   const servicesByCategory = useMemo(() => {
@@ -108,6 +218,10 @@ export default function Book() {
 
   // Initialize with the next valid booking date
   const [dateStr, setDateStr] = useState<string>(() => {
+    // Check for initial date from navigation state first
+    if (locationState?.initialDate) {
+      return locationState.initialDate;
+    }
     // Try to restore date from cart
     const saved = sessionStorage.getItem('bb_booking_cart');
     if (saved) {
@@ -124,16 +238,32 @@ export default function Book() {
   
   const dayDate = useMemo(() => new Date(dateStr + 'T00:00:00'), [dateStr]);
   
-  // Update to next valid date when business hours are loaded (only once)
+  // Track if we've initialized the date from business hours
+  const [hasInitializedDate, setHasInitializedDate] = useState(() => {
+    // If we restored a date from storage, consider it initialized
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    if (saved) {
+      try {
+        const cart = JSON.parse(saved);
+        return !!cart.dateStr;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  });
+  
+  // Update to next valid date when business hours are loaded (only once, and only if not restored from storage)
   useEffect(() => {
-    if (bh && selectedServices.length > 0) {
+    if (bh && selectedServices.length > 0 && !hasInitializedDate) {
       const nextValidDate = getNextValidBookingDate(bh);
       if (nextValidDate) {
         const nextValidDateStr = nextValidDate.toISOString().slice(0, 10);
         setDateStr(nextValidDateStr);
+        setHasInitializedDate(true);
       }
     }
-  }, [bh, selectedServices]); // Removed dateStr from dependencies to prevent infinite loop
+  }, [bh, selectedServices, hasInitializedDate]); // Now we track initialization
 
   // Use availability collection instead of appointments for privacy
   const [bookedSlots, setBookedSlots] = useState<AvailabilitySlot[]>([]);
@@ -177,8 +307,10 @@ export default function Book() {
   // ---------- Hold state (server-backed) ----------
   const sessionId = useMemo(getOrCreateSessionId, []);
   const [isCreatingHold, setIsCreatingHold] = useState(false);
+  const [lastHoldAttempt, setLastHoldAttempt] = useState<number>(0);
   const isFinalizingRef = useRef(false);
   const lastHoldCreationRef = useRef<number>(0);
+  const isCreatingHoldRef = useRef<boolean>(false);
   const [chosen, setChosen] = useState<Slot | null>(() => {
     // Try to restore chosen slot from cart
     const saved = sessionStorage.getItem('bb_booking_cart');
@@ -223,6 +355,20 @@ export default function Book() {
     return null;
   });
   const [error, setError] = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  // Toggle category collapse state
+  const toggleCategoryCollapse = (category: string) => {
+    setCollapsedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
+  };
 
   // Save booking cart to sessionStorage whenever selections change
   useEffect(() => {
@@ -281,6 +427,12 @@ export default function Book() {
 
   // reserve (create server hold) when a time is clicked
   async function pickSlot(slot: Slot) {
+    // CRITICAL: Check ref-based lock FIRST before any async operations
+    if (isCreatingHoldRef.current) {
+      console.log('🚫 Hold creation already in progress (ref check), ignoring duplicate request');
+      return;
+    }
+    
     // Prevent rapid-fire hold creation (debounce)
     const now = Date.now();
     if (now - lastHoldCreationRef.current < 1000) {
@@ -290,7 +442,7 @@ export default function Book() {
     
     // Prevent multiple simultaneous hold creation attempts
     if (isCreatingHold) {
-      console.log('🚫 Hold creation already in progress, ignoring duplicate request');
+      console.log('🚫 Hold creation already in progress (state check), ignoring duplicate request');
       return;
     }
     
@@ -312,86 +464,152 @@ export default function Book() {
       return;
     }
     
-    // If switching to a different slot, release the old hold first
-    if (hold && chosen && chosen.startISO !== slot.startISO) {
-      console.log('🔄 Switching slots, releasing old hold:', hold.id);
-      console.log('🔄 Old slot:', chosen.startISO, '→ New slot:', slot.startISO);
-      try {
-        const releaseResult = await releaseHoldClient(hold.id);
-        console.log('✅ Successfully released old hold:', releaseResult);
-        setHold(null);
-        // Small delay to ensure the hold is fully released
-        await new Promise(resolve => setTimeout(resolve, 200));
-        console.log('⏳ Waited 200ms for hold release to propagate');
-      } catch (e) {
-        console.warn('❌ Failed to release old hold:', e);
-        setHold(null);
-      }
-    }
-    
-    setError('');
-    setChosen(slot);
+    // SET LOCK IMMEDIATELY before any async operations
+    isCreatingHoldRef.current = true;
+    lastHoldCreationRef.current = now;
     setIsCreatingHold(true);
     
     try {
+      // If switching to a different slot, release the old hold first
+      if (hold && chosen && chosen.startISO !== slot.startISO) {
+        console.log('🔄 Switching slots, releasing old hold:', hold.id);
+        console.log('🔄 Old slot:', chosen.startISO, '→ New slot:', slot.startISO);
+        try {
+          const releaseResult = await releaseHoldClient(hold.id);
+          console.log('✅ Successfully released old hold:', releaseResult);
+          setHold(null);
+          // Small delay to ensure the hold is fully released
+          await new Promise(resolve => setTimeout(resolve, 200));
+          console.log('⏳ Waited 200ms for hold release to propagate');
+        } catch (e) {
+          console.warn('❌ Failed to release old hold:', e);
+          setHold(null);
+        }
+      }
+      
+      setError('');
+      setChosen(slot);
+      
+      // Rate limiting: prevent too many hold creation attempts
+      const now = Date.now();
+      if (now - lastHoldAttempt < 2000) { // 2 second cooldown
+        console.log('🚫 Hold creation too soon after last one, ignoring');
+        return;
+      }
+      setLastHoldAttempt(now);
+      
+      // Check if slot is already booked in availability data
+      const slotStartMs = new Date(slot.startISO).getTime();
+      const slotEndMs = slotStartMs + totalDuration * 60000;
+      const isAlreadyBooked = bookedSlots.some(bs => {
+        const bsStart = new Date(bs.start).getTime();
+        const bsEnd = new Date(bs.end).getTime();
+        return bs.status === 'booked' && bsStart < slotEndMs && bsEnd > slotStartMs;
+      });
+      
+      if (isAlreadyBooked) {
+        console.log('❌ Slot is already booked in availability data');
+        setError('This time is no longer available. Please select another time.');
+        setChosen(null);
+        return;
+      }
+      
       console.log('🚀 Creating new hold for slot:', slot.startISO);
       console.log('🚀 Session ID:', sessionId);
       console.log('🚀 Service ID:', selectedServices[0]!.id);
+      console.log('🚀 Slot details:', {
+        startISO: slot.startISO,
+        endISO: slot.endISO,
+        totalDuration,
+        calculatedEndISO: slot.endISO || new Date(new Date(slot.startISO).getTime() + totalDuration * 60000).toISOString()
+      });
       
       // For multiple services, we'll use the first service ID for the hold
       // The actual services will be handled during finalization
       const h = await createSlotHoldClient({
         serviceId: selectedServices[0]!.id, // Use first service for hold
         startISO: slot.startISO,
-        durationMinutes: totalDuration,
+        endISO: slot.endISO || new Date(new Date(slot.startISO).getTime() + totalDuration * 60000).toISOString(),
         sessionId,
-        resourceId: slot.resourceId ?? null,
+        userId: user?.uid || undefined, // ✅ CRITICAL: Link hold to authenticated user
       });
       setHold({ id: h.id, expiresAt: h.expiresAt, status: h.status });
-      lastHoldCreationRef.current = Date.now();
       console.log('✅ Hold created/updated:', h.id, 'status:', h.status);
     } catch (e: any) {
       console.error('Hold creation error:', e);
       // 409 errors might mean the hold already exists - this can happen after auth return
       // Don't treat this as a fatal error
-      if (e?.message?.includes('409') || e?.code === 409) {
-        console.log('Hold might already exist (409), will retry on next interaction');
-        setError('Refreshing hold status...');
-        // Don't clear chosen slot on 409, let user retry
+      if (e?.message?.includes('409') || e?.code === 409 || e?.message === 'E_OVERLAP') {
+        console.log('❌ Time slot conflict - slot is already held or booked');
+        setError('This time is no longer available. Please select another time.');
+        setChosen(null);
+      } else if (e?.message?.includes('Too many requests')) {
+        console.log('🚫 Rate limited - too many hold creation attempts');
+        setError('Please wait a moment before trying again.');
+        setChosen(null);
       } else {
-        setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to hold slot.');
+        setError(e?.message || 'Failed to hold slot. Please try again.');
         setChosen(null);
       }
     } finally {
+      // ALWAYS clear locks in finally block
+      isCreatingHoldRef.current = false;
       setIsCreatingHold(false);
     }
   }
 
   // Track if we've already attempted to auto-recreate the hold
   const [hasAttemptedAutoRecreate, setHasAttemptedAutoRecreate] = useState(false);
+  const [isRestoringHold, setIsRestoringHold] = useState(false);
+  const bookingFormRef = useRef<HTMLDivElement>(null);
   
   // Auto-recreate hold if we have a chosen slot but no valid hold (e.g., after auth return)
   useEffect(() => {
     // Only run once on mount if we have a chosen slot from sessionStorage but no hold
     // and we haven't already attempted this
-    if (chosen && !hold && !isCreatingHold && !hasAttemptedAutoRecreate && selectedServices.length > 0 && slots.length > 0) {
+    if (chosen && !hold && !isCreatingHold && !isRestoringHold && !hasAttemptedAutoRecreate && selectedServices.length > 0 && slots.length > 0) {
       console.log('🔄 Restoring hold for previously selected slot after navigation');
       setHasAttemptedAutoRecreate(true);
+      setIsRestoringHold(true);
       
       // Check if the chosen slot is still available in the current slots list
       const slotStillAvailable = slots.some(s => s.startISO === chosen.startISO);
       
       if (slotStillAvailable) {
         // Small delay to avoid race conditions with other initializations
-        const timer = setTimeout(() => {
+        const timer = setTimeout(async () => {
           console.log('🔄 Auto-restoring hold for slot:', chosen.startISO);
-          pickSlot(chosen);
-        }, 1000); // Increased delay to 1 second
-        return () => clearTimeout(timer);
+          try {
+            await pickSlot(chosen);
+            console.log('✅ Hold restoration completed successfully');
+          } catch (error) {
+            console.error('❌ Hold restoration failed:', error);
+            setError('Failed to restore your booking. Please select the time again.');
+            setChosen(null);
+          } finally {
+            setIsRestoringHold(false);
+            // Scroll to the booking form after a short delay
+            setTimeout(() => {
+              bookingFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 300);
+          }
+        }, 500); // Reduced delay to 500ms for better UX
+        
+        // Safety timeout to ensure loading state is cleared
+        const safetyTimer = setTimeout(() => {
+          console.log('⚠️ Safety timeout: clearing restoration loading state');
+          setIsRestoringHold(false);
+        }, 10000); // 10 second safety timeout
+        return () => {
+          clearTimeout(timer);
+          clearTimeout(safetyTimer);
+          setIsRestoringHold(false);
+        };
       } else {
         console.log('❌ Previously chosen slot is no longer available');
         setError('Your previously selected time is no longer available. Please choose another time.');
         setChosen(null);
+        setIsRestoringHold(false);
         // Clear from storage
         const saved = sessionStorage.getItem('bb_booking_cart');
         if (saved) {
@@ -405,20 +623,44 @@ export default function Book() {
         }
       }
     }
-  }, [slots, chosen, hold, isCreatingHold, hasAttemptedAutoRecreate]); // Only run when these change
+  }, [slots, chosen, hold, isCreatingHold, hasAttemptedAutoRecreate, selectedServices]); // Added selectedServices dependency
 
   // ---------- Auth / magic-link ----------
   const [user, setUser] = useState<User | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
-  useEffect(() => onAuthStateChanged(auth, setUser), [auth]);
+  const prevUserRef = useRef<User | null>(null);
+  
+  // Handle auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      const prevUser = prevUserRef.current;
+      
+      // Detect if user signed in mid-booking (went from null to authenticated)
+      if (!prevUser && currentUser && hold) {
+        console.log('⚠️ User signed in mid-booking, clearing hold to prevent conflicts');
+        // Clear the hold since it was created under guest session
+        if (hold?.id) {
+          releaseHoldClient(hold.id).catch(e => console.warn('Failed to release hold after auth:', e));
+        }
+        setHold(null);
+        // Show a message to user to re-select the time
+        setError('Please select your time slot again to continue with your booking.');
+      }
+      
+      prevUserRef.current = currentUser;
+      setUser(currentUser);
+    });
+    
+    return () => unsubscribe();
+  }, [auth, hold]);
 
   // Get customer ID when user changes
   useEffect(() => {
-    if (user?.email) {
+    if (user?.email || user?.phoneNumber) {
       findOrCreateCustomerClient({
-        email: user.email,
+        email: user.email || undefined,
         name: user.displayName || 'Customer',
-        phone: undefined,
+        phone: user.phoneNumber || undefined,
       }).then(result => {
         setCustomerId(result.customerId);
       }).catch(err => {
@@ -442,10 +684,170 @@ export default function Book() {
 
   // ---------- Guest form ----------
   const [guestOpen, setGuestOpen] = useState(false);
-  const [gName, setGName] = useState('');
-  const [gEmail, setGEmail] = useState('');
-  const [gPhone, setGPhone] = useState('');
+  const [gName, setGName] = useState(locationState?.prefillCustomer?.name || '');
+  const [gEmail, setGEmail] = useState(locationState?.prefillCustomer?.email || '');
+  const [gPhone, setGPhone] = useState(locationState?.prefillCustomer?.phone || '');
   const [smsConsent, setSmsConsent] = useState(false);
+  
+  // Verification state for guest bookings
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [emailVerificationCode, setEmailVerificationCode] = useState('');
+  const [phoneVerificationCode, setPhoneVerificationCode] = useState('');
+  const [sentEmailCode, setSentEmailCode] = useState('');
+  const [sentPhoneCode, setSentPhoneCode] = useState('');
+  const [verificationLoading, setVerificationLoading] = useState(false);
+
+  // Auto-populate guest form from authenticated user
+  useEffect(() => {
+    if (user) {
+      // Populate name from displayName
+      if (user.displayName && !gName) {
+        setGName(user.displayName);
+      }
+      // Populate email from user email
+      if (user.email && !gEmail) {
+        setGEmail(user.email);
+      }
+      // Populate phone from phoneNumber (for phone auth users)
+      if (user.phoneNumber && !gPhone) {
+        setGPhone(user.phoneNumber);
+      }
+      // If user has verified email or phone, mark as verified
+      if (user.emailVerified) {
+        setEmailVerified(true);
+      }
+      if (user.phoneNumber) {
+        setPhoneVerified(true);
+      }
+      // Auto-open form for authenticated users when they have a hold
+      if (hold && !guestOpen) {
+        setGuestOpen(true);
+      }
+    }
+  }, [user, gName, gEmail, gPhone, hold, guestOpen]);
+  
+  // Send email verification code for guest booking
+  const sendGuestEmailVerification = async () => {
+    if (!gEmail) {
+      setError('Please enter an email address first.');
+      return;
+    }
+    
+    setVerificationLoading(true);
+    setError('');
+    
+    try {
+      const functions = getFunctions();
+      const sendEmailVerificationCode = httpsCallable(functions, 'sendEmailVerificationCode');
+      
+      const result = await sendEmailVerificationCode({ email: gEmail });
+      
+      if ((result.data as any).success) {
+        setError('');
+        setSentEmailCode('sent'); // Mark as sent to show input field
+      } else {
+        setError('Failed to send verification email');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification email');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+  
+  // Verify email code for guest booking
+  const verifyEmailCode = async () => {
+    if (!emailVerificationCode) {
+      setError('Please enter the verification code.');
+      return;
+    }
+    
+    setVerificationLoading(true);
+    setError('');
+    
+    try {
+      const functions = getFunctions();
+      const verifyEmailCode = httpsCallable(functions, 'verifyEmailCode');
+      
+      const result = await verifyEmailCode({ 
+        email: gEmail, 
+        code: emailVerificationCode 
+      });
+      
+      if ((result.data as any).success) {
+        setEmailVerified(true);
+        setError('');
+      } else {
+        setError('Invalid verification code. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to verify email code');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+  
+  // Send SMS verification code for guest booking
+  const sendGuestPhoneVerification = async () => {
+    if (!gPhone) {
+      setError('Please enter a phone number first.');
+      return;
+    }
+    
+    setVerificationLoading(true);
+    setError('');
+    
+    try {
+      const functions = getFunctions();
+      const sendSMSVerificationCode = httpsCallable(functions, 'sendSMSVerificationCode');
+      
+      const result = await sendSMSVerificationCode({ phoneNumber: gPhone });
+      
+      if ((result.data as any).success) {
+        setError('');
+        setSentPhoneCode('sent'); // Mark as sent to show input field
+      } else {
+        setError('Failed to send verification SMS');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification SMS');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+  
+  // Verify phone code for guest booking
+  const verifyPhoneCode = async () => {
+    if (!phoneVerificationCode) {
+      setError('Please enter the verification code.');
+      return;
+    }
+    
+    setVerificationLoading(true);
+    setError('');
+    
+    try {
+      const functions = getFunctions();
+      const verifySMSCode = httpsCallable(functions, 'verifySMSCode');
+      
+      const result = await verifySMSCode({ 
+        phoneNumber: gPhone, 
+        code: phoneVerificationCode 
+      });
+      
+      if ((result.data as any).success) {
+        setPhoneVerified(true);
+        setError('');
+      } else {
+        setError('Invalid verification code. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to verify SMS code');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
 
   // ---------- Consent form ----------
   const [consentForm, setConsentForm] = useState<ConsentFormTemplate | null>(null);
@@ -471,8 +873,11 @@ export default function Book() {
         setHasExistingConsent(valid);
         setConsentGiven(valid);
       }).catch(error => {
-        console.warn('Failed to check existing consent:', error);
-        // Default to no existing consent
+        // Permission errors are expected during auth transitions or for non-customer users
+        // Silently handle them and default to no existing consent
+        if (error?.code !== 'permission-denied') {
+          console.error('Error checking consent:', error);
+        }
         setHasExistingConsent(false);
         setConsentGiven(false);
       });
@@ -483,43 +888,62 @@ export default function Book() {
 
   // ensure we use a Customers doc id (not auth uid)
   async function ensureCustomerId(): Promise<string> {
-    // Signed in: use Cloud Function to find or create customer
-    if (user?.email) {
-      const result = await findOrCreateCustomerClient({
-        email: user.email,
-        name: user.displayName || 'Customer',
-        phone: undefined,
-      });
-      return result.customerId;
-    }
-    // Guest path: use Cloud Function to find or create customer
-    // Only phone number is required for guests
-    if (gPhone) {
-      const result = await findOrCreateCustomerClient({
-        email: gEmail || undefined,
-        name: gName || 'Guest',
-        phone: gPhone,
-      });
-      
-      // Log SMS consent if opted in
-      if (smsConsent) {
-        try {
-          await addDoc(collection(db, 'sms_consents'), {
-            customerId: result.customerId,
-            phone: gPhone,
-            consentMethod: 'booking_form',
-            timestamp: new Date().toISOString(),
-            status: 'active',
-            source: 'booking_form',
-          });
-        } catch (err) {
-          console.error('Failed to log SMS consent:', err);
+    try {
+      // Signed in: use Cloud Function to find or create customer
+      if (user?.email) {
+        console.log('Finding/creating customer for authenticated user:', user.email);
+        const result = await findOrCreateCustomerClient({
+          email: user.email,
+          name: user.displayName || 'Customer',
+          phone: undefined,
+        });
+        console.log('Customer result for authenticated user:', result);
+        
+        if (!result?.customerId) {
+          throw new Error('Failed to get customer ID for authenticated user');
         }
+        return result.customerId;
       }
       
-      return result.customerId;
+      // Guest path: use Cloud Function to find or create customer
+      // Either email OR phone is required for guests
+      if (gEmail || gPhone) {
+        console.log('Finding/creating customer for guest:', { gEmail, gPhone, gName });
+        const result = await findOrCreateCustomerClient({
+          email: gEmail || undefined,
+          name: gName || 'Guest',
+          phone: gPhone || undefined,
+        });
+        console.log('Customer result for guest:', result);
+        
+        if (!result?.customerId) {
+          throw new Error('Failed to get customer ID for guest');
+        }
+        
+        // Log SMS consent if opted in and phone was provided
+        if (smsConsent && gPhone) {
+          try {
+            await addDoc(collection(db, 'sms_consents'), {
+              customerId: result.customerId,
+              phone: gPhone,
+              consentMethod: 'booking_form',
+              timestamp: new Date().toISOString(),
+              status: 'active',
+              source: 'booking_form',
+            });
+          } catch (err) {
+            console.error('Failed to log SMS consent:', err);
+          }
+        }
+        
+        return result.customerId;
+      }
+      
+      throw new Error('Missing customer contact information. Please provide email or phone number.');
+    } catch (error) {
+      console.error('Error in ensureCustomerId:', error);
+      throw error;
     }
-    throw new Error('Missing customer phone number.');
   }
 
   async function handleConsentAgree(signature: string) {
@@ -527,11 +951,21 @@ export default function Book() {
     
     try {
       // Get customer ID first (create guest customer if needed)
+      console.log('Getting customer ID for consent...');
       const custId = await ensureCustomerId();
+      console.log('Customer ID for consent:', custId);
+      
+      if (!custId) {
+        throw new Error('Customer ID is required for consent');
+      }
+      
+      // ALWAYS use customer doc ID for consent (not auth.uid)
+      // This ensures consistency whether user is authenticated or guest
+      const consentCustomerId = custId;
       
       // Record consent
       const consentData: any = {
-        customerId: custId,
+        customerId: consentCustomerId,
         customerName: user?.displayName || gName || 'Guest',
         consentFormId: consentForm.id,
         consentFormVersion: consentForm.version,
@@ -550,7 +984,9 @@ export default function Book() {
         consentData.customerPhone = gPhone;
       }
       
+      console.log('Recording consent with data:', consentData);
       await recordCustomerConsent(db, consentData);
+      console.log('Consent recorded successfully');
       
       setConsentGiven(true);
       setShowConsentForm(false);
@@ -600,7 +1036,7 @@ export default function Book() {
         holdId: hold.id,
         customerId,
         customer: {
-          name: user?.displayName || gName || undefined,
+          name: user?.displayName || gName || 'Guest',
           email: user?.email || gEmail || undefined,
           phone: gPhone || undefined,
         },
@@ -628,12 +1064,48 @@ export default function Book() {
     setError('');
     isFinalizingRef.current = true;
     
-    // Check if user is signed in or guest form is filled (only phone required for guests)
-    if (!user && !gPhone) {
-      setError('Please sign in or provide your phone number in the guest form below.');
-      setGuestOpen(true); // Open guest form
-      isFinalizingRef.current = false;
-      return;
+    // Check verification requirements
+    if (user) {
+      // Authenticated users need verified email OR phone
+      const hasVerifiedEmail = user.email && user.emailVerified;
+      const hasVerifiedPhone = user.phoneNumber; // Phone auth users are already verified
+      
+      if (!hasVerifiedEmail && !hasVerifiedPhone) {
+        setError('Please verify your email or phone number before booking. Go to your profile to verify.');
+        isFinalizingRef.current = false;
+        return;
+      }
+    } else {
+      // Guest users must provide at least one contact method (email OR phone)
+      if (!gEmail && !gPhone) {
+        setError('Please provide either an email address or phone number to complete your booking.');
+        setGuestOpen(true);
+        isFinalizingRef.current = false;
+        return;
+      }
+      
+      // Guest users need to verify the contact method they provided (if verification is required)
+      if (verificationSettings?.requireVerification) {
+        const hasEmail = !!gEmail;
+        const hasPhone = !!gPhone;
+        
+        // Check if user has provided contact methods that require verification
+        const hasEmailToVerify = hasEmail && verificationSettings.emailVerificationEnabled;
+        const hasPhoneToVerify = hasPhone && verificationSettings.smsVerificationEnabled;
+        
+        
+        // If user provided contact methods that require verification, they must verify at least one
+        if (hasEmailToVerify || hasPhoneToVerify) {
+          const hasAtLeastOneVerified = emailVerified || phoneVerified;
+          
+          if (!hasAtLeastOneVerified) {
+            setError('Please verify your contact information before booking. Use the verification buttons below.');
+            setGuestOpen(true);
+            isFinalizingRef.current = false;
+            return;
+          }
+        }
+      }
     }
     
     try {
@@ -673,101 +1145,188 @@ export default function Book() {
     }
   }
 
-  const prettyTime = (iso: string) => format(parseISO(iso), 'h:mm a');
+  const prettyTime = (iso: string) => format(new Date(iso), 'h:mm a');
   const holdExpired = hold ? new Date(hold.expiresAt).getTime() <= Date.now() : false;
 
   // ---------- UI ----------
   return (
     <div className="relative">
+      <SEO 
+        title="Book Appointment - Professional Eyebrow Services | Bueno Brows"
+        description="Book your professional eyebrow services appointment online. Choose from microblading, brow shaping, and other beauty treatments. Easy online booking in San Mateo, CA."
+        keywords="book appointment, eyebrow services, microblading appointment, brow shaping, online booking, San Mateo, California"
+        url="https://buenobrows.com/book"
+        structuredData={{
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          "name": "Book Appointment",
+          "description": "Book your professional eyebrow services appointment online",
+          "url": "https://buenobrows.com/book",
+          "mainEntity": {
+            "@type": "BeautySalon",
+            "name": "Bueno Brows",
+            "description": "Professional eyebrow services including microblading, brow shaping, and beauty treatments"
+          }
+        }}
+      />
+      
+      {/* Error Messages */}
+      {(servicesError || bhError) && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              {servicesError && <p className="text-sm text-red-800 font-medium mb-1">{servicesError}</p>}
+              {bhError && <p className="text-sm text-red-800 font-medium mb-1">{bhError}</p>}
+              <button 
+                onClick={() => window.location.reload()} 
+                className="mt-2 text-sm text-red-700 hover:text-red-900 underline font-medium"
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <section className="grid gap-6">
         <h1 className="font-serif text-2xl">Book an appointment</h1>
 
       {/* Step 1: Service */}
       <div className="rounded-xl bg-white p-6 shadow-soft">
-        <h2 className="mb-4 font-serif text-xl">1. Choose Your Service(s)</h2>
-        <p className="mb-6 text-sm text-slate-600">
-          Select one or more services. You can combine multiple treatments in a single appointment.
-        </p>
+        <div className="mb-6">
+          <h2 className="mb-2 font-serif text-2xl text-slate-800">1. Choose Your Service(s)</h2>
+          <p className="text-slate-600">
+            Select one or more services. You can combine multiple treatments in a single appointment.
+          </p>
+        </div>
         
-        <div className="space-y-6">
+        {/* Modern Category Widgets */}
+        <div className="space-y-8">
           {Object.entries(servicesByCategory).map(([category, categoryServices]) => (
-            <div key={category}>
-              {/* Category Header */}
-              <h3 className="mb-3 flex items-center gap-2 text-lg font-semibold text-slate-800">
-                <span className="h-px flex-grow bg-gradient-to-r from-terracotta/40 to-transparent"></span>
-                <span>{category}</span>
-                <span className="h-px flex-grow bg-gradient-to-l from-terracotta/40 to-transparent"></span>
-              </h3>
-              
-              {/* Services in Category */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                {categoryServices.map((s) => (
-                  <label
-                    key={s.id}
-                    className={`group cursor-pointer rounded-xl border-2 p-4 transition-all ${
-                      selectedServiceIds.includes(s.id) 
-                        ? 'border-terracotta bg-terracotta/5 shadow-md' 
-                        : 'border-slate-200 hover:border-terracotta/40 hover:bg-cream/50'
-                    }`}
+            <div key={category} className="group">
+              {/* Category Header with Icon */}
+              <div 
+                className="mb-6 flex items-center gap-4 cursor-pointer hover:bg-slate-50 rounded-lg p-2 -m-2 transition-colors"
+                onClick={() => toggleCategoryCollapse(category)}
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-terracotta to-terracotta/80 text-white shadow-lg">
+                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-slate-800">{category}</h3>
+                  <p className="text-sm text-slate-500">{categoryServices.length} service{categoryServices.length !== 1 ? 's' : ''} available</p>
+                </div>
+                <div className="flex items-center justify-center">
+                  <svg 
+                    className={`h-5 w-5 text-slate-400 transition-transform duration-200 ${
+                      collapsedCategories.has(category) ? 'rotate-180' : ''
+                    }`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
                   >
-                    <div className="flex gap-3">
-                      {/* Checkbox */}
-                      <div className="flex-shrink-0 pt-1">
-                        <input
-                          type="checkbox"
-                          id={`service-${s.id}`}
-                          name={`service-${s.id}`}
-                          checked={selectedServiceIds.includes(s.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedServiceIds(prev => [...prev, s.id]);
-                            } else {
-                              setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
-                            }
-                            
-                            // Release hold when services change
-                            if (hold) {
-                              console.log('Services changed, releasing hold:', hold.id);
-                              releaseHoldClient(hold.id)
-                                .then(() => console.log('Successfully released hold on service change'))
-                                .catch(e => console.warn('Failed to release hold:', e));
-                            }
-                            
-                            setChosen(null);
-                            setHold(null);
-                            setError('');
-                          }}
-                          className="h-5 w-5 rounded border-slate-300 text-terracotta focus:ring-terracotta cursor-pointer"
-                        />
-                      </div>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+              
+              {/* Services Grid */}
+              <div 
+                className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 transition-all duration-300 overflow-hidden ${
+                  collapsedCategories.has(category) 
+                    ? 'max-h-0 opacity-0' 
+                    : 'max-h-[2000px] opacity-100'
+                }`}
+              >
+                {categoryServices.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`group relative cursor-pointer rounded-2xl border-2 p-6 transition-all duration-300 hover:scale-[1.02] ${
+                      selectedServiceIds.includes(s.id) 
+                        ? 'border-terracotta bg-gradient-to-br from-terracotta/10 to-terracotta/5 shadow-lg ring-2 ring-terracotta/20' 
+                        : 'border-slate-200 bg-white hover:border-terracotta/40 hover:shadow-md'
+                    }`}
+                    onClick={() => {
+                      if (selectedServiceIds.includes(s.id)) {
+                        setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
+                      } else {
+                        setSelectedServiceIds(prev => [...prev, s.id]);
+                      }
                       
-                      {/* Service Info */}
-                      <div className="flex-grow">
-                        <div className="mb-1 flex items-start justify-between">
-                          <h4 className="font-semibold text-slate-900">{s.name}</h4>
-                        </div>
-                        
-                        {s.description && (
-                          <p className="mb-2 text-sm text-slate-600">{s.description}</p>
+                      // Release hold when services change
+                      if (hold) {
+                        console.log('Services changed, releasing hold:', hold.id);
+                        releaseHoldClient(hold.id)
+                          .then(() => console.log('Successfully released hold on service change'))
+                          .catch(e => console.warn('Failed to release hold:', e));
+                      }
+                      
+                      setChosen(null);
+                      setHold(null);
+                      setError('');
+                    }}
+                  >
+                    {/* Selection Indicator */}
+                    <div className="absolute top-4 right-4">
+                      <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                        selectedServiceIds.includes(s.id)
+                          ? 'border-terracotta bg-terracotta'
+                          : 'border-slate-300 bg-white'
+                      }`}>
+                        {selectedServiceIds.includes(s.id) && (
+                          <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
                         )}
-                        
-                        <div className="flex items-center gap-3 text-sm">
-                          <span className="inline-flex items-center gap-1 text-slate-700">
+                      </div>
+                    </div>
+                    
+                    {/* Service Content */}
+                    <div className="pr-8">
+                      <h4 className="mb-3 text-lg font-bold text-slate-800 group-hover:text-terracotta transition-colors">
+                        {s.name}
+                      </h4>
+                      
+                      {s.description && (
+                        <div className="mb-4">
+                          <p className="text-sm text-slate-600 leading-relaxed">
+                            {truncateDescription(s.description)}
+                          </p>
+                          {s.description.length > 100 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleServiceClick(s);
+                              }}
+                              className="mt-2 text-terracotta text-sm font-medium hover:text-terracotta/80 transition-colors"
+                            >
+                              Read full description →
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Service Details */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-slate-600">
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            {s.duration} min
-                          </span>
-                          <span className="inline-flex items-center gap-1 font-semibold text-terracotta">
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            ${s.price.toFixed(2)}
-                          </span>
+                            <span className="text-sm font-medium">{s.duration} minutes</span>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-2xl font-bold text-terracotta">${s.price.toFixed(2)}</div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
@@ -776,41 +1335,75 @@ export default function Book() {
         
         {/* Selected Services Summary */}
         {selectedServices.length > 0 && (
-          <div className="mt-6 rounded-xl bg-gradient-to-br from-terracotta/10 to-cream/50 p-5 border-2 border-terracotta/30">
-            <div className="mb-3 flex items-center gap-2">
-              <svg className="h-5 w-5 text-terracotta" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-              <h4 className="font-semibold text-slate-900">
-                Your Selection ({selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'})
-              </h4>
+          <div className="mt-8 rounded-2xl bg-gradient-to-br from-terracotta/5 to-terracotta/10 border-2 border-terracotta/20 p-6 shadow-lg">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-terracotta text-white">
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-lg font-bold text-slate-800">
+                  Your Selection ({selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'})
+                </h4>
+                <p className="text-sm text-slate-600">Review your selected services below</p>
+              </div>
             </div>
             
-            <div className="mb-4 space-y-2">
+            <div className="mb-6 space-y-3">
               {selectedServices.map((service) => (
-                <div key={service.id} className="flex items-center justify-between rounded-lg bg-white/60 px-3 py-2">
-                  <span className="font-medium text-slate-800">{service.name}</span>
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <span>{service.duration}m</span>
-                    <span className="font-semibold text-terracotta">${service.price.toFixed(2)}</span>
+                <div key={service.id} className="flex items-center justify-between rounded-xl bg-white/80 px-4 py-3 shadow-sm border border-slate-200">
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-terracotta"></div>
+                    <span className="font-semibold text-slate-800">{service.name}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="text-slate-600">{service.duration}m</span>
+                    <span className="font-bold text-terracotta text-lg">${service.price.toFixed(2)}</span>
                   </div>
                 </div>
               ))}
             </div>
             
-            <div className="rounded-lg bg-white/80 p-3 space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">Total Duration:</span>
-                <span className="font-semibold text-slate-900">{totalDuration} minutes</span>
+            <div className="rounded-xl bg-white/90 p-4 border border-slate-200">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-slate-600 font-medium">Total Duration:</span>
+                <span className="font-bold text-slate-800 text-lg">{totalDuration} minutes</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-200 pt-2">
-                <span className="font-semibold text-slate-900">Total Price:</span>
-                <span className="text-xl font-bold text-terracotta">${totalPrice.toFixed(2)}</span>
+              <div className="flex items-center justify-between border-t border-slate-300 pt-3">
+                <span className="font-bold text-slate-800 text-lg">Total Price:</span>
+                <span className="text-3xl font-bold text-terracotta">${totalPrice.toFixed(2)}</span>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Email/Phone Verification Notice for Authenticated Users */}
+      {user && !user.emailVerified && !user.phoneNumber && (
+        <div className="rounded-xl bg-red-50 border-2 border-red-300 p-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div className="flex-1">
+              <h3 className="font-semibold text-red-900 mb-1">⚠️ Verification Required</h3>
+              <p className="text-sm text-red-800 mb-3">
+                You must verify your email or phone number before making a booking. This ensures you receive appointment confirmations and reminders.
+              </p>
+              <button
+                onClick={() => nav('/profile')}
+                className="inline-flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 font-medium text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                Go to Profile & Verify
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Step 2: Date & time */}
       <div className="rounded-xl bg-white p-4 shadow-soft">
@@ -853,38 +1446,128 @@ export default function Book() {
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <label className="text-sm text-slate-600">
             Date
-            <input
-              type="date"
-              id="appointment-date"
-              name="appointment-date"
-              className="ml-2 rounded-md border p-2"
-              value={dateStr}
-              min={new Date().toISOString().slice(0, 10)}
-              max={(() => {
-                const maxDate = new Date();
-                maxDate.setDate(maxDate.getDate() + 90);
-                return maxDate.toISOString().slice(0, 10);
-              })()}
-              onChange={(e) => {
-                const selectedDate = new Date(e.target.value + 'T00:00:00');
-                // Always update the date string to show the selected date
-                setDateStr(e.target.value);
-                
-                // Release hold when date changes
-                if (hold) {
-                  console.log('Date changed, releasing hold:', hold.id);
-                  releaseHoldClient(hold.id)
-                    .then(() => console.log('Successfully released hold on date change'))
-                    .catch(e => console.warn('Failed to release hold:', e));
-                }
-                
-                setChosen(null);
-                setHold(null);
-                
-                // Clear any previous errors - the top display will show the status
-                setError('');
-              }}
-            />
+            <div className="ml-2 flex items-center gap-2">
+              {/* Navigation buttons */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (dateStr) {
+                    const currentDate = new Date(dateStr + 'T00:00:00');
+                    const prevDate = new Date(currentDate);
+                    prevDate.setDate(prevDate.getDate() - 1);
+                    const prevDateStr = prevDate.toISOString().slice(0, 10);
+                    setDateStr(prevDateStr);
+                    
+                    // Release hold when date changes
+                    if (hold) {
+                      console.log('Date changed, releasing hold:', hold.id);
+                      releaseHoldClient(hold.id)
+                        .then(() => console.log('Successfully released hold on date change'))
+                        .catch(e => console.warn('Failed to release hold:', e));
+                    }
+                    
+                    setChosen(null);
+                    setHold(null);
+                    setError('');
+                  }
+                }}
+                className="p-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-600 hover:text-slate-800"
+                title="Previous day"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  setDateStr(today);
+                  
+                  // Release hold when date changes
+                  if (hold) {
+                    console.log('Date changed, releasing hold:', hold.id);
+                    releaseHoldClient(hold.id)
+                      .then(() => console.log('Successfully released hold on date change'))
+                      .catch(e => console.warn('Failed to release hold:', e));
+                  }
+                  
+                  setChosen(null);
+                  setHold(null);
+                  setError('');
+                }}
+                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-600 hover:text-slate-800 text-xs font-medium"
+                title="Go to today"
+              >
+                Today
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => {
+                  if (dateStr) {
+                    const currentDate = new Date(dateStr + 'T00:00:00');
+                    const nextDate = new Date(currentDate);
+                    nextDate.setDate(nextDate.getDate() + 1);
+                    const nextDateStr = nextDate.toISOString().slice(0, 10);
+                    setDateStr(nextDateStr);
+                    
+                    // Release hold when date changes
+                    if (hold) {
+                      console.log('Date changed, releasing hold:', hold.id);
+                      releaseHoldClient(hold.id)
+                        .then(() => console.log('Successfully released hold on date change'))
+                        .catch(e => console.warn('Failed to release hold:', e));
+                    }
+                    
+                    setChosen(null);
+                    setHold(null);
+                    setError('');
+                  }
+                }}
+                className="p-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-600 hover:text-slate-800"
+                title="Next day"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+              
+              {/* Date input with calendar picker */}
+              <input
+                type="date"
+                id="appointment-date"
+                name="appointment-date"
+                className="rounded-md border p-2"
+                value={dateStr}
+                min={new Date().toISOString().slice(0, 10)}
+                max={(() => {
+                  const maxDate = new Date();
+                  maxDate.setDate(maxDate.getDate() + 90);
+                  return maxDate.toISOString().slice(0, 10);
+                })()}
+                onChange={(e) => {
+                  const selectedDate = new Date(e.target.value + 'T00:00:00');
+                  // Always update the date string to show the selected date
+                  setDateStr(e.target.value);
+                  
+                  // Release hold when date changes
+                  if (hold) {
+                    console.log('Date changed, releasing hold:', hold.id);
+                    releaseHoldClient(hold.id)
+                      .then(() => console.log('Successfully released hold on date change'))
+                      .catch(e => console.warn('Failed to release hold:', e));
+                  }
+                  
+                  setChosen(null);
+                  setHold(null);
+                  
+                  // Clear any previous errors - the top display will show the status
+                  setError('');
+                }}
+              />
+            </div>
           </label>
           {selectedServices.length > 0 && (
             <div className="text-sm text-slate-600">
@@ -898,19 +1581,32 @@ export default function Book() {
           )}
         </div>
 
+        {/* Loading indicator for hold creation */}
+        {isCreatingHold && (
+          <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-amber-600 border-t-transparent"></div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-900">Reserving your time slot...</p>
+                <p className="text-xs text-amber-700">Please wait, do not click again</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* time grid */}
-        <div className="max-h-96 overflow-y-auto border rounded-lg p-2">
+        <div className={`max-h-96 overflow-y-auto border rounded-lg p-2 ${(isCreatingHold || isRestoringHold) ? 'pointer-events-none' : ''}`}>
           <div className="grid grid-cols-4 gap-2">
             {slots.map((slot) => (
               <button
                 key={slot.startISO}
                 onClick={() => pickSlot(slot)}
-                disabled={isCreatingHold}
+                disabled={isCreatingHold || isRestoringHold}
                 className={`rounded-md border py-2 text-sm transition-colors ${
                   chosen?.startISO === slot.startISO 
                     ? 'bg-terracotta text-white' 
-                    : isCreatingHold 
-                    ? 'opacity-50 cursor-not-allowed' 
+                    : (isCreatingHold || isRestoringHold)
+                    ? 'opacity-50 cursor-not-allowed bg-slate-100' 
                     : 'hover:bg-cream'
                 }`}
               >
@@ -930,16 +1626,46 @@ export default function Book() {
                          const nextAvailable = getNextValidBookingDateAfter(dayDate, bh);
                          if (nextAvailable) {
                            const nextDateStr = formatNextAvailableDate(nextAvailable);
+                           const nextDateISO = nextAvailable.toISOString().slice(0, 10);
                            return (
                              <span className="block mt-1">
-                               Our next available day is <span className="font-medium text-slate-700">{nextDateStr}</span>.
+                               Our next available day is{' '}
+                               <button
+                                 onClick={() => setDateStr(nextDateISO)}
+                                 className="font-medium text-terracotta hover:text-terracotta-dark underline cursor-pointer"
+                               >
+                                 {nextDateStr}
+                               </button>.
                              </span>
                            );
                          }
                          return null;
                        })()}
                      </>
-                   ) : 'No available time slots for this date'}
+                   ) : (
+                     <>
+                       <span className="text-slate-600">No available time slots for this date.</span>
+                       {(() => {
+                         const nextAvailable = getNextValidBookingDateAfter(dayDate, bh);
+                         if (nextAvailable) {
+                           const nextDateStr = formatNextAvailableDate(nextAvailable);
+                           const nextDateISO = nextAvailable.toISOString().slice(0, 10);
+                           return (
+                             <span className="block mt-1">
+                               Our next available day is{' '}
+                               <button
+                                 onClick={() => setDateStr(nextDateISO)}
+                                 className="font-medium text-terracotta hover:text-terracotta-dark underline cursor-pointer"
+                               >
+                                 {nextDateStr}
+                               </button>.
+                             </span>
+                           );
+                         }
+                         return null;
+                       })()}
+                     </>
+                   )}
                 </p>
                 {!isValidBookingDate(dayDate, bh) && (
                   <p className="text-xs mt-2 text-slate-400">
@@ -953,10 +1679,32 @@ export default function Book() {
 
         {/* action bar */}
         {chosen && selectedServices.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-terracotta/40 bg-cream/60 p-4">
+          <div ref={bookingFormRef} className="mt-4 rounded-2xl border border-terracotta/40 bg-cream/60 p-4">
+            {/* Show restoration progress bar */}
+            {isRestoringHold && !hold && (
+              <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-blue-900">Restoring your selection...</p>
+                    <p className="text-xs text-blue-700">Please wait while we secure your time slot</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      console.log('🔄 Manual reset of restoration loading state');
+                      setIsRestoringHold(false);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            )}
+            
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-sm text-slate-600">You’re holding</div>
+                <div className="text-sm text-slate-600">You're holding</div>
                 <div className="font-serif text-lg">
                   {selectedServices.length === 1 
                     ? `${selectedServices[0].name} • ${prettyTime(chosen.startISO)}`
@@ -973,7 +1721,9 @@ export default function Book() {
                     ? holdExpired
                       ? 'Hold expired'
                       : `Hold expires in ${countdown}`
-                    : 'Creating hold…'}
+                    : isRestoringHold 
+                      ? 'Restoring your booking…'
+                      : 'Creating hold…'}
                 </div>
               </div>
 
@@ -1015,84 +1765,244 @@ export default function Book() {
                 ) : (
                   <button
                     className="rounded-xl bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90"
-                    onClick={() => void finalizeBooking()}
+                    onClick={() => setGuestOpen((x) => !x)}
                     disabled={!hold || holdExpired}
                   >
-                    Book now
+                    {guestOpen ? 'Hide details' : 'Review & Book'}
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Guest quick form */}
+            {/* Booking information form */}
             {guestOpen && hold && !holdExpired && (
               <div className="mt-3 grid gap-3">
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <input
-                    type="text"
-                    id="guest-name"
-                    name="guest-name"
-                    className="rounded-md border p-2"
-                    placeholder="Full name (optional)"
-                    value={gName}
-                    onChange={(e) => setGName(e.target.value)}
-                    autoComplete="name"
-                  />
-                  <input
-                    type="email"
-                    id="guest-email"
-                    name="guest-email"
-                    className="rounded-md border p-2"
-                    placeholder="Email (optional)"
-                    value={gEmail}
-                    onChange={(e) => setGEmail(e.target.value)}
-                    inputMode="email"
-                    autoComplete="email"
-                  />
-                  <input
-                    type="tel"
-                    id="guest-phone"
-                    name="guest-phone"
-                    className="rounded-md border p-2 border-terracotta/50 bg-terracotta/5"
-                    placeholder="Phone (required)*"
-                    value={gPhone}
-                    onChange={(e) => setGPhone(e.target.value)}
-                    inputMode="tel"
-                    autoComplete="tel"
-                    required
-                  />
-                </div>
-                
-                <p className="text-xs text-slate-600 -mt-2">
-                  * Phone number is required to confirm your booking and send you appointment reminders
-                </p>
-                
-                {/* SMS Consent */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <label className="flex items-start gap-2 cursor-pointer">
+                  <div>
+                    <label htmlFor="guest-name" className="sr-only">
+                      {user ? "Full name" : "Full name (optional)"}
+                    </label>
                     <input
-                      type="checkbox"
-                      id="sms-consent"
-                      name="sms-consent"
-                      checked={smsConsent}
-                      onChange={(e) => setSmsConsent(e.target.checked)}
-                      className="mt-1"
+                      type="text"
+                      id="guest-name"
+                      name="guest-name"
+                      className="rounded-md border p-2"
+                      placeholder={user ? "Full name" : "Full name (optional)"}
+                      value={gName}
+                      onChange={(e) => setGName(e.target.value)}
+                      autoComplete="name"
+                      aria-label={user ? "Full name" : "Full name (optional)"}
                     />
-                    <span className="text-xs text-slate-700">
-                      <strong>Opt-in to SMS messages:</strong> I agree to receive automated text messages from Bueno Brows at <strong>(650) 613-8455</strong> for appointment confirmations, reminders, and updates. Message frequency varies. Message and data rates may apply. Reply <strong>STOP</strong> to opt out anytime, <strong>HELP</strong> for assistance. Responses may be automated by our AI assistant.
-                    </span>
-                  </label>
+                  </div>
+                  <div>
+                    <label htmlFor="guest-email" className="sr-only">
+                      {user ? "Email address" : "Email address"}
+                    </label>
+                    <input
+                      type="email"
+                      id="guest-email"
+                      name="guest-email"
+                      className={`rounded-md border p-2 ${!user && (gEmail || (!gEmail && !gPhone)) ? 'border-blue-300 bg-blue-50/30' : ''}`}
+                      placeholder={user ? "Email address" : "Email address"}
+                      value={gEmail}
+                      onChange={(e) => setGEmail(e.target.value)}
+                      inputMode="email"
+                      autoComplete="email"
+                      disabled={emailVerified}
+                      aria-label={user ? "Email address" : "Email address"}
+                      aria-describedby={emailVerified ? "email-verified" : undefined}
+                    />
+                    {emailVerified && (
+                      <span id="email-verified" className="sr-only">Email verified</span>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="guest-phone" className="sr-only">
+                      Phone number
+                    </label>
+                    <input
+                      type="tel"
+                      id="guest-phone"
+                      name="guest-phone"
+                      className={`rounded-md border p-2 ${!user && (gPhone || (!gEmail && !gPhone)) ? 'border-blue-300 bg-blue-50/30' : ''}`}
+                      placeholder="Phone number"
+                      value={gPhone}
+                      onChange={(e) => setGPhone(e.target.value)}
+                      inputMode="tel"
+                      autoComplete="tel"
+                      disabled={phoneVerified}
+                      aria-label="Phone number"
+                      aria-describedby={phoneVerified ? "phone-verified" : undefined}
+                    />
+                    {phoneVerified && (
+                      <span id="phone-verified" className="sr-only">Phone verified</span>
+                    )}
+                  </div>
                 </div>
+                
+                {!user && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 -mt-1">
+                    <p className="text-xs text-amber-900 flex items-start gap-2">
+                      <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      <span>
+                        <strong>At least one contact method required.</strong> Provide either email or phone (or both). You must verify the contact method you provide.
+                      </span>
+                    </p>
+                  </div>
+                )}
+                
+                {/* Verification Section for Guest Users */}
+                {!user && (gEmail || gPhone) && verificationSettings && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                    <h4 className="font-semibold text-blue-900 text-sm">📧 Verify Your Contact Information</h4>
+                    <p className="text-xs text-blue-800 mb-2">Verify the contact method you provided to receive your appointment confirmation and reminders.</p>
+                    
+                    {/* Email Verification - only show if email was provided and email verification is enabled */}
+                    {gEmail && verificationSettings.emailVerificationEnabled && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-blue-900">Email:</span>
+                          {emailVerified ? (
+                            <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              Verified
+                            </span>
+                          ) : (sentEmailCode || sentEmailCode === 'sent') ? (
+                            <div className="flex gap-2 flex-1">
+                              <input
+                                type="text"
+                                placeholder="Enter 6-digit code"
+                                value={emailVerificationCode}
+                                onChange={(e) => setEmailVerificationCode(e.target.value)}
+                                className="flex-1 px-3 py-1 border rounded text-sm"
+                                maxLength={6}
+                                aria-label="Email verification code"
+                                inputMode="numeric"
+                                pattern="[0-9]{6}"
+                              />
+                              <button
+                                onClick={verifyEmailCode}
+                                className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                              >
+                                Verify
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={sendGuestEmailVerification}
+                              disabled={!gEmail || verificationLoading}
+                              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {verificationLoading ? 'Sending...' : 'Send Code'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Phone Verification - only show if phone was provided and SMS verification is enabled */}
+                    {gPhone && verificationSettings.smsVerificationEnabled && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-blue-900">Phone:</span>
+                          {phoneVerified ? (
+                            <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              Verified
+                            </span>
+                          ) : (sentPhoneCode || sentPhoneCode === 'sent') ? (
+                            <div className="flex gap-2 flex-1">
+                              <input
+                                type="text"
+                                placeholder="Enter 6-digit code"
+                                value={phoneVerificationCode}
+                                onChange={(e) => setPhoneVerificationCode(e.target.value)}
+                                className="flex-1 px-3 py-1 border rounded text-sm"
+                                maxLength={6}
+                                aria-label="Phone verification code"
+                                inputMode="numeric"
+                                pattern="[0-9]{6}"
+                              />
+                              <button
+                                onClick={verifyPhoneCode}
+                                className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                              >
+                                Verify
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={sendGuestPhoneVerification}
+                              disabled={!gPhone || verificationLoading}
+                              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {verificationLoading ? 'Sending...' : 'Send Code'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* SMS Consent - only show if phone number was provided */}
+                {gPhone && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        id="sms-consent"
+                        name="sms-consent"
+                        checked={smsConsent}
+                        onChange={(e) => setSmsConsent(e.target.checked)}
+                        className="mt-1"
+                        aria-describedby="sms-consent-description"
+                      />
+                      <span id="sms-consent-description" className="text-xs text-slate-700">
+                        <strong>Opt-in to SMS messages:</strong> I agree to receive automated text messages from Bueno Brows at <strong>(650) 613-8455</strong> for appointment confirmations, reminders, and updates. Message frequency varies. Message and data rates may apply. Reply <strong>STOP</strong> to opt out anytime, <strong>HELP</strong> for assistance. Responses may be automated by our AI assistant.
+                      </span>
+                    </label>
+                  </div>
+                )}
 
                 <div className="flex justify-end">
                   <button
-                    className="rounded-md bg-terracotta px-4 py-2 text-white disabled:opacity-60"
+                    className="rounded-md bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90 font-medium"
                     onClick={() => void finalizeBooking()}
-                    disabled={!gPhone}
+                    disabled={user ? false : ((!gEmail && !gPhone) || (!emailVerified && !phoneVerified))}
                   >
-                    Confirm guest booking
+                    {user ? 'Confirm booking' : 'Confirm guest booking'}
                   </button>
                 </div>
+                
+                {/* Verification reminder for guests */}
+                {!user && (!gEmail && !gPhone) && (
+                  <p className="text-xs text-amber-700 text-right">
+                    ⚠️ Please provide at least one contact method (email or phone)
+                  </p>
+                )}
+                {!user && (gEmail || gPhone) && verificationSettings?.requireVerification && (
+                  (() => {
+                    const hasEmail = !!gEmail;
+                    const hasPhone = !!gPhone;
+                    const hasEmailToVerify = hasEmail && verificationSettings.emailVerificationEnabled;
+                    const hasPhoneToVerify = hasPhone && verificationSettings.smsVerificationEnabled;
+                    const hasAtLeastOneVerified = emailVerified || phoneVerified;
+                    
+                    // Show warning if user has contact methods that require verification but hasn't verified any
+                    return (hasEmailToVerify || hasPhoneToVerify) && !hasAtLeastOneVerified;
+                  })() && (
+                    <p className="text-xs text-amber-700 text-right">
+                      ⚠️ Please verify your contact information above to enable booking
+                    </p>
+                  )
+                )}
               </div>
             )}
           </div>
@@ -1131,6 +2041,76 @@ export default function Book() {
           }}
           isOpen={showConsentForm}
         />
+      )}
+
+      {/* Service Details Modal */}
+      {showServiceModal && selectedService && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closeServiceModal}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <div className="text-sm text-slate-500 mb-1">{selectedService.category || 'Service'}</div>
+                  <h3 className="font-serif text-2xl text-slate-800">{selectedService.name}</h3>
+                </div>
+                <button
+                  onClick={closeServiceModal}
+                  className="text-slate-400 hover:text-slate-600 transition-colors p-2 hover:bg-slate-100 rounded-lg"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <h4 className="font-semibold text-slate-800 mb-3">Service Details</h4>
+                  <p className="text-slate-600 leading-relaxed whitespace-pre-line">
+                    {selectedService.description || 'Beautiful brows, tailored to you.'}
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl">
+                  <div>
+                    <div className="text-sm text-slate-500 mb-1">Duration</div>
+                    <div className="font-semibold text-slate-800 text-lg">{selectedService.duration} minutes</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-slate-500 mb-1">Price</div>
+                    <div className="font-bold text-terracotta text-2xl">${selectedService.price.toFixed(2)}</div>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-3 pt-4">
+                  <button
+                    onClick={() => {
+                      if (selectedServiceIds.includes(selectedService.id)) {
+                        setSelectedServiceIds(prev => prev.filter(id => id !== selectedService.id));
+                      } else {
+                        setSelectedServiceIds(prev => [...prev, selectedService.id]);
+                      }
+                      closeServiceModal();
+                    }}
+                    className={`flex-1 rounded-xl px-6 py-3 font-semibold transition-all ${
+                      selectedServiceIds.includes(selectedService.id)
+                        ? 'bg-red-100 text-red-700 hover:bg-red-200 border-2 border-red-300'
+                        : 'bg-terracotta text-white hover:bg-terracotta/90'
+                    }`}
+                  >
+                    {selectedServiceIds.includes(selectedService.id) ? 'Remove from Selection' : 'Add to Selection'}
+                  </button>
+                  <button
+                    onClick={closeServiceModal}
+                    className="flex-1 border-2 border-slate-300 text-slate-700 rounded-xl px-6 py-3 font-semibold hover:bg-slate-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

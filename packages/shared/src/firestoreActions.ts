@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -14,7 +15,7 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
-import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, BusinessInfo, HomePageContent } from './types';
+import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, ServiceCategory, BusinessInfo, HomePageContent, Staff, DayClosure, SpecialHours } from './types';
 
 export const E_OVERLAP = 'E_OVERLAP';
 
@@ -37,6 +38,8 @@ export async function createService(
     duration: Number(input.duration),
     category: input.category ?? null,
     description: input.description ?? null,
+    imageUrl: input.imageUrl ?? null,
+    isPopular: input.isPopular ?? false,
     active: input.active ?? true,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -53,6 +56,8 @@ export async function updateService(db: Firestore, id: string, patch: Partial<Se
     ...(patch.duration != null ? { duration: Number(patch.duration) } : {}),
     ...(patch.category !== undefined ? { category: patch.category ?? null } : {}),
     ...(patch.description !== undefined ? { description: patch.description ?? null } : {}),
+    ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl ?? null } : {}),
+    ...(patch.isPopular !== undefined ? { isPopular: !!patch.isPopular } : {}),
     ...(patch.active !== undefined ? { active: !!patch.active } : {}),
     updatedAt: serverTimestamp(),
   });
@@ -79,6 +84,60 @@ export function watchServices(
   });
 }
 
+// ========================= Service Categories =========================
+function assertServiceCategory(input: Partial<ServiceCategory>) {
+  if (!input.name || !input.name.trim()) throw new Error('Category name is required');
+  if (!input.color || !input.color.trim()) throw new Error('Category color is required');
+}
+
+export async function createServiceCategory(
+  db: Firestore,
+  input: Omit<ServiceCategory, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  assertServiceCategory(input);
+  
+  const ref = doc(collection(db, 'serviceCategories'));
+  await setDoc(ref, {
+    ...input,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateServiceCategory(
+  db: Firestore,
+  id: string,
+  input: Partial<Omit<ServiceCategory, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  if (input.name !== undefined || input.color !== undefined) {
+    assertServiceCategory(input);
+  }
+  
+  const ref = doc(db, 'serviceCategories', id);
+  await updateDoc(ref, {
+    ...input,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteServiceCategory(db: Firestore, id: string): Promise<void> {
+  const ref = doc(db, 'serviceCategories', id);
+  await deleteDoc(ref);
+}
+
+export function watchServiceCategories(
+  db: Firestore,
+  cb: (categories: ServiceCategory[]) => void
+): () => void {
+  const q = query(collection(db, 'serviceCategories'), orderBy('name', 'asc'));
+  return onSnapshot(q, (snap) => {
+    const categories: ServiceCategory[] = [];
+    snap.forEach((d) => categories.push({ id: d.id, ...(d.data() as any) }));
+    cb(categories);
+  });
+}
+
 // ========================= Customers =========================
 export async function createCustomer(db: Firestore, input: Partial<Customer>): Promise<string> {
   const ref = input.id ? doc(db, 'customers', input.id) : doc(collection(db, 'customers'));
@@ -89,6 +148,7 @@ export async function createCustomer(db: Firestore, input: Partial<Customer>): P
       name: input.name || 'Unnamed',
       email: input.email || null,
       phone: input.phone || null,
+      profilePictureUrl: input.profilePictureUrl || null,
       notes: input.notes || null,
       status: input.status || 'pending',
       createdAt: serverTimestamp(),
@@ -105,12 +165,206 @@ export async function updateCustomer(db: Firestore, id: string, patch: Partial<C
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.email !== undefined ? { email: patch.email ?? null } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
+    ...(patch.profilePictureUrl !== undefined ? { profilePictureUrl: patch.profilePictureUrl ?? null } : {}),
     ...(patch.notes !== undefined ? { notes: patch.notes ?? null } : {}),
+    ...(patch.structuredNotes !== undefined ? { structuredNotes: patch.structuredNotes } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.lastVisit !== undefined ? { lastVisit: patch.lastVisit ?? null } : {}),
     ...(patch.totalVisits !== undefined ? { totalVisits: patch.totalVisits ?? 0 } : {}),
     updatedAt: serverTimestamp(),
   });
+}
+
+// ========================= Customer Notes Management =========================
+export async function addCustomerNote(
+  db: Firestore,
+  customerId: string,
+  note: {
+    category: 'general' | 'preferences' | 'allergies' | 'history' | 'special_requests';
+    content: string;
+    addedBy: string;
+  }
+): Promise<void> {
+  const customerRef = doc(db, 'customers', customerId);
+  const customerDoc = await getDoc(customerRef);
+  
+  if (!customerDoc.exists()) {
+    throw new Error('Customer not found');
+  }
+  
+  const customerData = customerDoc.data() as Customer;
+  const existingNotes = customerData.structuredNotes || [];
+  
+  const newNote = {
+    id: crypto.randomUUID(),
+    category: note.category,
+    content: note.content,
+    addedBy: note.addedBy,
+    addedAt: new Date().toISOString(),
+  };
+  
+  await updateDoc(customerRef, {
+    structuredNotes: [...existingNotes, newNote],
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateCustomerNote(
+  db: Firestore,
+  customerId: string,
+  noteId: string,
+  updates: {
+    content?: string;
+    category?: 'general' | 'preferences' | 'allergies' | 'history' | 'special_requests';
+  }
+): Promise<void> {
+  const customerRef = doc(db, 'customers', customerId);
+  const customerDoc = await getDoc(customerRef);
+  
+  if (!customerDoc.exists()) {
+    throw new Error('Customer not found');
+  }
+  
+  const customerData = customerDoc.data() as Customer;
+  const existingNotes = customerData.structuredNotes || [];
+  
+  const updatedNotes = existingNotes.map(note => 
+    note.id === noteId 
+      ? { ...note, ...updates, updatedAt: new Date().toISOString() }
+      : note
+  );
+  
+  await updateDoc(customerRef, {
+    structuredNotes: updatedNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteCustomerNote(
+  db: Firestore,
+  customerId: string,
+  noteId: string
+): Promise<void> {
+  const customerRef = doc(db, 'customers', customerId);
+  const customerDoc = await getDoc(customerRef);
+  
+  if (!customerDoc.exists()) {
+    throw new Error('Customer not found');
+  }
+  
+  const customerData = customerDoc.data() as Customer;
+  const existingNotes = customerData.structuredNotes || [];
+  
+  const updatedNotes = existingNotes.filter(note => note.id !== noteId);
+  
+  await updateDoc(customerRef, {
+    structuredNotes: updatedNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+// ========================= Customer Data Sync =========================
+export async function syncCustomerDataWithAppointment(
+  db: Firestore,
+  appointmentId: string
+): Promise<void> {
+  const appointmentRef = doc(db, 'appointments', appointmentId);
+  const appointmentDoc = await getDoc(appointmentRef);
+  
+  if (!appointmentDoc.exists()) {
+    throw new Error('Appointment not found');
+  }
+  
+  const appointment = appointmentDoc.data() as Appointment;
+  
+  if (!appointment.customerId) {
+    return; // No customer to sync
+  }
+  
+  const customerRef = doc(db, 'customers', appointment.customerId);
+  const customerDoc = await getDoc(customerRef);
+  
+  if (!customerDoc.exists()) {
+    console.warn('Customer not found for appointment:', appointmentId);
+    return;
+  }
+  
+  const customer = customerDoc.data() as Customer;
+  
+  // Update appointment with latest customer data
+  const updates: Partial<Appointment> = {};
+  
+  if (appointment.customerName !== customer.name) {
+    updates.customerName = customer.name;
+  }
+  
+  if (appointment.customerEmail !== customer.email) {
+    updates.customerEmail = customer.email;
+  }
+  
+  if (appointment.customerPhone !== customer.phone) {
+    updates.customerPhone = customer.phone;
+  }
+  
+  // Only update if there are changes
+  if (Object.keys(updates).length > 0) {
+    await updateDoc(appointmentRef, {
+      ...updates,
+      updatedAt: new Date().toISOString()
+    });
+  }
+}
+
+export async function ensureCustomerDataConsistency(
+  db: Firestore,
+  customerId: string
+): Promise<void> {
+  // Get all appointments for this customer
+  const appointmentsQuery = query(
+    collection(db, 'appointments'),
+    where('customerId', '==', customerId)
+  );
+  
+  const appointmentsSnapshot = await getDocs(appointmentsQuery);
+  const customerRef = doc(db, 'customers', customerId);
+  const customerDoc = await getDoc(customerRef);
+  
+  if (!customerDoc.exists()) {
+    throw new Error('Customer not found');
+  }
+  
+  const customer = customerDoc.data() as Customer;
+  
+  // Update all appointments with current customer data
+  const batch = [];
+  for (const appointmentDoc of appointmentsSnapshot.docs) {
+    const appointment = appointmentDoc.data() as Appointment;
+    const updates: Partial<Appointment> = {};
+    
+    if (appointment.customerName !== customer.name) {
+      updates.customerName = customer.name;
+    }
+    
+    if (appointment.customerEmail !== customer.email) {
+      updates.customerEmail = customer.email;
+    }
+    
+    if (appointment.customerPhone !== customer.phone) {
+      updates.customerPhone = customer.phone;
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      batch.push(updateDoc(appointmentDoc.ref, {
+        ...updates,
+        updatedAt: new Date().toISOString()
+      }));
+    }
+  }
+  
+  // Execute all updates
+  if (batch.length > 0) {
+    await Promise.all(batch);
+  }
 }
 
 export async function deleteCustomer(db: Firestore, id: string) {
@@ -232,9 +486,28 @@ export async function createAppointmentTx(
       if (aStart < endMs && aEnd > startMs) throw new Error(E_OVERLAP);
     }
 
+    // Fetch customer details to populate in the appointment
+    let customerName = (input as any).customerName || null;
+    let customerEmail = (input as any).customerEmail || null;
+    let customerPhone = (input as any).customerPhone || null;
+    
+    if (input.customerId && !customerName) {
+      const customerRef = doc(db, 'customers', input.customerId);
+      const customerSnap = await tx.get(customerRef);
+      if (customerSnap.exists()) {
+        const customerData = customerSnap.data() as Customer;
+        customerName = customerData.name || null;
+        customerEmail = customerData.email || null;
+        customerPhone = customerData.phone || null;
+      }
+    }
+
     const newRef = doc(collection(db, 'appointments'));
     const payload: any = {
       customerId: input.customerId,
+      customerName,
+      customerEmail,
+      customerPhone,
       serviceId: input.serviceId,
       start: startISO,
       duration: input.duration,
@@ -245,6 +518,20 @@ export async function createAppointmentTx(
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
+
+    // Include additional fields if provided
+    if ((input as any).serviceIds) {
+      payload.serviceIds = (input as any).serviceIds;
+    }
+    if ((input as any).totalPrice !== undefined) {
+      payload.totalPrice = (input as any).totalPrice;
+    }
+    if ((input as any).tip !== undefined) {
+      payload.tip = (input as any).tip;
+    }
+    if ((input as any).isPriceEdited !== undefined) {
+      payload.isPriceEdited = (input as any).isPriceEdited;
+    }
 
     tx.set(newRef, payload);
     return newRef.id;
@@ -382,7 +669,12 @@ export function watchHomePageContent(db: Firestore, cb: (content: HomePageConten
         buenoCircleEnabled: true,
         buenoCircleTitle: 'Join the Bueno Circle',
         buenoCircleDescription: 'Get 10% off your first appointment and exclusive updates!',
-        buenoCircleDiscount: 10
+        buenoCircleDiscount: 10,
+        skinAnalysisEnabled: false,
+        skinAnalysisTitle: 'AI Skin Analysis',
+        skinAnalysisSubtitle: 'Discover your skin\'s unique needs with our advanced AI technology',
+        skinAnalysisDescription: 'Get personalized skincare recommendations based on AI analysis of your skin type and concerns.',
+        skinAnalysisCTA: 'Try Skin Analysis'
       });
       return;
     }
@@ -459,4 +751,232 @@ export function watchAppointmentEditRequestsByCustomer(
     });
     cb(requests);
   });
+}
+
+// ========================= Staff Management =========================
+function assertStaff(input: Partial<Staff>) {
+  if (!input.name || !input.name.trim()) throw new Error('Staff name is required');
+  if (!input.role || !input.role.trim()) throw new Error('Staff role is required');
+}
+
+export async function createStaff(
+  db: Firestore,
+  input: Omit<Staff, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  assertStaff(input);
+  
+  const ref = doc(collection(db, 'staff'));
+  await setDoc(ref, {
+    ...input,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateStaff(
+  db: Firestore,
+  id: string,
+  input: Partial<Omit<Staff, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  if (input.name !== undefined || input.role !== undefined) {
+    assertStaff(input);
+  }
+  
+  const ref = doc(db, 'staff', id);
+  await updateDoc(ref, {
+    ...input,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteStaff(db: Firestore, id: string): Promise<void> {
+  const ref = doc(db, 'staff', id);
+  await deleteDoc(ref);
+}
+
+export function watchStaff(
+  db: Firestore,
+  cb: (staff: Staff[]) => void
+): () => void {
+  const q = query(collection(db, 'staff'), orderBy('name', 'asc'));
+  return onSnapshot(q, (snap) => {
+    const staff: Staff[] = [];
+    snap.forEach((d) => staff.push({ id: d.id, ...(d.data() as any) }));
+    cb(staff);
+  });
+}
+
+// ========================= Day Closures =========================
+/**
+ * Create a day closure (shop closed for entire day)
+ */
+export async function createDayClosure(
+  db: Firestore,
+  input: Omit<DayClosure, 'id' | 'createdAt'>
+): Promise<string> {
+  if (!input.date || !/^\d{4}-\d{2}-\d{2}$/.test(input.date)) {
+    throw new Error('Invalid date format. Use YYYY-MM-DD');
+  }
+  
+  const ref = doc(collection(db, 'dayClosures'));
+  await setDoc(ref, {
+    ...input,
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/**
+ * Delete a day closure
+ */
+export async function deleteDayClosure(db: Firestore, id: string): Promise<void> {
+  const ref = doc(db, 'dayClosures', id);
+  await deleteDoc(ref);
+}
+
+/**
+ * Get closure for a specific date
+ */
+export async function getClosureForDate(db: Firestore, date: string): Promise<DayClosure | null> {
+  const q = query(
+    collection(db, 'dayClosures'),
+    where('date', '==', date),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, ...(doc.data() as any) };
+}
+
+/**
+ * Watch day closures (sorted by date)
+ */
+export function watchDayClosures(
+  db: Firestore,
+  cb: (closures: DayClosure[]) => void
+): () => void {
+  const q = query(collection(db, 'dayClosures'), orderBy('date', 'asc'));
+  return onSnapshot(q, (snap) => {
+    const closures: DayClosure[] = [];
+    snap.forEach((d) => closures.push({ id: d.id, ...(d.data() as any) }));
+    cb(closures);
+  });
+}
+
+/**
+ * Get closures for a date range
+ */
+export async function getClosuresInRange(
+  db: Firestore,
+  startDate: string,
+  endDate: string
+): Promise<DayClosure[]> {
+  const q = query(
+    collection(db, 'dayClosures'),
+    where('date', '>=', startDate),
+    where('date', '<=', endDate),
+    orderBy('date', 'asc')
+  );
+  const snap = await getDocs(q);
+  const closures: DayClosure[] = [];
+  snap.forEach((d) => closures.push({ id: d.id, ...(d.data() as any) }));
+  return closures;
+}
+
+// ========================= Special Hours =========================
+/**
+ * Set special hours for a specific date
+ */
+export async function setSpecialHours(
+  db: Firestore,
+  input: Omit<SpecialHours, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  if (!input.date || !/^\d{4}-\d{2}-\d{2}$/.test(input.date)) {
+    throw new Error('Invalid date format. Use YYYY-MM-DD');
+  }
+  
+  // Check if special hours already exist for this date
+  const existing = await getSpecialHoursForDate(db, input.date);
+  
+  if (existing) {
+    // Update existing
+    const ref = doc(db, 'specialHours', existing.id);
+    await updateDoc(ref, {
+      ranges: input.ranges,
+      reason: input.reason,
+      modifiedBy: input.modifiedBy,
+      modifiedAt: input.modifiedAt,
+      updatedAt: serverTimestamp(),
+    });
+    return existing.id;
+  } else {
+    // Create new
+    const ref = doc(collection(db, 'specialHours'));
+    await setDoc(ref, {
+      ...input,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return ref.id;
+  }
+}
+
+/**
+ * Delete special hours for a date
+ */
+export async function deleteSpecialHours(db: Firestore, id: string): Promise<void> {
+  const ref = doc(db, 'specialHours', id);
+  await deleteDoc(ref);
+}
+
+/**
+ * Get special hours for a specific date
+ */
+export async function getSpecialHoursForDate(db: Firestore, date: string): Promise<SpecialHours | null> {
+  const q = query(
+    collection(db, 'specialHours'),
+    where('date', '==', date),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, ...(doc.data() as any) };
+}
+
+/**
+ * Watch special hours (sorted by date)
+ */
+export function watchSpecialHours(
+  db: Firestore,
+  cb: (specialHours: SpecialHours[]) => void
+): () => void {
+  const q = query(collection(db, 'specialHours'), orderBy('date', 'asc'));
+  return onSnapshot(q, (snap) => {
+    const specialHours: SpecialHours[] = [];
+    snap.forEach((d) => specialHours.push({ id: d.id, ...(d.data() as any) }));
+    cb(specialHours);
+  });
+}
+
+/**
+ * Get special hours for a date range
+ */
+export async function getSpecialHoursInRange(
+  db: Firestore,
+  startDate: string,
+  endDate: string
+): Promise<SpecialHours[]> {
+  const q = query(
+    collection(db, 'specialHours'),
+    where('date', '>=', startDate),
+    where('date', '<=', endDate),
+    orderBy('date', 'asc')
+  );
+  const snap = await getDocs(q);
+  const specialHours: SpecialHours[] = [];
+  snap.forEach((d) => specialHours.push({ id: d.id, ...(d.data() as any) }));
+  return specialHours;
 }
