@@ -52,8 +52,9 @@ consentFormsSigned?: Array<{
 }>;
 // Enhanced identity linking fields for unified customer system
 authUid?: string | null; // Firebase Auth UID (if signed up) - for A2P integration
-identityStatus?: 'guest' | 'auth' | 'merged'; // Track identity state
+identityStatus?: 'guest' | 'auth' | 'merged' | 'migrated'; // Track identity state
 mergedFrom?: string[]; // Array of old customer document IDs that were merged
+migratedTo?: string; // If this customer was migrated to a new ID (authUid)
 canonicalEmail?: string; // Normalized email (lowercase, trimmed) for consistent querying
 canonicalPhone?: string; // Normalized phone (E.164 format: +1234567890) for A2P SMS
 createdAt?: any;

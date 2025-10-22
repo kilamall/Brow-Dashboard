@@ -93,11 +93,60 @@ export const findOrCreateCustomer = onCall(
         }
         
         // Link Auth UID if provided and not already linked (merge scenario)
-        const wasMerged = authUid && !existingCustomer.authUid;
+        const wasMerged = authUid && !existingCustomer.authUid && existingCustomer.id !== authUid;
         if (wasMerged) {
-          updates.authUid = authUid;
-          updates.identityStatus = 'merged';
-          console.log('🔗 Linking authUid to existing customer:', authUid);
+          console.log('🔗 MERGING: Moving customer from', existingCustomer.id, 'to', authUid);
+          
+          // CRITICAL: Migrate to authUid document to match ClientDashboard lookup
+          // Copy existing customer to new document with authUid as ID
+          await db.collection('customers').doc(authUid).set({
+            ...existingCustomer,
+            authUid: authUid,
+            identityStatus: 'merged',
+            mergedFrom: [existingCustomer.id],
+            canonicalEmail: canonicalEmail || existingCustomer.canonicalEmail,
+            canonicalPhone: canonicalPhone || existingCustomer.canonicalPhone,
+            email: email || existingCustomer.email,
+            phone: phone || existingCustomer.phone,
+            name: name || existingCustomer.name,
+            profilePictureUrl: profilePictureUrl || existingCustomer.profilePictureUrl,
+            updatedAt: new Date().toISOString()
+          });
+          
+          // Update all appointments from old customerId to new authUid
+          const appointmentsQuery = await db.collection('appointments')
+            .where('customerId', '==', existingCustomer.id)
+            .get();
+          
+          console.log(`📦 Migrating ${appointmentsQuery.size} appointments to new customer ID`);
+          
+          const batch = db.batch();
+          appointmentsQuery.forEach(doc => {
+            batch.update(doc.ref, { 
+              customerId: authUid,
+              updatedAt: new Date().toISOString()
+            });
+          });
+          
+          if (appointmentsQuery.size > 0) {
+            await batch.commit();
+            console.log(`✅ Migrated ${appointmentsQuery.size} appointments`);
+          }
+          
+          // Mark old customer document as migrated (keep for audit trail)
+          await db.collection('customers').doc(existingCustomer.id).update({
+            migratedTo: authUid,
+            identityStatus: 'migrated',
+            updatedAt: new Date().toISOString()
+          });
+          
+          console.log('✅ Merge complete: Old ID', existingCustomer.id, '→ New ID', authUid);
+          
+          return {
+            customerId: authUid,
+            isNew: false,
+            merged: true
+          };
         }
         
         // Update name if better quality provided
