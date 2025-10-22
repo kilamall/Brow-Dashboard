@@ -13,6 +13,8 @@ export * from './confirm-appointment.js';
 // export * from './update-business-hours.js';
 export * from './find-or-create-customer.js';
 export * from './migrate-customer-identities.js';
+export * from './train-ai-from-admin-messages.js';
+export * from './ai-response-with-training.js';
 export * from './skin-analysis.js';
 export * from './skin-analysis-requests.js';
 export * from './email.js';
