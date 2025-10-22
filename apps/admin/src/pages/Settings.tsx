@@ -20,8 +20,9 @@ import DataManagement from '../components/DataManagement';
 import VerificationSettings from '../components/VerificationSettings';
 import AdminEmailSetup from '../components/AdminEmailSetup';
 import BusinessHoursManager from '../components/BusinessHoursManager';
+import AITrainingPanel from '../components/AITrainingPanel';
 
-type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail';
+type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining';
 
 export default function Settings() {
   const { db } = useFirebase();
@@ -35,7 +36,7 @@ export default function Settings() {
   useEffect(() => {
     const savedTab = localStorage.getItem('settingsActiveTab');
     if (savedTab) {
-      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail'];
+      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining'];
       if (validTabs.includes(savedTab as Tab)) {
         setActiveTab(savedTab as Tab);
       }
@@ -63,6 +64,7 @@ export default function Settings() {
     { id: 'verifications', label: 'Customer Verifications', icon: '🔐' },
     { id: 'accessibility', label: 'Accessibility', icon: '♿' },
     { id: 'adminemail', label: 'Admin Notifications', icon: '📧' },
+    { id: 'aitraining', label: 'AI Messaging', icon: '🤖' },
     { id: 'datamanagement', label: 'Data Management', icon: '🗄️' }
   ];
 
@@ -176,6 +178,10 @@ export default function Settings() {
 
         {activeTab === 'adminemail' && (
           <AdminEmailSetup />
+        )}
+
+        {activeTab === 'aitraining' && (
+          <AITrainingPanel />
         )}
 
         {activeTab === 'datamanagement' && (
