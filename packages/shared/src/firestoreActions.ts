@@ -38,6 +38,8 @@ export async function createService(
     duration: Number(input.duration),
     category: input.category ?? null,
     description: input.description ?? null,
+    imageUrl: input.imageUrl ?? null,
+    isPopular: input.isPopular ?? false,
     active: input.active ?? true,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -54,6 +56,8 @@ export async function updateService(db: Firestore, id: string, patch: Partial<Se
     ...(patch.duration != null ? { duration: Number(patch.duration) } : {}),
     ...(patch.category !== undefined ? { category: patch.category ?? null } : {}),
     ...(patch.description !== undefined ? { description: patch.description ?? null } : {}),
+    ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl ?? null } : {}),
+    ...(patch.isPopular !== undefined ? { isPopular: !!patch.isPopular } : {}),
     ...(patch.active !== undefined ? { active: !!patch.active } : {}),
     updatedAt: serverTimestamp(),
   });

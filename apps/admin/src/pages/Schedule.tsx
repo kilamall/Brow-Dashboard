@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { onSnapshot, collection, query, where, orderBy, updateDoc, doc } from 'firebase/firestore';
+import { onSnapshot, collection, query, where, orderBy, updateDoc, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { createStaff, updateStaff, deleteStaff, watchStaff } from '@buenobrows/shared/firestoreActions';
 import type { Appointment, Service, Staff, AppointmentEditRequest } from '@buenobrows/shared/types';
@@ -10,6 +10,7 @@ import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDeta
 import EditAppointmentModal from '@/components/EditAppointmentModal';
 import CalendarDayView from '@/components/CalendarDayView';
 import EditRequestConfirmModal from '@/components/EditRequestConfirmModal';
+import EditRequestsModal from '@/components/EditRequestsModal';
 import {
   addMonths,
   endOfDay,
@@ -112,6 +113,15 @@ export default function Schedule() {
         status: 'cancelled',
         updatedAt: new Date().toISOString()
       });
+      
+      // Delete associated edit requests
+      const editRequestsQuery = query(
+        collection(db, 'appointmentEditRequests'),
+        where('appointmentId', '==', appointmentId)
+      );
+      const editRequestsSnap = await getDocs(editRequestsQuery);
+      const deletePromises = editRequestsSnap.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
     } catch (error) {
       console.error('Error denying appointment:', error);
       alert('Failed to deny appointment. Please try again.');
@@ -126,6 +136,7 @@ export default function Schedule() {
   const [editRequests, setEditRequests] = useState<AppointmentEditRequest[]>([]);
   const [confirmingRequest, setConfirmingRequest] = useState<AppointmentEditRequest | null>(null);
   const [approvingEdit, setApprovingEdit] = useState(false);
+  const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
   
   // Get quick rebook data from navigation state
   const locationState = location.state as {
@@ -472,19 +483,18 @@ export default function Schedule() {
         console.log('Edit request approved successfully');
         
       } catch (appointmentError) {
-        console.error('❌ Failed to update appointment:', appointmentError);
+        const errorMsg = appointmentError instanceof Error ? appointmentError.message : 'Unknown error';
         
         // If appointment update failed, don't update edit request status
         if (!appointmentUpdateSuccess) {
-          throw new Error(`Failed to update appointment: ${appointmentError.message}`);
+          throw new Error(`Failed to update appointment: ${errorMsg}`);
         }
         
         // If edit request status update failed, try to rollback appointment
         if (appointmentUpdateSuccess && !editRequestUpdateSuccess) {
-          console.log('🔄 Attempting to rollback appointment changes...');
           try {
             // Rollback appointment to original state
-            const rollbackData = {
+            const rollbackData: Record<string, any> = {
               updatedAt: new Date().toISOString(),
               updatedForEdit: false,
               editRequestId: null,
@@ -498,7 +508,7 @@ export default function Schedule() {
             }
             if (confirmingRequest.requestedChanges.serviceIds) {
               rollbackData.serviceId = appointment.serviceId;
-              rollbackData.selectedServices = appointment.selectedServices;
+              rollbackData.selectedServices = (appointment as any).selectedServices;
               rollbackData.duration = appointment.duration;
               rollbackData.bookedPrice = appointment.bookedPrice;
               rollbackData.totalPrice = appointment.totalPrice;
@@ -508,18 +518,17 @@ export default function Schedule() {
             }
             
             await updateDoc(doc(db, 'appointments', appointment.id), rollbackData);
-            console.log('✅ Appointment rollback successful');
           } catch (rollbackError) {
-            console.error('❌ Failed to rollback appointment:', rollbackError);
-            throw new Error(`Appointment updated but edit request status update failed. Manual intervention may be required. Rollback failed: ${rollbackError.message}`);
+            const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : 'Unknown error';
+            throw new Error(`Appointment updated but edit request status update failed. Manual intervention may be required. Rollback failed: ${rollbackMsg}`);
           }
         }
         
         throw appointmentError;
       }
     } catch (error) {
-      console.error('Error approving edit request:', error);
-      alert(`Failed to approve edit request: ${error.message}. Please try again or contact support if the issue persists.`);
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      alert(`Failed to approve edit request: ${errorMessage}. Please try again or contact support if the issue persists.`);
     } finally {
       setApprovingEdit(false);
     }
@@ -533,11 +542,23 @@ export default function Schedule() {
       const confirmed = window.confirm('Deny this edit request?');
       if (!confirmed) return;
 
+      // Update edit request status
       await updateDoc(doc(db, 'appointmentEditRequests', request.id), {
         status: 'denied',
         processedAt: new Date().toISOString(),
         processedBy: 'admin'
       });
+
+      // ✅ NEW: Check if there's a pending appointment for this request
+      // If so, cancel it
+      const appointment = Object.values(appointments).find((a: any) => a.id === request.appointmentId);
+      if (appointment && appointment.status === 'pending') {
+        await updateDoc(doc(db, 'appointments', request.appointmentId), {
+          status: 'cancelled',
+          updatedAt: new Date().toISOString()
+        });
+        console.log('✅ Cancelled pending appointment for denied edit request');
+      }
 
       console.log('Edit request denied successfully');
     } catch (error) {
@@ -792,7 +813,7 @@ export default function Schedule() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif text-xl">Pending Edit Requests</h3>
           <button
-            onClick={() => navigate('/edit-requests')}
+            onClick={() => setShowEditRequestsModal(true)}
             className="text-sm text-terracotta hover:text-terracotta-dark font-medium"
           >
             View All Edit Requests →
@@ -848,10 +869,10 @@ export default function Schedule() {
             {editRequests.length > 3 && (
               <div className="text-center">
                 <button
-                  onClick={() => navigate('/edit-requests')}
+                  onClick={() => setShowEditRequestsModal(true)}
                   className="text-sm text-terracotta hover:text-terracotta-dark font-medium"
                 >
-                  View {editRequests.length - 3} more requests →
+                  See all history ({editRequests.length} total) →
                 </button>
               </div>
             )}
@@ -918,7 +939,7 @@ export default function Schedule() {
                     }}
                     className="text-[11px] truncate border rounded px-1 py-0.5 cursor-pointer hover:bg-slate-100 transition-colors"
                   >
-                    {format(new Date(a.start), 'h:mma')}-{format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mma')} · 
+                    {format(safeParseDate(a.start), 'h:mma')}-{format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mma')} · 
                     <span className="text-slate-600">
                       {services[a.serviceId]?.name || 'Service'}
                     </span>
@@ -1084,7 +1105,7 @@ export default function Schedule() {
           <div className="space-y-3">
             {appts
               .filter(a => a.status === 'pending')
-              .sort((a, b) => safeParseDate(a.start).getTime() - new Date(b.start).getTime())
+              .sort((a, b) => safeParseDate(a.start).getTime() - safeParseDate(b.start).getTime())
               .map((a) => (
                 <div 
                   key={a.id} 
@@ -1279,6 +1300,12 @@ export default function Schedule() {
           loading={approvingEdit}
         />
       )}
+
+      {/* Edit Requests Modal */}
+      <EditRequestsModal 
+        isOpen={showEditRequestsModal} 
+        onClose={() => setShowEditRequestsModal(false)} 
+      />
     </div>
   );
 }
@@ -1560,7 +1587,7 @@ function StaffManagerModal({ onClose }: { onClose: () => void }) {
                     <div className="flex items-center gap-3 mb-2">
                       <div className="w-10 h-10 bg-terracotta/10 rounded-full flex items-center justify-center">
                         <span className="text-terracotta font-semibold text-sm">
-                          {member.name.split(' ').map(n => n[0]).join('')}
+                          {member.name && typeof member.name === 'string' ? member.name.split(' ').map(n => n[0]).join('') : '?'}
                         </span>
                       </div>
                       <div>

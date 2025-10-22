@@ -2,16 +2,17 @@ export type ID = string;
 
 
 export interface Service {
-id: ID;
-name: string;
-price: number;
-duration: number; // minutes
-category?: string;
-description?: string;
-imageUrl?: string; // URL to service image
-active: boolean;
-createdAt?: any;
-updatedAt?: any;
+  id: ID;
+  name: string;
+  price: number;
+  duration: number; // minutes
+  category?: string;
+  description?: string;
+  imageUrl?: string; // URL to service image
+  isPopular?: boolean; // Mark as most popular service
+  active: boolean;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface ServiceCategory {

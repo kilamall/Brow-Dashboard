@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { updateDoc, doc } from 'firebase/firestore';
+import { updateDoc, doc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import { format, parseISO, addWeeks } from 'date-fns';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import EditRequestsModal from './EditRequestsModal';
 
 interface Props {
   appointment: Appointment | null;
@@ -22,6 +23,7 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
   const [editedPrice, setEditedPrice] = useState('');
   const [tipAmount, setTipAmount] = useState('');
   const [savingPrice, setSavingPrice] = useState(false);
+  const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
   const functions = getFunctions();
 
   // Initialize price and tip values when appointment changes
@@ -38,7 +40,24 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
     if (!confirm('Cancel this appointment?')) return;
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'appointments', appointment.id), { status: 'cancelled' });
+      await updateDoc(doc(db, 'appointments', appointment.id), { 
+        status: 'cancelled',
+        updatedAt: new Date().toISOString()
+      });
+      
+      // Delete associated edit requests
+      const editRequestsQuery = query(
+        collection(db, 'appointmentEditRequests'),
+        where('appointmentId', '==', appointment.id)
+      );
+      const editRequestsSnap = await getDocs(editRequestsQuery);
+      const deletePromises = editRequestsSnap.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+      
+      if (editRequestsSnap.size > 0) {
+        console.log(`Deleted ${editRequestsSnap.size} edit requests for appointment ${appointment.id}`);
+      }
+      
       onClose();
     } catch (error) {
       console.error('Failed to cancel appointment:', error);
@@ -205,6 +224,19 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
             </div>
           )}
 
+          {/* Edit Request History Button */}
+          <div className="mt-4">
+            <button
+              onClick={() => setShowEditRequestsModal(true)}
+              className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg border border-blue-200 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              View Edit History
+            </button>
+          </div>
+
           {/* Price */}
           <div className="bg-terracotta/10 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
@@ -362,6 +394,12 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
           </div>
         </div>
       </div>
+
+      {/* Edit Requests Modal */}
+      <EditRequestsModal 
+        isOpen={showEditRequestsModal} 
+        onClose={() => setShowEditRequestsModal(false)} 
+      />
     </div>
   );
 }

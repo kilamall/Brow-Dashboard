@@ -194,7 +194,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                             target.style.display = 'none';
                             const parent = target.parentElement;
                             if (parent) {
-                              const initials = customer?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+                              const initials = (customer?.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
                               parent.innerHTML = `<div class="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center"><span class="text-xs font-semibold text-terracotta">${initials}</span></div>`;
                             }
                           }}
@@ -202,7 +202,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center">
                           <span className="text-xs font-semibold text-terracotta">
-                            {customer?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}
+                            {(customer?.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?'}
                           </span>
                         </div>
                       )}

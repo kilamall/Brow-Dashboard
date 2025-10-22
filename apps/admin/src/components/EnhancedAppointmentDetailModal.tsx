@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { updateDoc, doc, getDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
+import { updateDoc, doc, getDoc, collection, query, where, onSnapshot, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Appointment, Service, Customer, AppointmentEditRequest } from '@buenobrows/shared/types';
 import { format, parseISO, addWeeks } from 'date-fns';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { addCustomerNote, updateCustomerNote, deleteCustomerNote } from '@buenobrows/shared/firestoreActions';
 import EditRequestConfirmModal from './EditRequestConfirmModal';
+import EditRequestsModal from './EditRequestsModal';
 
 interface Props {
   appointment: Appointment;
@@ -29,6 +30,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [approvingEdit, setApprovingEdit] = useState(false);
   const [services, setServices] = useState<Record<string, Service>>({});
+  const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
   const functions = getFunctions();
 
   // Load customer data
@@ -95,6 +97,20 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
         status: 'cancelled',
         updatedAt: new Date().toISOString()
       });
+      
+      // Delete associated edit requests
+      const editRequestsQuery = query(
+        collection(db, 'appointmentEditRequests'),
+        where('appointmentId', '==', appointment.id)
+      );
+      const editRequestsSnap = await getDocs(editRequestsQuery);
+      const deletePromises = editRequestsSnap.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+      
+      if (editRequestsSnap.size > 0) {
+        console.log(`Deleted ${editRequestsSnap.size} edit requests for appointment ${appointment.id}`);
+      }
+      
       alert('✅ Appointment cancelled successfully');
       onClose();
     } catch (error) {
@@ -195,19 +211,18 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
         console.log('Edit request approved successfully');
         
       } catch (appointmentError) {
-        console.error('❌ Failed to update appointment:', appointmentError);
+        const errorMsg = appointmentError instanceof Error ? appointmentError.message : 'Unknown error';
         
         // If appointment update failed, don't update edit request status
         if (!appointmentUpdateSuccess) {
-          throw new Error(`Failed to update appointment: ${appointmentError.message}`);
+          throw new Error(`Failed to update appointment: ${errorMsg}`);
         }
         
         // If edit request status update failed, try to rollback appointment
         if (appointmentUpdateSuccess && !editRequestUpdateSuccess) {
-          console.log('🔄 Attempting to rollback appointment changes...');
           try {
             // Rollback appointment to original state
-            const rollbackData = {
+            const rollbackData: Record<string, any> = {
               updatedAt: new Date().toISOString(),
               updatedForEdit: false,
               editRequestId: null,
@@ -221,7 +236,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
             }
             if (editRequest.requestedChanges.serviceIds) {
               rollbackData.serviceId = appointment.serviceId;
-              rollbackData.selectedServices = appointment.selectedServices;
+              rollbackData.selectedServices = (appointment as any).selectedServices;
               rollbackData.duration = appointment.duration;
               rollbackData.bookedPrice = appointment.bookedPrice;
               rollbackData.totalPrice = appointment.totalPrice;
@@ -231,18 +246,17 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
             }
             
             await updateDoc(doc(db, 'appointments', appointment.id), rollbackData);
-            console.log('✅ Appointment rollback successful');
           } catch (rollbackError) {
-            console.error('❌ Failed to rollback appointment:', rollbackError);
-            throw new Error(`Appointment updated but edit request status update failed. Manual intervention may be required. Rollback failed: ${rollbackError.message}`);
+            const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : 'Unknown error';
+            throw new Error(`Appointment updated but edit request status update failed. Manual intervention may be required. Rollback failed: ${rollbackMsg}`);
           }
         }
         
         throw appointmentError;
       }
     } catch (error) {
-      console.error('Error approving edit request:', error);
-      alert(`Failed to approve edit request: ${error.message}. Please try again or contact support if the issue persists.`);
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      alert(`Failed to approve edit request: ${errorMessage}. Please try again or contact support if the issue persists.`);
     } finally {
       setApprovingEdit(false);
     }
@@ -256,11 +270,22 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
 
     setLoading(true);
     try {
+      // Update edit request status
       await updateDoc(doc(db, 'appointmentEditRequests', editRequest.id), {
         status: 'denied',
         processedAt: new Date().toISOString(),
         processedBy: auth.currentUser?.uid || 'admin'
       });
+
+      // ✅ NEW: Check if there's a pending appointment for this request
+      // If so, cancel it
+      if (appointment && appointment.status === 'pending') {
+        await updateDoc(doc(db, 'appointments', appointment.id), {
+          status: 'cancelled',
+          updatedAt: new Date().toISOString()
+        });
+        console.log('✅ Cancelled pending appointment for denied edit request');
+      }
 
       console.log('Edit request denied successfully');
     } catch (error) {
@@ -290,6 +315,48 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
       }
     });
     onClose();
+  };
+
+  const handleApprovePending = async () => {
+    if (!db) return;
+    
+    const confirmed = window.confirm('Confirm this pending appointment?');
+    if (!confirmed) return;
+
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        status: 'confirmed',
+        updatedAt: new Date().toISOString()
+      });
+      console.log('Appointment confirmed successfully');
+    } catch (error) {
+      console.error('Error confirming appointment:', error);
+      alert('Failed to confirm appointment. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDenyPending = async () => {
+    if (!db) return;
+    
+    const confirmed = window.confirm('Deny this pending appointment?');
+    if (!confirmed) return;
+
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        status: 'cancelled',
+        updatedAt: new Date().toISOString()
+      });
+      console.log('Appointment denied successfully');
+    } catch (error) {
+      console.error('Error denying appointment:', error);
+      alert('Failed to deny appointment. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddNote = async () => {
@@ -664,6 +731,19 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                 </div>
               )}
 
+              {/* Edit Request History Button */}
+              <div className="mb-6">
+                <button
+                  onClick={() => setShowEditRequestsModal(true)}
+                  className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg border border-blue-200 transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  View Edit History
+                </button>
+              </div>
+
               {/* Pending Edit Request Section */}
               {editRequest && (
                 <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-6">
@@ -744,6 +824,46 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                       <span>Quick Rebook (2+ Weeks)</span>
                     </button>
                   )}
+
+                  {/* Conditional Approve/Deny for pending appointments */}
+                  {appointment.status === 'pending' && (
+                    <>
+                      <button
+                        onClick={handleApprovePending}
+                        className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors text-left flex items-center gap-3"
+                      >
+                        <span className="text-lg">✓</span>
+                        <span>Confirm Appointment</span>
+                      </button>
+                      <button
+                        onClick={handleDenyPending}
+                        className="w-full bg-red-600 text-white rounded-lg px-4 py-3 hover:bg-red-700 transition-colors text-left flex items-center gap-3"
+                      >
+                        <span className="text-lg">✗</span>
+                        <span>Deny Appointment</span>
+                      </button>
+                    </>
+                  )}
+
+                  {/* Conditional Approve/Deny for edit requests */}
+                  {editRequest && (
+                    <>
+                      <button
+                        onClick={() => setShowConfirmModal(true)}
+                        className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors text-left flex items-center gap-3"
+                      >
+                        <span className="text-lg">✓</span>
+                        <span>Approve Edit Request</span>
+                      </button>
+                      <button
+                        onClick={handleDenyEditRequest}
+                        className="w-full bg-red-600 text-white rounded-lg px-4 py-3 hover:bg-red-700 transition-colors text-left flex items-center gap-3"
+                      >
+                        <span className="text-lg">✗</span>
+                        <span>Deny Edit Request</span>
+                      </button>
+                    </>
+                  )}
                   
                   {onEdit && (
                     <button
@@ -804,6 +924,12 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
         loading={approvingEdit}
       />
     )}
+
+    {/* Edit Requests Modal */}
+    <EditRequestsModal 
+      isOpen={showEditRequestsModal} 
+      onClose={() => setShowEditRequestsModal(false)} 
+    />
     </>
   );
 }

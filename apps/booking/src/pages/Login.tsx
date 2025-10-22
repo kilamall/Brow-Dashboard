@@ -43,6 +43,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [countryCode, setCountryCode] = useState('+1');
   const [profilePictureUrl, setProfilePictureUrl] = useState('');
 
   // Format phone number as user types
@@ -228,21 +229,12 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Format phone number to E.164 format if not already
+      // Format phone number to E.164 format using selected country code
       let formattedPhone = phone.trim();
       if (!formattedPhone.startsWith('+')) {
-        // Remove all non-digits and add +1 prefix for US numbers
+        // Remove all non-digits and add selected country code
         const digitsOnly = formattedPhone.replace(/\D/g, '');
-        if (digitsOnly.length === 10) {
-          // 10-digit US number
-          formattedPhone = '+1' + digitsOnly;
-        } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
-          // 11-digit number starting with 1
-          formattedPhone = '+' + digitsOnly;
-        } else {
-          // Assume US number and add +1
-          formattedPhone = '+1' + digitsOnly;
-        }
+        formattedPhone = countryCode + digitsOnly;
       }
 
       const appVerifier = window.recaptchaVerifier;
@@ -729,19 +721,35 @@ export default function Login() {
                   <label htmlFor="phone" className="block text-sm font-medium text-slate-700">
                     Phone Number
                   </label>
-                  <input
-                    id="phone"
-                    name="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    required
-                    value={phone}
-                    onChange={handlePhoneChange}
-                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
-                    placeholder="(555) 123-4567"
-                  />
+                  <div className="flex gap-2 mt-1">
+                    <select
+                      value={countryCode}
+                      onChange={(e) => setCountryCode(e.target.value)}
+                      className="w-24 px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                    >
+                      <option value="+1">🇺🇸 +1</option>
+                      <option value="+44">🇬🇧 +44</option>
+                      <option value="+61">🇦🇺 +61</option>
+                      <option value="+91">🇮🇳 +91</option>
+                      <option value="+33">🇫🇷 +33</option>
+                      <option value="+49">🇩🇪 +49</option>
+                      <option value="+81">🇯🇵 +81</option>
+                      <option value="+86">🇨🇳 +86</option>
+                    </select>
+                    <input
+                      id="phone"
+                      name="phone"
+                      type="tel"
+                      autoComplete="tel"
+                      required
+                      value={phone}
+                      onChange={handlePhoneChange}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                      placeholder="(555) 123-4567"
+                    />
+                  </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    Enter your 10-digit US phone number (we'll add +1 automatically)
+                    Enter your phone number with country code
                   </p>
                 </div>
 

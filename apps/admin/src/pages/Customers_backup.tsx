@@ -101,7 +101,7 @@ export default function Customers(){
   };
 
   const getCustomerAvatar = (customer: Customer) => {
-    const initials = customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+    const initials = (customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
     return initials;
   };
 
@@ -644,7 +644,7 @@ function CustomerDetails({ customer, onClose, db }: { customer: Customer; onClos
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center">
                   <span className="text-sm font-semibold text-terracotta">
-                    {customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}
+                    {(customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?'}
                   </span>
                 </div>
                 <div>

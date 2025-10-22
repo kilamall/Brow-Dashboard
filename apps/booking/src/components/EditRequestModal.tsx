@@ -54,8 +54,18 @@ export default function EditRequestModal({
   loading 
 }: Props) {
   const { db } = useFirebase();
-  const [requestedDate, setRequestedDate] = useState('');
-  const [requestedTime, setRequestedTime] = useState('');
+  const [requestedDate, setRequestedDate] = useState(() => {
+    // Start with appointment's existing date as default
+    return appointment.start ? new Date(appointment.start).toISOString().split('T')[0] : '';
+  });
+  const [requestedTime, setRequestedTime] = useState(() => {
+    // Extract time from existing appointment
+    if (appointment.start) {
+      const date = new Date(appointment.start);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }
+    return '';
+  });
   const [requestedServiceIds, setRequestedServiceIds] = useState<string[]>([appointment.serviceId]);
   const [requestedNotes, setRequestedNotes] = useState(appointment.notes || '');
   const [reason, setReason] = useState('');
@@ -180,6 +190,21 @@ export default function EditRequestModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    // CRITICAL: Prevent submission if date/time not selected
+    if (!requestedDate || !requestedTime) {
+      alert('Please select both a date and time for your appointment');
+      return;
+    }
+    
+    // Construct ISO string properly with timezone handling
+    const dateTime = new Date(`${requestedDate}T${requestedTime}:00`);
+    
+    // Double-check validity
+    if (isNaN(dateTime.getTime())) {
+      alert('Invalid date/time selected. Please choose a valid date and time.');
+      return;
+    }
+    
     const changes: {
       start?: string;
       serviceIds?: string[];
@@ -189,11 +214,10 @@ export default function EditRequestModal({
 
     // Only include changes that are different from the original
     if (requestedDate && requestedTime) {
-      const newDateTime = new Date(`${requestedDate}T${requestedTime}`);
       const originalDateTime = new Date(appointment.start);
       
-      if (newDateTime.getTime() !== originalDateTime.getTime()) {
-        changes.start = newDateTime.toISOString();
+      if (dateTime.getTime() !== originalDateTime.getTime()) {
+        changes.start = dateTime.toISOString(); // ✅ Always valid ISO string
       }
     }
 
@@ -435,7 +459,7 @@ export default function EditRequestModal({
               </button>
               <button
                 type="submit"
-                disabled={loading || requestedServiceIds.length === 0}
+                disabled={loading || requestedServiceIds.length === 0 || !requestedDate || !requestedTime}
                 className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Submitting...' : 'Submit Edit Request'}

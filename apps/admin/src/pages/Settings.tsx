@@ -1898,7 +1898,7 @@ function ServiceImageCard({ service, onImageUpdate, onDescriptionUpdate }: { ser
 
       const storage = getStorage();
       const timestamp = Date.now();
-      const fileExtension = file.name.split('.').pop();
+      const fileExtension = (file.name || '').split('.').pop();
       const fileName = `service-images/${service.id}/${timestamp}-${service.name.replace(/[^a-zA-Z0-9]/g, '-')}.${fileExtension}`;
       const storageRef = ref(storage, fileName);
 

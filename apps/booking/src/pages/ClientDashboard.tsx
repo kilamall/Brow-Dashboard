@@ -309,7 +309,6 @@ export default function ClientDashboard() {
   // Only show loading if we don't have a user AND we're still loading
   // If we have a user but loading is true, it might be a state fluctuation
   if (loading && !user) {
-    console.log('🔍 Rendering loading state, user:', user?.email, 'loading:', loading);
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-lg text-slate-600">Loading...</div>
@@ -793,7 +792,7 @@ export default function ClientDashboard() {
                           )}
                           {request.requestedChanges.serviceIds && request.requestedChanges.serviceIds.length > 0 && (
                             <p className="text-sm text-slate-600">
-                              🔧 New Services: {request.requestedChanges.serviceIds.join(', ')}
+                              🔧 New Services: {request.requestedChanges.serviceIds.map((serviceId: string) => services[serviceId]?.name || serviceId).join(', ')}
                             </p>
                           )}
                           {request.requestedChanges.notes && (

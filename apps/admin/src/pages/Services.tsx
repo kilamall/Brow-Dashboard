@@ -537,6 +537,20 @@ function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; 
             </label>
           </div>
 
+          {/* Most Popular Status */}
+          <div className="flex items-center gap-3 p-3 bg-yellow-50 rounded-lg">
+            <input 
+              type="checkbox" 
+              id="isPopular"
+              checked={s.isPopular || false} 
+              onChange={e=>setS({...s, isPopular: e.target.checked})}
+              className="w-4 h-4 text-yellow-600 border-slate-300 rounded focus:ring-yellow-600"
+            />
+            <label htmlFor="isPopular" className="text-sm font-medium text-slate-700">
+              Mark as Most Popular Service
+            </label>
+          </div>
+
           {/* Actions */}
           <div className="flex gap-3 pt-4">
             <button 
@@ -592,7 +606,7 @@ function ImageUploadModal({ service, onClose, db }: { service: Service; onClose:
 
       const storage = getStorage();
       const timestamp = Date.now();
-      const fileExtension = file.name.split('.').pop();
+      const fileExtension = (file.name || '').split('.').pop();
       const fileName = `service-images/${service.id}/${timestamp}-${service.name.replace(/[^a-zA-Z0-9]/g, '-')}.${fileExtension}`;
       const storageReference = storageRef(storage, fileName);
 

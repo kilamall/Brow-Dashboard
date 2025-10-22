@@ -41,6 +41,31 @@ export default function ServicesPage() {
     return description.substring(0, maxLength).trim() + '...';
   };
 
+  // Category color mapping (matching admin colors)
+  const getCategoryColor = (category?: string): string => {
+    const colorMap: Record<string, string> = {
+      'Brows': '#F59E0B',        // Yellow/Amber
+      'Facial Waxing': '#EC4899', // Pink
+      'Lashes': '#8B5CF6',       // Purple
+      'Skincare': '#10B981',     // Green
+      'Other': '#6B7280',        // Gray
+    };
+    return colorMap[category || 'Other'] || '#6B7280';
+  };
+
+  // Get contrasting text color (white or black)
+  const getContrastColor = (backgroundColor: string): string => {
+    // Convert hex to RGB
+    const hex = backgroundColor.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    
+    // Calculate luminance
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? '#000000' : '#FFFFFF';
+  };
+
   // Handle service details modal
   const handleServiceClick = (service: Service) => {
     setSelectedService(service);
@@ -111,7 +136,6 @@ export default function ServicesPage() {
                   alt={s.name}
                   className="w-full h-full object-cover"
                   onError={(e) => {
-                    // Fallback to placeholder if image fails to load
                     e.currentTarget.style.display = 'none';
                     (e.currentTarget.nextElementSibling as HTMLElement)!.style.display = 'flex';
                   }}
@@ -121,25 +145,56 @@ export default function ServicesPage() {
                 className={`w-full h-full flex items-center justify-center ${(s as any).imageUrl ? 'hidden' : 'flex'}`}
                 style={{ display: (s as any).imageUrl ? 'none' : 'flex' }}
               >
+                {/* BUENO BROWS Logo Placeholder */}
                 <div className="text-center">
-                  <div className="w-16 h-16 mx-auto mb-3 bg-terracotta/20 rounded-full flex items-center justify-center">
-                    <svg className="w-8 h-8 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  <div className="w-20 h-20 mx-auto mb-3 bg-gradient-to-br from-terracotta/30 to-terracotta/10 rounded-full flex items-center justify-center border-2 border-terracotta/20">
+                    <svg className="w-12 h-12 text-terracotta" viewBox="0 0 100 100" fill="none">
+                      {/* Hand holding tool */}
+                      <path d="M25 60 L35 50 L40 55 L45 50 L50 55 L55 50 L60 55 L65 50 L70 55 L75 50 L80 55 L85 50 L90 55 L95 50 L100 55" 
+                            stroke="currentColor" strokeWidth="2" fill="none"/>
+                      {/* Eyebrow */}
+                      <path d="M20 30 Q50 20 80 30" 
+                            stroke="currentColor" strokeWidth="3" fill="none"/>
+                      {/* Brow hairs */}
+                      <path d="M25 25 L30 20" stroke="currentColor" strokeWidth="1.5"/>
+                      <path d="M35 23 L40 18" stroke="currentColor" strokeWidth="1.5"/>
+                      <path d="M45 22 L50 17" stroke="currentColor" strokeWidth="1.5"/>
+                      <path d="M55 22 L60 17" stroke="currentColor" strokeWidth="1.5"/>
+                      <path d="M65 23 L70 18" stroke="currentColor" strokeWidth="1.5"/>
+                      <path d="M75 25 L80 20" stroke="currentColor" strokeWidth="1.5"/>
                     </svg>
                   </div>
-                  <p className="text-sm text-slate-500">Service Image</p>
+                  <p className="text-sm text-slate-500 font-medium">BUENO BROWS</p>
                 </div>
               </div>
               
-              {/* Category Badge */}
+              {/* Category Badge with Color Coding */}
               <div className="absolute top-3 left-3">
-                <span className="bg-white/90 backdrop-blur-sm text-slate-700 text-xs font-medium px-2 py-1 rounded-full">
+                <span 
+                  className="text-white text-xs font-medium px-3 py-1 rounded-full shadow-lg"
+                  style={{ 
+                    backgroundColor: getCategoryColor(s.category),
+                    color: getContrastColor(getCategoryColor(s.category))
+                  }}
+                >
                   {s.category || 'Service'}
                 </span>
               </div>
               
+              {/* Most Popular Badge */}
+              {s.isPopular && (
+                <div className="absolute top-3 right-3">
+                  <span className="bg-gradient-to-r from-yellow-400 to-yellow-500 text-yellow-900 text-xs font-bold px-2 py-1 rounded-full shadow-lg flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+                    </svg>
+                    Most Popular
+                  </span>
+                </div>
+              )}
+              
               {/* Price Badge */}
-              <div className="absolute top-3 right-3">
+              <div className={`absolute bottom-3 right-3 ${s.isPopular ? 'bottom-12' : ''}`}>
                 <span className="bg-terracotta text-white text-sm font-semibold px-3 py-1 rounded-full shadow-lg">
                   ${s.price.toFixed(0)}
                 </span>

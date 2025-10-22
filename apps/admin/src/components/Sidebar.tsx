@@ -111,7 +111,6 @@ export default function Sidebar() {
         <LinkItem to="/ai-conversations">AI Conversations</LinkItem>
         <LinkItem to="/skin-analyses">Skin Analyses</LinkItem>
         <LinkItem to="/consent-forms">Consent Forms</LinkItem>
-        <LinkItem to="/edit-requests">Edit Requests</LinkItem>
         <LinkItem to="/settings">Settings</LinkItem>
       </nav>
 

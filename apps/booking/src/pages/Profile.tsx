@@ -44,6 +44,7 @@ export default function Profile() {
   const [displayName, setDisplayName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [countryCode, setCountryCode] = useState('+1');
   const [profilePictureUrl, setProfilePictureUrl] = useState('');
   const [customerProfilePic, setCustomerProfilePic] = useState('');
   
@@ -258,7 +259,7 @@ export default function Profile() {
       // Format phone number to E.164 format
       let formattedPhone = newPhone.trim();
       if (!formattedPhone.startsWith('+')) {
-        formattedPhone = '+1' + formattedPhone.replace(/\D/g, '');
+        formattedPhone = countryCode + formattedPhone.replace(/\D/g, '');
       }
 
       const appVerifier = window.recaptchaVerifier;
@@ -706,16 +707,32 @@ export default function Profile() {
                         <label htmlFor="phone" className="block text-sm font-medium text-slate-700 mb-2">
                           Add Phone Number
                         </label>
-                        <input
-                          id="phone"
-                          type="tel"
-                          value={newPhone}
-                          onChange={(e) => setNewPhone(e.target.value)}
-                          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-terracotta focus:border-transparent"
-                          placeholder="+1 (555) 123-4567"
-                        />
+                        <div className="flex gap-2">
+                          <select
+                            value={countryCode}
+                            onChange={(e) => setCountryCode(e.target.value)}
+                            className="w-24 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                          >
+                            <option value="+1">🇺🇸 +1</option>
+                            <option value="+44">🇬🇧 +44</option>
+                            <option value="+61">🇦🇺 +61</option>
+                            <option value="+91">🇮🇳 +91</option>
+                            <option value="+33">🇫🇷 +33</option>
+                            <option value="+49">🇩🇪 +49</option>
+                            <option value="+81">🇯🇵 +81</option>
+                            <option value="+86">🇨🇳 +86</option>
+                          </select>
+                          <input
+                            id="phone"
+                            type="tel"
+                            value={newPhone}
+                            onChange={(e) => setNewPhone(e.target.value)}
+                            className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                            placeholder="(555) 123-4567"
+                          />
+                        </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          Enter your phone number with country code (e.g., +1 for US)
+                          Enter your phone number with country code
                         </p>
                       </div>
                       <button

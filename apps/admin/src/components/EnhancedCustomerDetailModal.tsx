@@ -227,7 +227,7 @@ export default function EnhancedCustomerDetailModal({ customer, onClose }: Props
               {/* Avatar */}
               <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
                 <span className="text-lg font-bold text-white">
-                  {customerData.name ? customerData.name.split(' ').map(n => n[0]).join('') : '?'}
+                  {(customerData.name && typeof customerData.name === 'string') ? customerData.name.split(' ').map(n => n[0]).join('') : '?'}
                 </span>
               </div>
               <div>

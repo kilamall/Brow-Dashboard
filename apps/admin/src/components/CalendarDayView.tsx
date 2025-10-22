@@ -36,14 +36,22 @@ export default function CalendarDayView({ date, appointments, services, onAppoin
 
   // Filter appointments for this day
   const dayAppointments = appointments.filter(appt => {
-    const apptDate = new Date(appt.start);
-    return format(apptDate, 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd') && appt.status !== 'cancelled';
+    try {
+      const apptDate = new Date(appt.start);
+      return !isNaN(apptDate.getTime()) && format(apptDate, 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd') && appt.status !== 'cancelled';
+    } catch {
+      return false;
+    }
   });
 
   // Calculate appointment position and height
   const getAppointmentStyle = (appointment: Appointment) => {
-    const start = new Date(appointment.start);
-    const end = new Date(start.getTime() + appointment.duration * 60000);
+    try {
+      const start = new Date(appointment.start);
+      if (isNaN(start.getTime())) {
+        return { top: '0px', height: '20px' };
+      }
+      const end = new Date(start.getTime() + appointment.duration * 60000);
     
     const startHour = start.getHours();
     const startMinute = start.getMinutes();
@@ -54,10 +62,13 @@ export default function CalendarDayView({ date, appointments, services, onAppoin
     const topOffset = ((startHour - 6) * 60 + startMinute) * (80 / 60); // 80px per hour
     const height = ((endHour - startHour) * 60 + (endMinute - startMinute)) * (80 / 60);
     
-    return {
-      top: `${topOffset}px`,
-      height: `${Math.max(height, 20)}px`, // Minimum height of 20px
-    };
+      return {
+        top: `${topOffset}px`,
+        height: `${Math.max(height, 20)}px`, // Minimum height of 20px
+      };
+    } catch {
+      return { top: '0px', height: '20px' };
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent, appointment: Appointment) => {
@@ -182,7 +193,14 @@ export default function CalendarDayView({ date, appointments, services, onAppoin
               >
                 <div className="p-2 h-full flex flex-col justify-between">
                   <div className="font-semibold text-xs truncate">
-                    {format(new Date(appointment.start), 'h:mm a')}
+                    {(() => {
+                      try {
+                        const startDate = new Date(appointment.start);
+                        return !isNaN(startDate.getTime()) ? format(startDate, 'h:mm a') : 'Invalid time';
+                      } catch {
+                        return 'Invalid time';
+                      }
+                    })()}
                   </div>
                   {appointment.duration < 60 ? (
                     // Compact layout for short appointments

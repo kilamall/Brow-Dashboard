@@ -60,13 +60,14 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
     e.preventDefault();
     e.stopPropagation();
     setLoading(true);
+    onError(''); // Clear previous errors
     try {
-      console.log('Attempting email/password sign in...');
       await signInWithEmailAndPassword(auth, email, password);
-      console.log('Email/password sign in successful');
     } catch (e: any) {
-      console.error('Email/password sign in error:', e);
-      onError(e.message);
+      const errorMessage = e?.code === 'auth/invalid-credential' 
+        ? 'Invalid email or password' 
+        : e?.message || 'Failed to sign in';
+      onError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -74,14 +75,15 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
 
   async function signInWithGoogle() {
     setGoogleLoading(true);
+    onError(''); // Clear previous errors
     try {
-      console.log('Attempting Google sign in...');
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-      console.log('Google sign in successful');
     } catch (e: any) {
-      console.error('Google sign in error:', e);
-      onError(e.message || 'Failed to sign in with Google');
+      const errorMessage = e?.code === 'auth/popup-closed-by-user'
+        ? 'Sign-in cancelled'
+        : e?.message || 'Failed to sign in with Google';
+      onError(errorMessage);
     } finally {
       setGoogleLoading(false);
     }
@@ -95,8 +97,8 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
 
     setResetLoading(true);
     setResetMessage('');
+    onError(''); // Clear previous errors
     try {
-      // Configure password reset to redirect to admin app
       const actionCodeSettings = {
         url: `${window.location.origin}/verify`,
         handleCodeInApp: true,
@@ -105,7 +107,6 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
       await sendPasswordResetEmail(auth, email, actionCodeSettings);
       setResetMessage('Password reset email sent! Check your inbox and click the link to reset your password.');
     } catch (e: any) {
-      console.error('Password reset error:', e);
       if (e.code === 'auth/user-not-found') {
         onError('No account found with this email address');
       } else if (e.code === 'auth/invalid-email') {

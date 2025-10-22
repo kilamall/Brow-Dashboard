@@ -42,6 +42,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   const [customerTerm, setCustomerTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [timeHHMM, setTimeHHMM] = useState('10:00');
+  const [selectedDate, setSelectedDate] = useState(format(date, 'yyyy-MM-dd')); // ✅ NEW: Editable date state
   const [notes, setNotes] = useState('');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
@@ -90,6 +91,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       setNotes('');
       setSelectedServiceIds([]);
       setTimeHHMM('09:00'); // Default time
+      setSelectedDate(format(date, 'yyyy-MM-dd')); // Reset to prop date
       setErr('');
       setSaving(false);
       setShowDropdown(false);
@@ -188,9 +190,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   useEffect(() => {
     // lazy on-demand: only when open
     if (!open) return;
-    // simple day fetch
-    const start = new Date(date); start.setHours(0,0,0,0);
-    const end = new Date(date); end.setHours(23,59,59,999);
+    // simple day fetch using selectedDate
+    const start = new Date(selectedDate + 'T00:00:00');
+    const end = new Date(selectedDate + 'T23:59:59');
     import('firebase/firestore').then(({ onSnapshot, collection, query, where, orderBy }) => {
       const qy = query(collection(db, 'appointments'), where('start', '>=', start.toISOString()), where('start', '<=', end.toISOString()), orderBy('start', 'asc'));
       const unsub = onSnapshot(qy, (snap) => {
@@ -200,9 +202,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       });
       return () => unsub();
     });
-  }, [open, date]);
+  }, [open, selectedDate, db]);
 
-  const slots = useMemo(() => (bh ? availableSlotsForDay(date, totalDuration, bh, dayAppts) : []), [bh, date, totalDuration, dayAppts]);
+  const currentDateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate]);
+  const slots = useMemo(() => (bh ? availableSlotsForDay(currentDateObj, totalDuration, bh, dayAppts) : []), [bh, currentDateObj, totalDuration, dayAppts]);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -243,9 +246,11 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         }
       }
 
-      // Compose ISO from date + time
-      const [hh, mm] = timeHHMM.split(':').map(Number);
-      const start = new Date(date); start.setHours(hh, mm, 0, 0);
+      // Compose ISO from selectedDate + time
+      const timeString = typeof timeHHMM === 'string' ? timeHHMM : '10:00';
+      const [hh, mm] = (timeString && typeof timeString === 'string') ? timeString.split(':').map(Number) : [10, 0];
+      const start = new Date(selectedDate + 'T00:00:00'); 
+      start.setHours(hh, mm, 0, 0);
 
       const id = await createAppointmentTx(db, {
         customerId,
@@ -537,11 +542,26 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div>
                       <label htmlFor="appointment-date" className="text-sm text-slate-600">Date</label>
-                      <input id="appointment-date" name="appointment-date" type="date" className="border rounded-md p-2 w-full" value={format(date, 'yyyy-MM-dd')} onChange={(e)=>{ const d = new Date(e.target.value+'T00:00:00'); d.setHours(date.getHours(), date.getMinutes(), 0, 0); (date as any) = d; }} />
+                      <input 
+                        id="appointment-date" 
+                        name="appointment-date" 
+                        type="date" 
+                        className="border rounded-md p-2 w-full" 
+                        value={selectedDate} 
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        min={(new Date().toISOString() && typeof new Date().toISOString() === 'string') ? new Date().toISOString().split('T')[0] : ''}
+                      />
                     </div>
                     <div>
                       <label htmlFor="appointment-time" className="text-sm text-slate-600">Time</label>
-                      <input id="appointment-time" name="appointment-time" type="time" className="border rounded-md p-2 w-full" value={timeHHMM} onChange={(e)=>setTimeHHMM(e.target.value)} />
+                      <input 
+                        id="appointment-time" 
+                        name="appointment-time" 
+                        type="time" 
+                        className="border rounded-md p-2 w-full" 
+                        value={timeHHMM} 
+                        onChange={(e)=>setTimeHHMM(e.target.value)} 
+                      />
                     </div>
                     <div>
                       <label htmlFor="appointment-duration" className="text-sm text-slate-600">Duration (min)</label>
@@ -564,14 +584,35 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   {/* Optional slot suggestions */}
                   {bh && (
                     <div>
-                      <div className="text-xs text-slate-600 mb-1">Available slots</div>
-                      <div className="grid grid-cols-4 gap-2">
-                        {availableSlotsForDay(date, totalDuration, bh, dayAppts).slice(0, 16).map((iso)=> (
-                          <button key={iso} className="border rounded-md py-1 text-sm hover:bg-cream" onClick={()=> setTimeHHMM(format(parseISO(iso), 'HH:mm'))}>
-                            {format(parseISO(iso), 'h:mm a')}
-                          </button>
-                        ))}
-                        {!availableSlotsForDay(date, totalDuration, bh, dayAppts).length && <div className="text-xs text-slate-500">No slots under business hours.</div>}
+                      <div className="text-xs text-slate-600 mb-1">
+                        Available slots for {format(currentDateObj, 'EEEE, MMMM d, yyyy')}
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-3">
+                        {slots.slice(0, 24).map((iso)=> {
+                          const slotTime = format(parseISO(iso), 'h:mm a');
+                          const slotTimeHHMM = format(parseISO(iso), 'HH:mm');
+                          const isSelected = timeHHMM === slotTimeHHMM;
+                          
+                          return (
+                            <button 
+                              key={iso} 
+                              type="button"
+                              className={`px-3 py-2 text-sm rounded-md border transition-colors ${
+                                isSelected
+                                  ? 'bg-terracotta text-white border-terracotta'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                              onClick={()=> setTimeHHMM(slotTimeHHMM)}
+                            >
+                              {slotTime}
+                            </button>
+                          );
+                        })}
+                        {!slots.length && (
+                          <div className="col-span-4 text-xs text-slate-500 py-2 text-center">
+                            No available slots under business hours for this date.
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

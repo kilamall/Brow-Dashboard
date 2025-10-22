@@ -110,7 +110,7 @@ export default function Customers(){
             target.style.display = 'none';
             const parent = target.parentElement;
             if (parent) {
-              const initials = customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+              const initials = (customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
               parent.innerHTML = `<div class="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center"><span class="text-sm font-semibold text-terracotta">${initials}</span></div>`;
             }
           }}
@@ -120,7 +120,7 @@ export default function Customers(){
     
     console.log('No profile picture for:', customer.name, 'showing initials');
     // Fallback to initials if no profile picture
-    const initials = customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+    const initials = (customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
     return (
       <div className="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center">
         <span className="text-sm font-semibold text-terracotta">{initials}</span>
