@@ -91,26 +91,28 @@ export default function Login() {
             await updateProfile(userCredential.user, profileUpdates);
           }
 
-          // Create/update customer record in Firestore with profile picture
-          const customerRef = doc(db, 'customers', userCredential.user.uid);
-          const customerDoc = await getDoc(customerRef);
+          // Create/update customer record using enhanced identity system
+          // This will automatically merge with any existing customer records by email/phone
+          const { getFunctions, httpsCallable } = await import('firebase/functions');
+          const functions = getFunctions();
+          const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
           
-          if (!customerDoc.exists()) {
-            await setDoc(customerRef, {
-              name: name || 'Customer',
+          try {
+            const result = await findOrCreate({
               email: email,
               phone: phone || null,
+              name: name || 'Customer',
               profilePictureUrl: profilePictureUrl || null,
-              status: 'active',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
-          } else if (profilePictureUrl) {
-            // Update existing customer with profile picture if provided
-            await setDoc(customerRef, {
-              profilePictureUrl,
-              updatedAt: new Date().toISOString(),
-            }, { merge: true });
+              authUid: userCredential.user.uid
+            }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+            
+            if (result.data.merged) {
+              console.log('✅ Merged existing customer record with new auth account');
+              alert('Welcome back! Your previous bookings have been linked to your account.');
+            }
+          } catch (customerError: any) {
+            console.error('⚠️ Failed to create customer record:', customerError);
+            // Non-critical error - continue with sign up
           }
 
           // Send verification without custom URL - Firebase will use default
@@ -153,6 +155,31 @@ export default function Login() {
       
       const result = await signInWithPopup(auth, provider);
       console.log('🔍 Auth successful:', result.user?.email);
+      
+      // Create/update customer record using enhanced identity system
+      if (result.user) {
+        const { getFunctions, httpsCallable } = await import('firebase/functions');
+        const functions = getFunctions();
+        const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+        
+        try {
+          const customerResult = await findOrCreate({
+            email: result.user.email,
+            name: result.user.displayName || 'Customer',
+            phone: result.user.phoneNumber || null,
+            profilePictureUrl: result.user.photoURL || null,
+            authUid: result.user.uid
+          }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+          
+          if (customerResult.data.merged) {
+            console.log('✅ Merged existing customer record with Google account');
+          }
+        } catch (customerError: any) {
+          console.error('⚠️ Failed to create customer record:', customerError);
+          // Non-critical error - continue with sign in
+        }
+      }
+      
       // Redirect back to return URL with cart intact
       nav(returnTo);
     } catch (err: any) {

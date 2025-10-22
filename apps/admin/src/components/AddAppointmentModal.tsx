@@ -217,15 +217,30 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         return;
       }
       
-      // Resolve customer
+      // Resolve customer using enhanced identity system
       let customerId: string;
-      if (selectedCustomer) customerId = selectedCustomer.id;
-      else {
-        // create a guest/approved customer on the fly if email provided, else name-only
-        const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
-        const ref = doc(collection(db, 'customers'));
-        await setDoc(ref, { name: name || customerTerm || 'Unnamed', email: email || null, phone: phone || null, status: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
-        customerId = ref.id;
+      if (selectedCustomer) {
+        customerId = selectedCustomer.id;
+      } else {
+        // Use Cloud Function to find or create customer with canonical identifiers
+        const findOrCreate = httpsCallable(getFunctions(), 'findOrCreateCustomer');
+        
+        const result = await findOrCreate({
+          email: email || null,
+          phone: phone || null,
+          name: name || customerTerm || 'Unnamed',
+          authUid: null // Admin doesn't have user's Auth UID yet
+        }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+        
+        customerId = result.data.customerId;
+        
+        if (result.data.merged) {
+          console.log('✅ Linked appointment to existing customer account');
+        } else if (result.data.isNew) {
+          console.log('✅ Created new customer record');
+        } else {
+          console.log('✅ Found existing customer record');
+        }
       }
 
       // Compose ISO from date + time

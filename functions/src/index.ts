@@ -12,6 +12,7 @@ export * from './confirm-appointment.js';
 // export * from './seed-data.js';
 // export * from './update-business-hours.js';
 export * from './find-or-create-customer.js';
+export * from './migrate-customer-identities.js';
 export * from './skin-analysis.js';
 export * from './skin-analysis-requests.js';
 export * from './email.js';
