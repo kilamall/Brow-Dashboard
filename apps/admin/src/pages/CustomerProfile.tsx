@@ -159,7 +159,12 @@ export default function CustomerProfile() {
             <div>
               <div className="text-sm text-slate-500 mb-1">Member Since</div>
               <div className="font-medium">
-                {format(customer.createdAt.toDate(), 'MMMM d, yyyy')}
+                {format(
+                  customer.createdAt?.toDate 
+                    ? customer.createdAt.toDate() 
+                    : new Date(customer.createdAt || new Date()), 
+                  'MMMM d, yyyy'
+                )}
               </div>
             </div>
           )}

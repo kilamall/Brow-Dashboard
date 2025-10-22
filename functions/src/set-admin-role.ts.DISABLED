@@ -47,7 +47,7 @@ export const setAdminRole = functions.https.onCall(async (data, context) => {
  * Usage:
  * curl -X POST https://us-central1-bueno-brows-7cce7.cloudfunctions.net/setAdminRoleHTTP \
  *   -H "Content-Type: application/json" \
- *   -d '{"email":"regina@buenobrows.com"}'
+ *   -d '{"email":"admin@yourdomain.com"}'
  */
 export const setAdminRoleHTTP = functions.https.onRequest(async (req, res) => {
   // Enable CORS

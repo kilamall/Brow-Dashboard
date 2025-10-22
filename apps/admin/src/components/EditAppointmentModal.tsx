@@ -25,6 +25,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   const [status, setStatus] = useState<'confirmed' | 'pending' | 'cancelled'>('confirmed');
   const [notes, setNotes] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [tipAmount, setTipAmount] = useState('');
 
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
@@ -38,6 +39,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
     () => selectedServices.reduce((sum, service) => sum + service.price, 0),
     [selectedServices]
   );
+  const tipValue = parseFloat(tipAmount) || 0;
+  const finalTotal = totalPrice + tipValue;
 
   // Group services by category
   const servicesByCategory = useMemo(() => {
@@ -99,6 +102,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
       setTime(format(startDate, 'HH:mm'));
       setNotes(appointment.notes || '');
       setStatus(appointment.status);
+      setTipAmount((appointment.tip ?? 0).toString());
     }
   }, [appointment]);
 
@@ -120,6 +124,10 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
         start: newStart.toISOString(),
         duration: totalDuration,
         bookedPrice: totalPrice,
+        tip: tipValue,
+        totalPrice: finalTotal,
+        isPriceEdited: true,
+        priceEditedAt: new Date().toISOString(),
         notes: notes || null,
         status,
         updatedAt: new Date().toISOString(),
@@ -288,7 +296,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
                       <span className="font-medium text-slate-700">{totalDuration}</span> minutes
                     </span>
                     <span className="text-slate-600">
-                      <span className="font-semibold text-terracotta text-base">${totalPrice.toFixed(2)}</span> total
+                      <span className="font-semibold text-terracotta text-base">${finalTotal.toFixed(2)}</span> total
                     </span>
                   </div>
                 </div>
@@ -310,6 +318,32 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
                 <option key={c.id} value={c.id}>{c.name} {c.email ? `(${c.email})` : ''}</option>
               ))}
             </select>
+          </div>
+
+          {/* Tip Amount */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Tip Amount (optional)</label>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={tipAmount}
+                onChange={(e) => setTipAmount(e.target.value)}
+                className="flex-1 border rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                placeholder="0.00"
+              />
+            </div>
+            {tipValue > 0 && (
+              <div className="mt-2 p-2 bg-terracotta/10 rounded-lg">
+                <div className="text-sm text-slate-600">
+                  <span className="text-slate-500">Service Total:</span> ${totalPrice.toFixed(2)} 
+                  <span className="text-slate-500 ml-2">Tip:</span> ${tipValue.toFixed(2)}
+                  <span className="text-slate-500 ml-2">Final Total:</span> <span className="font-semibold text-terracotta">${finalTotal.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Date & Time */}
@@ -352,13 +386,19 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Appointment-Specific Notes (optional)
+            </label>
+            <p className="text-xs text-slate-500 mb-2">
+              For appointment-specific info only (e.g., "running late", "first-time client"). 
+              Use Customer Notes for preferences, allergies, etc.
+            </p>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
+              placeholder="e.g., Customer running 10 minutes late..."
               className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
-              placeholder="Add any notes about this appointment..."
             />
           </div>
 
@@ -383,4 +423,3 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
     </div>
   );
 }
-

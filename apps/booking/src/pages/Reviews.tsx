@@ -3,6 +3,7 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { collection, query, orderBy, limit, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 interface Review {
   id: string;
@@ -198,7 +199,7 @@ export default function Reviews() {
       )}
 
       {/* Write Review Button */}
-      <div className="text-center">
+      <div className="text-center mb-12">
         {!showForm ? (
           <button
             onClick={() => setShowForm(true)}
@@ -315,6 +316,42 @@ export default function Reviews() {
             </form>
           </div>
         )}
+      </div>
+
+      {/* Call to Action Section */}
+      <div className="mt-12 bg-gradient-to-br from-terracotta to-terracotta/80 rounded-xl shadow-soft p-8 md:p-12 text-center text-white">
+        <h2 className="font-serif text-2xl md:text-3xl mb-4">Experience It for Yourself</h2>
+        <p className="text-white/90 mb-6 md:mb-8 text-base md:text-lg max-w-2xl mx-auto leading-relaxed">
+          Join our satisfied clients and discover why they love Bueno Brows. Book your appointment today!
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <Link 
+            to="/book" 
+            className="inline-flex items-center justify-center gap-2 bg-white text-terracotta rounded-lg px-8 py-4 hover:bg-slate-50 transition-all hover:scale-105 font-semibold text-base md:text-lg shadow-lg"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Book Your Appointment
+          </Link>
+          <Link 
+            to="/services" 
+            className="inline-flex items-center justify-center gap-2 border-2 border-white text-white rounded-lg px-8 py-4 hover:bg-white/10 transition-all font-semibold text-base md:text-lg"
+          >
+            Explore Our Services
+          </Link>
+        </div>
+        
+        {/* Quick Links */}
+        <div className="mt-8 pt-6 border-t border-white/20">
+          <div className="flex flex-wrap justify-center gap-4 md:gap-6 text-sm">
+            <Link to="/" className="text-white/90 hover:text-white transition-colors">Home</Link>
+            <span className="text-white/40">•</span>
+            <Link to="/services" className="text-white/90 hover:text-white transition-colors">Services</Link>
+            <span className="text-white/40">•</span>
+            <Link to="/skin-analysis" className="text-white/90 hover:text-white transition-colors">AI Skin Analysis</Link>
+          </div>
+        </div>
       </div>
     </div>
   );

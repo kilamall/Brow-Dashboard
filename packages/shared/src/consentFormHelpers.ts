@@ -54,8 +54,12 @@ export function watchActiveConsentForm(
     }
     const doc = snapshot.docs[0];
     callback({ id: doc.id, ...doc.data() } as ConsentFormTemplate);
-  }, (error) => {
-    console.error('Error watching consent form:', error);
+  }, (error: any) => {
+    // Permission errors are expected during auth transitions
+    // Silently handle them without logging
+    if (error?.code !== 'permission-denied') {
+      console.error('Error watching consent form:', error);
+    }
     callback(null);
   });
 }
@@ -102,6 +106,11 @@ export async function hasValidConsent(
   category: string
 ): Promise<boolean> {
   try {
+    // Validate customerId
+    if (!customerId || customerId.trim() === '') {
+      return false;
+    }
+    
     // Get active consent form for this category
     const activeForm = await getActiveConsentForm(db, category);
     if (!activeForm) {
@@ -120,7 +129,13 @@ export async function hasValidConsent(
     
     const snapshot = await getDocs(q);
     return !snapshot.empty;
-  } catch (error) {
+  } catch (error: any) {
+    // Permission errors are expected for non-customer users (like admins) or during auth transitions
+    // Silently return false without logging to avoid console spam
+    if (error?.code === 'permission-denied') {
+      return false;
+    }
+    // Log other types of errors
     console.error('Error checking consent:', error);
     return false;
   }
@@ -157,6 +172,12 @@ export function watchCustomerConsents(
   customerId: string,
   callback: (consents: CustomerConsent[]) => void
 ): () => void {
+  // Validate customerId before setting up listener
+  if (!customerId || customerId.trim() === '') {
+    callback([]);
+    return () => {}; // Return empty unsubscribe function
+  }
+  
   const consentsRef = collection(db, 'customerConsents');
   const q = query(
     consentsRef,
@@ -167,8 +188,12 @@ export function watchCustomerConsents(
   return onSnapshot(q, (snapshot) => {
     const consents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CustomerConsent));
     callback(consents);
-  }, (error) => {
-    console.error('Error watching customer consents:', error);
+  }, (error: any) => {
+    // Permission errors are expected for non-customer users or during auth transitions
+    // Silently handle them without logging
+    if (error?.code !== 'permission-denied') {
+      console.error('Error watching customer consents:', error);
+    }
     callback([]);
   });
 }

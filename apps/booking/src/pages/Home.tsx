@@ -3,29 +3,30 @@ import { useEffect, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchBusinessInfo, watchHomePageContent } from '@buenobrows/shared/firestoreActions';
 import type { BusinessInfo, HomePageContent } from '@buenobrows/shared/types';
+import HeroPhoto from '../components/HeroPhoto';
+import SEO from '../components/SEO';
+import MyBookingsCard from '../components/MyBookingsCard';
 
 export default function Home() {
   const { db } = useFirebase();
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo | null>(null);
   const [content, setContent] = useState<HomePageContent | null>(null);
-  const [buenoCirclePhone, setBuenoCirclePhone] = useState('');
-  const [buenoCircleSubmitted, setBuenoCircleSubmitted] = useState(false);
+  const [showStickyButton, setShowStickyButton] = useState(false);
 
   useEffect(() => watchBusinessInfo(db, setBusinessInfo), [db]);
   useEffect(() => watchHomePageContent(db, setContent), [db]);
 
-  const handleBuenoCircleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!buenoCirclePhone.trim()) return;
+  // Show sticky button on scroll for mobile UX
+  useEffect(() => {
+    const handleScroll = () => {
+      // Show button after scrolling 400px
+      setShowStickyButton(window.scrollY > 400);
+    };
     
-    // TODO: Store the phone number in Firestore for marketing
-    console.log('Bueno Circle signup:', buenoCirclePhone);
-    setBuenoCircleSubmitted(true);
-    setBuenoCirclePhone('');
-    
-    // Reset after 3 seconds
-    setTimeout(() => setBuenoCircleSubmitted(false), 3000);
-  };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
 
   if (!businessInfo || !content) {
     return <div className="text-center py-12 text-slate-500">Loading...</div>;
@@ -33,27 +34,98 @@ export default function Home() {
 
   return (
     <div className="space-y-8 md:space-y-12">
-      {/* Hero Section */}
+      <SEO 
+        title="Bueno Brows - Professional Eyebrow Services in San Mateo, CA"
+        description="Professional eyebrow services including microblading, brow shaping, and beauty treatments in San Mateo, CA. Book your appointment online today!"
+        keywords="eyebrow services, microblading, brow shaping, San Mateo, beauty salon, eyebrow specialist, brow tattoo, semi-permanent makeup, California"
+        url="https://buenobrows.com/"
+        structuredData={{
+          "@context": "https://schema.org",
+          "@type": "BeautySalon",
+          "name": "Bueno Brows",
+          "description": "Professional eyebrow services including microblading, brow shaping, and beauty treatments in San Mateo, CA.",
+          "url": "https://buenobrows.com",
+          "telephone": businessInfo.phone,
+          "email": businessInfo.email,
+          "address": {
+            "@type": "PostalAddress",
+            "streetAddress": businessInfo.address,
+            "addressLocality": businessInfo.city,
+            "addressRegion": businessInfo.state,
+            "postalCode": businessInfo.zip,
+            "addressCountry": "US"
+          },
+          "geo": {
+            "@type": "GeoCoordinates",
+            "latitude": "37.5665",
+            "longitude": "-122.3255"
+          },
+          "openingHours": [
+            "Mo-Fr 09:00-18:00",
+            "Sa 09:00-17:00"
+          ],
+          "priceRange": "$$",
+          "image": "https://buenobrows.com/og-image.jpg",
+          "sameAs": [
+            businessInfo.instagram,
+            businessInfo.tiktok
+          ]
+        }}
+      />
+      {/* Sticky Book Now Button for Mobile (appears after scrolling) */}
+      {showStickyButton && (
+        <div className="fixed bottom-4 right-4 z-50 md:bottom-6 md:right-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <Link 
+            to="/book" 
+            className="flex items-center gap-2 bg-terracotta text-white rounded-full px-6 py-4 shadow-2xl hover:bg-terracotta/90 transition-all hover:scale-105 font-semibold text-base"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Book Now
+          </Link>
+        </div>
+      )}
+
+      {/* Hero Photo */}
+      <section className="mb-8">
+        <HeroPhoto 
+          imageUrl={content.heroImageUrl}
+          title={content.heroTitle}
+          subtitle={content.heroSubtitle}
+          description="Experience the art of eyebrow perfection with our expert techniques and personalized approach."
+          buttonText={content.ctaPrimary}
+          buttonLink="/book"
+        />
+      </section>
+
+      {/* Second Hero Section */}
       <section className="grid md:grid-cols-2 gap-6 md:gap-8 items-center">
         <div className="order-2 md:order-1">
-          <h1 className="font-serif text-3xl md:text-4xl lg:text-5xl text-terracotta mb-4 leading-tight">{content.heroTitle}</h1>
-          <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">{content.heroSubtitle}</p>
+          <h1 className="font-serif text-3xl md:text-4xl lg:text-5xl text-terracotta mb-4 leading-tight">
+            {content.hero2Title || content.heroTitle}
+          </h1>
+          <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">
+            {content.hero2Subtitle || content.heroSubtitle}
+          </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Link to="/book" className="bg-terracotta text-white rounded-lg px-6 py-4 hover:bg-terracotta/90 transition-colors text-center font-medium text-base">
-              {content.ctaPrimary}
+              {content.hero2CtaPrimary || content.ctaPrimary}
             </Link>
             <Link to="/services" className="border border-slate-300 rounded-lg px-6 py-4 hover:bg-slate-50 transition-colors text-center font-medium text-base">
-              {content.ctaSecondary}
+              {content.hero2CtaSecondary || content.ctaSecondary}
             </Link>
           </div>
         </div>
 
-        {/* Hero Image */}
+        {/* Second Hero Image */}
         <div className="relative bg-white rounded-2xl shadow-soft h-80 md:h-96 grid place-items-center overflow-hidden order-1 md:order-2">
-          {content.heroImageUrl ? (
+          {content.hero2ImageUrl ? (
+            <img src={content.hero2ImageUrl} alt="BUENO BROWS" className="w-full h-full object-cover" />
+          ) : content.heroImageUrl ? (
             <img src={content.heroImageUrl} alt="BUENO BROWS" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-slate-400 text-lg">Hero image (TBD)</span>
+            <span className="text-slate-400 text-lg">Second hero image (TBD)</span>
           )}
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute -top-3 -left-3 w-24 h-24 rounded-full bg-terracotta/5" />
@@ -62,11 +134,106 @@ export default function Home() {
         </div>
       </section>
 
+      {/* My Bookings Card - Only shows when user is signed in */}
+      <MyBookingsCard />
+
       {/* About Section */}
       {content.aboutText && (
         <section className="bg-white rounded-xl shadow-soft p-6 md:p-8 text-center">
           <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">Our Story</h2>
           <p className="text-slate-600 max-w-3xl mx-auto text-base md:text-lg leading-relaxed">{content.aboutText}</p>
+          {/* CTA after About */}
+          <div className="mt-6 md:mt-8">
+            <Link 
+              to="/services" 
+              className="inline-flex items-center gap-2 text-terracotta hover:text-terracotta/80 font-semibold text-base md:text-lg group"
+            >
+              Explore Our Services 
+              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {/* AI Skin Analysis Feature Section */}
+      {content.skinAnalysisEnabled && (
+        <section className="bg-gradient-to-br from-purple-50 via-pink-50 to-terracotta/10 rounded-xl shadow-soft overflow-hidden">
+          <div className="grid md:grid-cols-2 gap-0">
+            {/* Content */}
+            <div className="p-6 md:p-10 flex flex-col justify-center order-2 md:order-1">
+              <div className="inline-flex items-center gap-2 bg-purple-100 text-purple-700 px-4 py-2 rounded-full text-sm font-semibold mb-4 w-fit">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                AI-Powered Technology
+              </div>
+              <h2 className="font-serif text-2xl md:text-4xl text-terracotta mb-4">{content.skinAnalysisTitle}</h2>
+              <p className="text-lg md:text-xl text-slate-700 mb-4 font-medium">{content.skinAnalysisSubtitle}</p>
+              <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">{content.skinAnalysisDescription}</p>
+              
+              <div className="space-y-3 mb-6">
+                <div className="flex items-start gap-3">
+                  <svg className="w-6 h-6 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="font-semibold text-slate-800">Personalized Skin Analysis</p>
+                    <p className="text-sm text-slate-600">Get detailed insights about your skin type, tone, and concerns</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <svg className="w-6 h-6 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="font-semibold text-slate-800">Service Recommendations</p>
+                    <p className="text-sm text-slate-600">Receive tailored treatment suggestions for your unique needs</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <svg className="w-6 h-6 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="font-semibold text-slate-800">Foundation Matching</p>
+                    <p className="text-sm text-slate-600">Find your perfect foundation shade with AI precision</p>
+                  </div>
+                </div>
+              </div>
+
+              <Link 
+                to="/skin-analysis" 
+                className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg px-8 py-4 hover:from-purple-700 hover:to-pink-700 transition-all hover:scale-105 font-semibold text-base md:text-lg shadow-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                {content.skinAnalysisCTA || 'Try Free Skin Analysis'}
+              </Link>
+            </div>
+
+            {/* Image */}
+            <div className="relative h-80 md:h-auto order-1 md:order-2">
+              {content.skinAnalysisImageUrl ? (
+                <img 
+                  src={content.skinAnalysisImageUrl} 
+                  alt="AI Skin Analysis" 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-br from-purple-200 via-pink-200 to-terracotta/20 flex items-center justify-center">
+                  <div className="text-center p-8">
+                    <svg className="w-24 h-24 mx-auto text-purple-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    <p className="text-purple-600 font-medium text-lg">AI Skin Analysis</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </section>
       )}
 
@@ -188,15 +355,16 @@ export default function Home() {
             {content.galleryPhotos.map((photo, index) => (
               <div 
                 key={index}
-                className="group relative aspect-square rounded-xl overflow-hidden shadow-soft hover:shadow-lg transition-all duration-300 cursor-pointer"
+                className="group relative aspect-square rounded-xl overflow-hidden shadow-soft hover:shadow-lg transition-all duration-300 cursor-pointer select-none"
               >
                 <img 
                   src={photo} 
                   alt={`Shop photo ${index + 1}`} 
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 pointer-events-none"
+                  draggable="false"
                 />
                 {/* Subtle overlay on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-terracotta/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
               </div>
             ))}
           </div>
@@ -209,42 +377,23 @@ export default function Home() {
               <div className="w-2 h-2 rounded-full bg-terracotta/30" />
             </div>
           </div>
-        </section>
-      )}
 
-      {/* Bueno Circle Section */}
-      {content.buenoCircleEnabled && (
-        <section className="bg-gradient-to-br from-terracotta/10 to-gold/10 rounded-xl shadow-soft p-6 md:p-8">
-          <div className="max-w-2xl mx-auto text-center">
-            <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">{content.buenoCircleTitle}</h2>
-            <p className="text-slate-600 mb-6 text-base md:text-lg leading-relaxed">{content.buenoCircleDescription}</p>
-            
-            {!buenoCircleSubmitted ? (
-              <form onSubmit={handleBuenoCircleSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
-                <input
-                  type="tel"
-                  placeholder="Enter your phone number"
-                  value={buenoCirclePhone}
-                  onChange={(e) => setBuenoCirclePhone(e.target.value)}
-                  className="flex-1 border border-slate-300 rounded-lg px-4 py-4 focus:ring-2 focus:ring-terracotta focus:border-transparent text-base"
-                  required
-                />
-                <button
-                  type="submit"
-                  className="bg-terracotta text-white rounded-lg px-6 py-4 hover:bg-terracotta/90 transition-colors whitespace-nowrap font-medium text-base"
-                >
-                  Get {content.buenoCircleDiscount}% Off
-                </button>
-              </form>
-            ) : (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md mx-auto">
-                <p className="text-green-700 font-medium text-base">🎉 Welcome to the Bueno Circle!</p>
-                <p className="text-green-600 text-sm mt-1">We'll text you your discount code shortly.</p>
-              </div>
-            )}
+          {/* CTA after Gallery */}
+          <div className="text-center mt-8">
+            <p className="text-slate-600 mb-4 text-base md:text-lg">Love what you see?</p>
+            <Link 
+              to="/book" 
+              className="inline-flex items-center gap-2 bg-terracotta text-white rounded-lg px-8 py-4 hover:bg-terracotta/90 transition-all hover:scale-105 font-semibold text-base md:text-lg shadow-lg"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Schedule Your Appointment
+            </Link>
           </div>
         </section>
       )}
+
 
       {/* Reviews Section */}
       <section id="reviews">
@@ -264,10 +413,53 @@ export default function Home() {
             </div>
           ))}
         </div>
-        <div className="text-center mt-6 md:mt-8">
-          <Link to="/reviews" className="text-terracotta hover:underline text-base font-medium">
-            See all reviews →
+        <div className="text-center mt-6 md:mt-8 space-y-4">
+          <Link to="/reviews" className="inline-flex items-center gap-2 text-terracotta hover:underline text-base font-medium">
+            See all reviews 
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
           </Link>
+        </div>
+      </section>
+
+      {/* Final CTA Section - Great for mobile users who scrolled to bottom */}
+      <section className="bg-gradient-to-br from-terracotta to-terracotta/80 rounded-xl shadow-soft p-8 md:p-12 text-center text-white">
+        <h2 className="font-serif text-2xl md:text-4xl mb-4">Ready to Transform Your Look?</h2>
+        <p className="text-white/90 mb-6 md:mb-8 text-base md:text-lg max-w-2xl mx-auto leading-relaxed">
+          Join hundreds of satisfied clients who trust us with their beauty needs. Book your appointment today and experience the difference.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <Link 
+            to="/book" 
+            className="inline-flex items-center gap-2 bg-white text-terracotta rounded-lg px-8 py-4 hover:bg-slate-50 transition-all hover:scale-105 font-semibold text-base md:text-lg shadow-lg w-full sm:w-auto justify-center"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Book Now
+          </Link>
+          <Link 
+            to="/services" 
+            className="inline-flex items-center gap-2 border-2 border-white text-white rounded-lg px-8 py-4 hover:bg-white/10 transition-all font-semibold text-base md:text-lg w-full sm:w-auto justify-center"
+          >
+            View All Services
+          </Link>
+        </div>
+        
+        {/* Quick Links for better navigation */}
+        <div className="mt-8 pt-8 border-t border-white/20">
+          <div className="flex flex-wrap justify-center gap-4 md:gap-6 text-sm">
+            <Link to="/services" className="text-white/90 hover:text-white transition-colors">Services</Link>
+            <span className="text-white/40">•</span>
+            <Link to="/skin-analysis" className="text-white/90 hover:text-white transition-colors">AI Skin Analysis</Link>
+            <span className="text-white/40">•</span>
+            <Link to="/reviews" className="text-white/90 hover:text-white transition-colors">Reviews</Link>
+            <span className="text-white/40">•</span>
+            <a href={`tel:${businessInfo.phone.replace(/\D/g, '')}`} className="text-white/90 hover:text-white transition-colors">
+              Call Us: {businessInfo.phone}
+            </a>
+          </div>
         </div>
       </section>
     </div>

@@ -119,6 +119,54 @@ export function watchAvailabilityByDay(
 }
 
 /**
+ * Fetch availability slots for a specific day (one-time fetch)
+ * Returns slots that are 'booked' status (not cancelled)
+ */
+export async function fetchAvailabilityForDay(
+  db: Firestore,
+  day: Date
+): Promise<AvailabilitySlot[]> {
+  const start = new Date(day);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(day);
+  end.setHours(23, 59, 59, 999);
+
+  console.log('🔍 Fetching availability for day:', {
+    day: day.toISOString(),
+    start: start.toISOString(),
+    end: end.toISOString()
+  });
+
+  const qy = query(
+    collection(db, 'availability'),
+    where('start', '>=', start.toISOString()),
+    where('start', '<=', end.toISOString())
+  );
+
+  try {
+    const snap = await getDocs(qy);
+    const slots: AvailabilitySlot[] = [];
+    
+    snap.forEach((d) => {
+      const slot = { id: d.id, ...d.data() } as AvailabilitySlot;
+      // Filter for 'booked' status
+      if (slot.status === 'booked') {
+        slots.push(slot);
+      }
+    });
+    
+    // Sort by start time
+    slots.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+    console.log(`Fetched ${slots.length} availability slots for ${day.toISOString().slice(0, 10)}`);
+    
+    return slots;
+  } catch (error) {
+    console.error('Error fetching availability:', error);
+    return [];
+  }
+}
+
+/**
  * Clean up expired held slots (run periodically)
  */
 export async function cleanupExpiredHolds(db: Firestore): Promise<number> {

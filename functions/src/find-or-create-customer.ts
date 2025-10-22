@@ -13,7 +13,7 @@ export const findOrCreateCustomer = onCall(
     // SECURITY: Rate limit customer creation (10 per hour per IP/user)
     await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
 
-    const { email, name, phone } = req.data || {};
+    const { email, name, phone, profilePictureUrl } = req.data || {};
     
     // Require at least email or phone
     if (!email && !phone) {
@@ -50,6 +50,8 @@ export const findOrCreateCustomer = onCall(
           updatedAt: new Date().toISOString(),
         };
         
+        if (profilePictureUrl) updates.profilePictureUrl = profilePictureUrl;
+        
         if (email && !existingData.email) {
           updates.email = email;
         }
@@ -73,6 +75,7 @@ export const findOrCreateCustomer = onCall(
         name: name || 'Guest',
         email: email || null,
         phone: phone || null,
+        profilePictureUrl: profilePictureUrl || null,
         status: 'pending',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

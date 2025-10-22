@@ -1,4 +1,5 @@
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { defineString } from 'firebase-functions/params';
@@ -17,7 +18,7 @@ const FROM_EMAIL = 'hello@buenobrows.com';
 const FROM_NAME = 'Bueno Brows';
 
 // Helper to initialize SendGrid
-function initSendGrid(): boolean {
+export function initSendGrid(): boolean {
   const apiKey = sendgridApiKey.value();
   if (apiKey) {
     sgMail.setApiKey(apiKey);
@@ -25,6 +26,30 @@ function initSendGrid(): boolean {
     return true;
   } else {
     console.warn('⚠️ SENDGRID_API_KEY not set - email notifications will not be sent');
+    return false;
+  }
+}
+
+/**
+ * Generic function to send email using SendGrid
+ */
+export async function sendEmail(msg: {
+  to: string;
+  from: { email: string; name: string };
+  subject: string;
+  html: string;
+}): Promise<boolean> {
+  if (!initSendGrid()) {
+    console.error('Cannot send email: SENDGRID_API_KEY not configured');
+    return false;
+  }
+
+  try {
+    await sgMail.send(msg);
+    console.log('✅ Email sent successfully to:', msg.to);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending email:', error);
     return false;
   }
 }
@@ -42,6 +67,7 @@ export async function sendAppointmentConfirmationEmail(
     duration: number;
     price?: number;
     notes?: string;
+    businessTimezone?: string;
   }
 ): Promise<boolean> {
   // Initialize SendGrid
@@ -57,13 +83,15 @@ export async function sendAppointmentConfirmationEmail(
 
   const { serviceName, date, time, duration, price, notes } = appointmentDetails;
 
-  // Format the appointment date/time nicely
+  // Format the appointment date/time nicely with proper timezone
   const appointmentDate = new Date(date);
+  const businessTimezone = 'America/Los_Angeles'; // Default timezone, should be passed from caller
   const formattedDate = appointmentDate.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+    timeZone: businessTimezone,
   });
 
   // Create email content
@@ -71,7 +99,10 @@ export async function sendAppointmentConfirmationEmail(
     <!DOCTYPE html>
     <html>
     <head>
+      <meta name="color-scheme" content="light dark">
+      <meta name="supported-color-schemes" content="light dark">
       <style>
+        /* Base styles */
         body {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
           line-height: 1.6;
@@ -83,11 +114,12 @@ export async function sendAppointmentConfirmationEmail(
         }
         .header {
           background: linear-gradient(135deg, #ffcc33 0%, #D8A14A 100%);
-          color: #804d00;
+          color: #2c1810;
           padding: 40px 30px;
           border-radius: 10px 10px 0 0;
           text-align: center;
           position: relative;
+          box-shadow: inset 0 0 0 1px rgba(44, 24, 16, 0.1);
         }
         .logo {
           margin-bottom: 15px;
@@ -95,23 +127,24 @@ export async function sendAppointmentConfirmationEmail(
         .logo-bueno {
           font-size: 32px;
           font-weight: 700;
-          color: #ffbd59;
+          color: #1a0f08 !important;
           letter-spacing: 1px;
-          text-shadow: 2px 2px 0px rgba(128, 77, 0, 0.2);
+          text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.9);
         }
         .logo-brows {
           font-size: 32px;
           font-weight: 600;
-          color: #D1B6A4;
+          color: #2d1b0f !important;
           letter-spacing: 1px;
           margin-left: 8px;
-          text-shadow: 2px 2px 0px rgba(128, 77, 0, 0.1);
+          text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.9);
         }
         .header-title {
           margin: 15px 0 0 0;
           font-size: 24px;
-          color: #D1B6A4;
-          font-weight: 600;
+          color: #1a0f08 !important;
+          font-weight: 700;
+          text-shadow: 2px 2px 3px rgba(255, 255, 255, 0.8);
         }
         .content {
           background: #ffffff;
@@ -150,20 +183,27 @@ export async function sendAppointmentConfirmationEmail(
           border-top: none;
           border-radius: 0 0 10px 10px;
           text-align: center;
-          color: #6b7280;
+          color: #4a4a4a;
           font-size: 14px;
+        }
+        .footer-text {
+          color: #6b7280;
         }
         .button {
           display: inline-block;
-          background: linear-gradient(135deg, #ffcc33 0%, #D8A14A 100%);
-          color: #804d00;
-          padding: 14px 35px;
+          background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%);
+          color: #ffffff !important;
+          padding: 16px 40px;
           text-decoration: none;
           border-radius: 8px;
           margin: 20px 0;
           font-weight: 700;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+          font-size: 16px;
+          box-shadow: 0 4px 8px rgba(0,0,0,0.3);
           transition: all 0.3s ease;
+          border: 3px solid #D8A14A;
+          text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+          letter-spacing: 0.5px;
         }
         .button:hover {
           box-shadow: 0 6px 12px rgba(0,0,0,0.15);
@@ -174,6 +214,86 @@ export async function sendAppointmentConfirmationEmail(
           padding: 15px;
           margin: 20px 0;
           border-radius: 4px;
+        }
+
+        /* Dark mode styles */
+        @media (prefers-color-scheme: dark) {
+          body {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+          }
+          .header {
+            background: linear-gradient(135deg, #cc9922 0%, #b3861e 100%);
+            color: #2c1810;
+          }
+          .logo-bueno {
+            color: #2c1810;
+            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
+          }
+          .logo-brows {
+            color: #4a2c1a;
+            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
+          }
+          .header-title {
+            color: #2c1810;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.6);
+          }
+          .content {
+            background: #2a2a2a;
+            border-color: #b3861e;
+            color: #e0e0e0;
+          }
+          .appointment-details {
+            background: #1f1f1f;
+            border-color: #b3861e;
+          }
+          .detail-row {
+            border-bottom-color: #3a3a3a;
+          }
+          .detail-label {
+            color: #ffcc33;
+          }
+          .detail-value {
+            color: #d0d0d0;
+          }
+          .footer {
+            background: #1a1a1a;
+            border-color: #b3861e;
+            color: #d0d0d0;
+          }
+          .footer-text {
+            color: #a0a0a0;
+          }
+          .button {
+            background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%);
+            color: #ffffff !important;
+            font-weight: 700;
+            font-size: 16px;
+            border: 3px solid #b3861e;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            letter-spacing: 0.5px;
+          }
+          .note {
+            background: #2a2400;
+            border-left-color: #e6b829;
+            color: #e0e0e0;
+          }
+        }
+
+        /* Light mode specific adjustments */
+        @media (prefers-color-scheme: light) {
+          .logo-bueno {
+            color: #2c1810;
+            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
+          }
+          .logo-brows {
+            color: #4a2c1a;
+            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
+          }
+          .header-title {
+            color: #2c1810;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.6);
+          }
         }
       </style>
     </head>
@@ -223,7 +343,7 @@ export async function sendAppointmentConfirmationEmail(
         ` : ''}
 
         <div style="text-align: center;">
-          <a href="https://buenobrows.com/dashboard" class="button">View My Appointments</a>
+          <a href="https://buenobrows.com" class="button">Book Your Next Appointment</a>
         </div>
 
         <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
@@ -234,13 +354,16 @@ export async function sendAppointmentConfirmationEmail(
       
       <div class="footer">
         <p style="margin: 0 0 10px 0;">
-          <span style="font-size: 18px; font-weight: 700; color: #ffbd59;">BUENO</span>
-          <span style="font-size: 18px; font-weight: 600; color: #D1B6A4; margin-left: 4px;">BROWS</span>
+          <span class="logo-bueno" style="font-size: 18px;">BUENO</span>
+          <span class="logo-brows" style="font-size: 18px; margin-left: 4px;">BROWS</span>
         </p>
-        <p style="margin: 5px 0; color: #4a4a4a;">123 Main Street, Downtown</p>
-        <p style="margin: 5px 0; color: #4a4a4a;">Phone: (555) 123-4567</p>
-        <p style="margin: 15px 0 0 0; font-size: 12px; color: #6b7280;">
-          You're receiving this email because you booked an appointment with us.
+        <p style="margin: 5px 0;">📍 315 9th Ave, San Mateo, CA 94401</p>
+        <p style="margin: 5px 0;">📞 Phone: <a href="tel:+16507663918" style="color: #D8A14A; text-decoration: none;">(650) 766-3918</a></p>
+        <p style="margin: 5px 0;">✉️ Email: hello@buenobrows.com</p>
+        <p style="margin: 5px 0;">🌐 Website: <a href="https://buenobrows.com" style="color: #D8A14A; text-decoration: none;">buenobrows.com</a></p>
+        <p class="footer-text" style="margin: 15px 0 0 0; font-size: 12px;">
+          You're receiving this email because you booked an appointment with us.<br>
+          <strong>Bueno Brows</strong> - Filipino-inspired beauty studio specializing in brows & lashes
         </p>
       </div>
     </body>
@@ -266,8 +389,12 @@ ${notes ? `Note: ${notes}` : ''}
 Need to reschedule or cancel? Please call us at least 24 hours in advance.
 
 Bueno Brows
-123 Main Street, Downtown
-Phone: (555) 123-4567
+📍 315 9th Ave, San Mateo, CA 94401
+📞 Phone: (650) 766-3918
+✉️ Email: hello@buenobrows.com
+🌐 Website: https://buenobrows.com
+
+Filipino-inspired beauty studio specializing in brows & lashes
   `.trim();
 
   const msg = {
@@ -338,7 +465,10 @@ export async function sendAppointmentReminderEmail(
     <!DOCTYPE html>
     <html>
     <head>
+      <meta name="color-scheme" content="light dark">
+      <meta name="supported-color-schemes" content="light dark">
       <style>
+        /* Base styles */
         body {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
           line-height: 1.6;
@@ -362,17 +492,17 @@ export async function sendAppointmentReminderEmail(
         .logo-bueno {
           font-size: 28px;
           font-weight: 700;
-          color: #ffbd59;
+          color: #cc7700;
           letter-spacing: 1px;
-          text-shadow: 2px 2px 0px rgba(128, 77, 0, 0.2);
+          text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
         }
         .logo-brows {
           font-size: 28px;
           font-weight: 600;
-          color: #D1B6A4;
+          color: #8B7355;
           letter-spacing: 1px;
           margin-left: 6px;
-          text-shadow: 2px 2px 0px rgba(128, 77, 0, 0.1);
+          text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
         }
         .content-box {
           background: #ffffff;
@@ -388,6 +518,69 @@ export async function sendAppointmentReminderEmail(
           margin: 20px 0;
           border: 1px solid #D8A14A;
         }
+        .reminder-title {
+          margin: 10px 0 0 0;
+          font-size: 24px;
+          color: #804d00;
+          font-weight: 600;
+        }
+        .label-text {
+          color: #804d00;
+        }
+        .footer-text {
+          color: #6b7280;
+        }
+
+        /* Dark mode styles */
+        @media (prefers-color-scheme: dark) {
+          body {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+          }
+          .reminder-box {
+            background: linear-gradient(135deg, #cc9922 0%, #b3861e 100%);
+            color: #fff;
+          }
+          .logo-bueno {
+            color: #ffcc33;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+          }
+          .logo-brows {
+            color: #D1B6A4;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+          }
+          .reminder-title {
+            color: #fff;
+          }
+          .content-box {
+            background: #2a2a2a;
+            border-color: #b3861e;
+            color: #e0e0e0;
+          }
+          .appointment-box {
+            background: #1f1f1f;
+            border-color: #b3861e;
+          }
+          .label-text {
+            color: #ffcc33;
+          }
+          .footer-text {
+            color: #a0a0a0;
+          }
+        }
+
+        /* Light mode specific adjustments */
+        @media (prefers-color-scheme: light) {
+          .logo-bueno {
+            color: #cc7700;
+          }
+          .logo-brows {
+            color: #8B7355;
+          }
+          .reminder-title {
+            color: #804d00;
+          }
+        }
       </style>
     </head>
     <body>
@@ -396,7 +589,7 @@ export async function sendAppointmentReminderEmail(
           <span class="logo-bueno">BUENO</span>
           <span class="logo-brows">BROWS</span>
         </div>
-        <h1 style="margin: 10px 0 0 0; font-size: 24px; color: #804d00; font-weight: 600;">⏰ Appointment Reminder</h1>
+        <h1 class="reminder-title">⏰ Appointment Reminder</h1>
       </div>
       
       <div class="content-box">
@@ -405,23 +598,23 @@ export async function sendAppointmentReminderEmail(
         <p>This is a friendly reminder that you have an appointment coming up soon:</p>
         
         <div class="appointment-box">
-          <p style="margin: 5px 0;"><strong style="color: #804d00;">Service:</strong> ${serviceName}</p>
-          <p style="margin: 5px 0;"><strong style="color: #804d00;">Date:</strong> ${formattedDate}</p>
-          <p style="margin: 5px 0;"><strong style="color: #804d00;">Time:</strong> ${time}</p>
+          <p style="margin: 5px 0;"><strong class="label-text">Service:</strong> ${serviceName}</p>
+          <p style="margin: 5px 0;"><strong class="label-text">Date:</strong> ${formattedDate}</p>
+          <p style="margin: 5px 0;"><strong class="label-text">Time:</strong> ${time}</p>
         </div>
 
         <p>We look forward to seeing you!</p>
         
-        <p style="color: #6b7280; font-size: 14px;">
+        <p class="footer-text" style="font-size: 14px;">
           If you need to reschedule or cancel, please call us at (555) 123-4567.
         </p>
 
         <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #D8A14A; text-align: center; font-size: 14px;">
           <p style="margin: 0 0 5px 0;">
-            <span style="font-size: 18px; font-weight: 700; color: #ffbd59;">BUENO</span>
-            <span style="font-size: 18px; font-weight: 600; color: #D1B6A4; margin-left: 4px;">BROWS</span>
+            <span class="logo-bueno" style="font-size: 18px;">BUENO</span>
+            <span class="logo-brows" style="font-size: 18px; margin-left: 4px;">BROWS</span>
           </p>
-          <p style="color: #6b7280; margin: 5px 0;">123 Main Street, Downtown | (555) 123-4567</p>
+          <p class="footer-text" style="margin: 5px 0;">123 Main Street, Downtown | (555) 123-4567</p>
         </div>
       </div>
     </body>
@@ -446,61 +639,244 @@ export async function sendAppointmentReminderEmail(
 }
 
 /**
- * Cloud Function: Send email when appointment is created
+ * Cloud Function: Send email when appointment status changes to confirmed
+ * This ensures emails are only sent AFTER admin confirmation, not on initial booking
  */
-export const onAppointmentCreatedSendEmail = onDocumentCreated(
+export const onAppointmentConfirmedSendEmail = onDocumentUpdated(
   'appointments/{appointmentId}',
   async (event) => {
-    const appointmentData = event.data?.data();
-    if (!appointmentData) return;
+    const beforeData = event.data?.before.data();
+    const afterData = event.data?.after.data();
+    
+    if (!beforeData || !afterData) return;
 
-    const { customerId, start, duration, serviceId, bookedPrice, notes } = appointmentData;
+    // Only send email when status changes from pending to confirmed
+    if (beforeData.status === 'pending' && afterData.status === 'confirmed') {
+      const { customerId, start, duration, serviceId, bookedPrice, notes } = afterData;
 
-    try {
-      // Get customer details
-      const customerDoc = await db.collection('customers').doc(customerId).get();
-      if (!customerDoc.exists) {
-        console.error('Customer not found:', customerId);
-        return;
+      try {
+        // Get customer details
+        const customerDoc = await db.collection('customers').doc(customerId).get();
+        if (!customerDoc.exists) {
+          console.error('Customer not found:', customerId);
+          return;
+        }
+
+        const customerData = customerDoc.data();
+        const customerEmail = customerData?.email;
+        const customerName = customerData?.name || 'Valued Customer';
+
+        if (!customerEmail) {
+          console.log('No email for customer:', customerId);
+          return;
+        }
+
+        // Get service details
+        const serviceDoc = await db.collection('services').doc(serviceId).get();
+        const serviceData = serviceDoc.data();
+        const serviceName = serviceData?.name || 'Service';
+
+        // Get business hours for timezone
+        const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
+        const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
+
+        // Format date and time with proper timezone
+        const appointmentDate = new Date(start);
+        const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
+        const time = appointmentDate.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: businessTimezone,
+        });
+
+        // Send confirmation email
+        await sendAppointmentConfirmationEmail(customerEmail, customerName, {
+          serviceName,
+          date: start,
+          time,
+          duration: duration || 60,
+          price: bookedPrice,
+          notes,
+        });
+
+        console.log(`✅ Confirmation email sent for confirmed appointment ${event.params.appointmentId}`);
+      } catch (error) {
+        console.error('Error sending appointment confirmation email on confirmation:', error);
       }
-
-      const customerData = customerDoc.data();
-      const customerEmail = customerData?.email;
-      const customerName = customerData?.name || 'Valued Customer';
-
-      if (!customerEmail) {
-        console.log('No email for customer:', customerId);
-        return;
-      }
-
-      // Get service details
-      const serviceDoc = await db.collection('services').doc(serviceId).get();
-      const serviceData = serviceDoc.data();
-      const serviceName = serviceData?.name || 'Service';
-
-      // Format date and time
-      const appointmentDate = new Date(start);
-      const time = appointmentDate.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
-
-      // Send confirmation email
-      await sendAppointmentConfirmationEmail(customerEmail, customerName, {
-        serviceName,
-        date: start,
-        time,
-        duration: duration || 60,
-        price: bookedPrice,
-        notes,
-      });
-
-      console.log(`✅ Confirmation email sent for appointment ${event.params.appointmentId}`);
-    } catch (error) {
-      console.error('Error sending appointment confirmation email:', error);
     }
   }
 );
 
+// Resend appointment confirmation email (admin function)
+export const resendAppointmentConfirmation = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    // SECURITY: Require admin role
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    
+    const userToken = req.auth.token;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
 
+    const { appointmentId } = req.data || {};
+    
+    if (!appointmentId) {
+      throw new HttpsError('invalid-argument', 'appointmentId is required');
+    }
+
+    try {
+      // Get appointment details
+      const appointmentRef = db.collection('appointments').doc(appointmentId);
+      const appointmentDoc = await appointmentRef.get();
+      
+      if (!appointmentDoc.exists) {
+        throw new HttpsError('not-found', 'Appointment not found');
+      }
+      
+      const appointment: any = appointmentDoc.data();
+      
+      // Get service details
+      const serviceRef = db.collection('services').doc(appointment.serviceId);
+      const serviceDoc = await serviceRef.get();
+      const service: any = serviceDoc.exists ? serviceDoc.data() : { name: 'Service' };
+      
+      // Get customer details
+      const customerRef = db.collection('customers').doc(appointment.customerId);
+      const customerDoc = await customerRef.get();
+      const customer: any = customerDoc.exists ? customerDoc.data() : {};
+      
+      if (!customer.email) {
+        throw new HttpsError('failed-precondition', 'Customer email not found');
+      }
+
+      // Get business hours for timezone
+      const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
+      const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
+      const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
+
+      // Format date and time with proper timezone
+      const appointmentDate = new Date(appointment.start);
+      const time = appointmentDate.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: businessTimezone,
+      });
+
+      // Send confirmation email
+      const success = await sendAppointmentConfirmationEmail(customer.email, customer.name || 'Valued Customer', {
+        serviceName: service.name,
+        date: appointment.start,
+        time,
+        duration: appointment.duration || 60,
+        price: appointment.bookedPrice,
+        notes: appointment.notes,
+        businessTimezone,
+      });
+
+      if (success) {
+        console.log('✅ Resent confirmation email for appointment:', appointmentId);
+        return {
+          success: true,
+          message: 'Confirmation email resent successfully',
+          appointmentId
+        };
+      } else {
+        throw new HttpsError('internal', 'Failed to send confirmation email');
+      }
+
+    } catch (error: any) {
+      console.error('Error resending confirmation email:', error);
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      throw new HttpsError('internal', `Failed to resend confirmation: ${error.message}`);
+    }
+  }
+);
+
+// Send appointment confirmation email (admin function for new appointments)
+export const sendAppointmentConfirmation = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    // SECURITY: Require admin role
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    
+    const userToken = req.auth.token;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+
+    const { 
+      appointmentId, 
+      customerId, 
+      customerEmail, 
+      customerName, 
+      start, 
+      duration, 
+      serviceNames, 
+      totalPrice 
+    } = req.data || {};
+    
+    if (!appointmentId || !customerEmail || !customerName || !start) {
+      throw new HttpsError('invalid-argument', 'Required fields: appointmentId, customerEmail, customerName, start');
+    }
+
+    try {
+      // Get business timezone
+      const businessDoc = await db.collection('settings').doc('business').get();
+      const businessTimezone = businessDoc.exists ? businessDoc.data()?.timezone || 'America/Los_Angeles' : 'America/Los_Angeles';
+
+      // Format the date and time
+      const appointmentDate = new Date(start);
+      const date = appointmentDate.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: businessTimezone,
+      });
+      
+      const time = appointmentDate.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: businessTimezone,
+      });
+
+      // Send confirmation email
+      const success = await sendAppointmentConfirmationEmail(customerEmail, customerName, {
+        serviceName: serviceNames || 'Service',
+        date: start,
+        time,
+        duration: duration || 60,
+        price: totalPrice,
+        businessTimezone,
+      });
+
+      if (success) {
+        console.log('✅ Sent confirmation email for new appointment:', appointmentId);
+        return {
+          success: true,
+          message: 'Confirmation email sent successfully',
+          appointmentId
+        };
+      } else {
+        throw new HttpsError('internal', 'Failed to send confirmation email');
+      }
+
+    } catch (error: any) {
+      console.error('Error sending confirmation email:', error);
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      throw new HttpsError('internal', `Failed to send confirmation: ${error.message}`);
+    }
+  }
+);

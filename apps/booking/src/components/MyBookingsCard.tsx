@@ -2,9 +2,22 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc } from 'firebase/firestore';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import { format } from 'date-fns';
+
+// Safe date formatter that won't crash
+const safeFormatDate = (dateString: any, formatString: string, fallback: string = 'Invalid Date'): string => {
+  try {
+    if (!dateString) return fallback;
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return fallback;
+    return format(date, formatString);
+  } catch (e) {
+    console.error('Error formatting date:', dateString, e);
+    return fallback;
+  }
+};
 
 interface MyBookingsCardProps {
   className?: string;
@@ -31,7 +44,7 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
 
   // Fetch customer's appointments
   useEffect(() => {
-    if (!user?.email && !user?.phoneNumber) {
+    if (!user?.uid) {
       setAppointments([]);
       setHasCustomerRecord(false);
       return;
@@ -39,21 +52,17 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
 
     let unsubscribeAppointments: (() => void) | null = null;
 
-    // Find customer by email OR phone number
-    const customersRef = collection(db, 'customers');
-    const searchField = user.email ? 'email' : 'phone';
-    const searchValue = user.email || user.phoneNumber;
-    
-    const customerQuery = query(customersRef, where(searchField, '==', searchValue));
+    // ✅ FIXED: Use auth.uid directly as customer ID (matches how we create customers in Login.tsx)
+    const custId = user.uid;
+    const customerRef = doc(db, 'customers', custId);
 
-    const unsubscribeCustomer = onSnapshot(customerQuery, (snapshot) => {
-      if (snapshot.empty) {
+    const unsubscribeCustomer = onSnapshot(customerRef, (snapshot) => {
+      if (!snapshot.exists()) {
         setAppointments([]);
         setHasCustomerRecord(false);
         return;
       }
 
-      const custId = snapshot.docs[0].id;
       setHasCustomerRecord(true);
 
       // Fetch appointments for this customer
@@ -103,13 +112,32 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
     return null;
   }
 
-  const upcomingAppointments = appointments
-    .filter((apt) => apt.start && apt.status !== 'cancelled' && new Date(apt.start) > new Date())
-    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  // Helper function to check if date is valid - moved after early returns
+  const isValidDate = (dateString: any): boolean => {
+    if (!dateString) return false;
+    try {
+      const date = new Date(dateString);
+      return !isNaN(date.getTime());
+    } catch (e) {
+      return false;
+    }
+  };
 
-  const pastAppointments = appointments
-    .filter((apt) => apt.start && new Date(apt.start) < new Date() && apt.status === 'confirmed')
-    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+  // Safely filter appointments with error handling
+  let upcomingAppointments: typeof appointments = [];
+  let pastAppointments: typeof appointments = [];
+  
+  try {
+    upcomingAppointments = appointments
+      .filter((apt) => isValidDate(apt.start) && apt.status !== 'cancelled' && new Date(apt.start) > new Date())
+      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+    pastAppointments = appointments
+      .filter((apt) => isValidDate(apt.start) && new Date(apt.start) < new Date() && apt.status === 'confirmed')
+      .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+  } catch (error) {
+    console.error('Error filtering appointments:', error);
+  }
 
   const totalAppointments = appointments.length;
   const upcomingCount = upcomingAppointments.length;
@@ -187,8 +215,8 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
                           </span>
                         </div>
                         <div className="text-xs text-slate-600 space-y-0.5">
-                          <p>📅 {format(new Date(apt.start), 'MMM d, yyyy')}</p>
-                          <p>🕐 {format(new Date(apt.start), 'h:mm a')}</p>
+                          <p>📅 {safeFormatDate(apt.start, 'MMM d, yyyy', 'Date TBD')}</p>
+                          <p>🕐 {safeFormatDate(apt.start, 'h:mm a', 'Time TBD')}</p>
                           {apt.totalPrice && (
                             <p>💰 ${apt.totalPrice.toFixed(2)}</p>
                           )}

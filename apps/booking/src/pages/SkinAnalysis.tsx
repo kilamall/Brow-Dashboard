@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { getFirestore, collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { getFirestore, collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import type { SkinAnalysis } from '@shared/types';
+import type { SkinAnalysis, Customer } from '@shared/types';
 import { compressImage, getCompressionStats } from '@buenobrows/shared/imageUtils';
+import { initFirebase } from '@buenobrows/shared/firebase';
 
 type AnalysisType = 'skin' | 'products';
 
@@ -19,6 +20,9 @@ export default function SkinAnalysisPage() {
   const [pastAnalyses, setPastAnalyses] = useState<SkinAnalysis[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [requestSubmitted, setRequestSubmitted] = useState(false);
+  const [customerProfilePic, setCustomerProfilePic] = useState<string>('');
+  const [useProfilePic, setUseProfilePic] = useState(false);
+  const [photoSource, setPhotoSource] = useState<'upload' | 'profile' | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const auth = getAuth();
@@ -26,10 +30,25 @@ export default function SkinAnalysisPage() {
   const [user, setUser] = useState(auth.currentUser);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Check authentication
+  // Check authentication and load customer profile
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      
+      // Load customer's profile picture if they have one
+      if (currentUser) {
+        const db = getFirestore();
+        const customerRef = doc(db, 'customers', currentUser.uid);
+        const customerDoc = await getDoc(customerRef);
+        
+        if (customerDoc.exists()) {
+          const customerData = customerDoc.data() as Customer;
+          if (customerData.profilePictureUrl) {
+            setCustomerProfilePic(customerData.profilePictureUrl);
+          }
+        }
+      }
+      
       setAuthLoading(false);
     });
     return () => unsubscribe();
@@ -112,11 +131,6 @@ export default function SkinAnalysisPage() {
   };
 
   const handleAnalyze = async () => {
-    if (!selectedImage) {
-      setError('Please select an image first');
-      return;
-    }
-
     if (!user) {
       setError('Please log in to use skin analysis');
       return;
@@ -128,21 +142,42 @@ export default function SkinAnalysisPage() {
       return;
     }
 
+    // Validate that we have an image source
+    if (!useProfilePic && !selectedImage) {
+      setError('Please select an image first');
+      return;
+    }
+
+    if (useProfilePic && !customerProfilePic) {
+      setError('No profile picture found. Please upload a photo instead.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
+      const { functions } = initFirebase();
       const storage = getStorage();
       const db = getFirestore();
-      const functions = getFunctions();
 
-      // Upload image to Firebase Storage
-      const timestamp = Date.now();
-      const storagePath = `skin-analysis/${user.uid}/${timestamp}_${selectedImage.name}`;
-      
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, selectedImage);
-      const imageUrl = await getDownloadURL(storageRef);
+      let imageUrl: string;
+
+      // Use profile picture or upload new image
+      if (useProfilePic && customerProfilePic) {
+        imageUrl = customerProfilePic;
+      } else if (selectedImage) {
+        // Upload image to Firebase Storage
+        const timestamp = Date.now();
+        const storagePath = `skin-analysis/${user.uid}/${timestamp}_${selectedImage.name}`;
+        
+        const storageRef = ref(storage, storagePath);
+        await uploadBytes(storageRef, selectedImage);
+        imageUrl = await getDownloadURL(storageRef);
+      } else {
+        setError('Please select an image first');
+        return;
+      }
 
       // Create analysis record
       const analysisData: Partial<SkinAnalysis> = {
@@ -198,6 +233,8 @@ export default function SkinAnalysisPage() {
     setError('');
     setShowHistory(false);
     setRequestSubmitted(false);
+    setUseProfilePic(false);
+    setPhotoSource(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -213,7 +250,7 @@ export default function SkinAnalysisPage() {
     setError('');
 
     try {
-      const functions = getFunctions();
+      const { functions } = initFirebase();
       const requestNewSkinAnalysis = httpsCallable(functions, 'requestNewSkinAnalysis');
       
       const result = await requestNewSkinAnalysis({
@@ -399,71 +436,161 @@ export default function SkinAnalysisPage() {
             </div>
           </div>
 
+          {/* Photo Source Selection */}
+          {analysisType === 'skin' && customerProfilePic && !photoSource && (
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold mb-4">Choose Your Photo</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button
+                  onClick={() => {
+                    setPhotoSource('profile');
+                    setUseProfilePic(true);
+                    setImagePreview(customerProfilePic);
+                  }}
+                  className="p-6 border-2 border-gray-200 rounded-lg hover:border-terracotta transition-all text-left"
+                >
+                  <div className="flex items-center gap-4 mb-3">
+                    <img
+                      src={customerProfilePic}
+                      alt="Profile"
+                      className="w-16 h-16 rounded-full object-cover border-2 border-gray-200"
+                    />
+                    <div>
+                      <h3 className="font-semibold text-lg">Use Profile Picture</h3>
+                      <p className="text-sm text-slate-600">Use your existing photo</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-center w-full py-2 bg-terracotta/10 rounded text-terracotta font-medium text-sm">
+                    Select Profile Picture
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setPhotoSource('upload');
+                    setUseProfilePic(false);
+                  }}
+                  className="p-6 border-2 border-gray-200 rounded-lg hover:border-terracotta transition-all text-left"
+                >
+                  <div className="flex items-center gap-4 mb-3">
+                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">Upload New Photo</h3>
+                      <p className="text-sm text-slate-600">Choose from your album</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-center w-full py-2 bg-terracotta/10 rounded text-terracotta font-medium text-sm">
+                    Upload from Album
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Upload Section */}
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-4">
-              {analysisType === 'skin' 
-                ? 'Upload Your Photo' 
-                : 'Upload Product Photos'}
-            </h2>
-            
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-terracotta transition-colors">
-              {imagePreview ? (
+          {(photoSource === 'upload' || !customerProfilePic || analysisType !== 'skin') && (
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold mb-4">
+                {analysisType === 'skin' 
+                  ? 'Upload Your Photo' 
+                  : 'Upload Product Photos'}
+              </h2>
+              
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-terracotta transition-colors">
+                {imagePreview && !useProfilePic ? (
+                  <div className="space-y-4">
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="max-h-64 mx-auto rounded-lg"
+                    />
+                    <button
+                      onClick={() => {
+                        setSelectedImage(null);
+                        setImagePreview('');
+                        setPhotoSource(null);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="text-sm text-terracotta hover:underline"
+                    >
+                      Change Image
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="text-6xl mb-4">📷</div>
+                    <p className="text-slate-600 mb-4">
+                      {analysisType === 'skin'
+                        ? 'Take a clear photo of your face in good lighting'
+                        : 'Take photos of your skincare product labels'}
+                    </p>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageSelect}
+                      className="hidden"
+                      id="image-upload"
+                    />
+                    <label
+                      htmlFor="image-upload"
+                      className="inline-block px-6 py-3 bg-terracotta text-white rounded-lg cursor-pointer hover:bg-terracotta/90 transition-colors"
+                    >
+                      Choose Image
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Profile Picture Preview (when selected) */}
+          {useProfilePic && imagePreview && photoSource === 'profile' && (
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold mb-4">Selected Photo</h2>
+              <div className="border-2 border-terracotta rounded-lg p-8 text-center bg-terracotta/5">
                 <div className="space-y-4">
                   <img
                     src={imagePreview}
-                    alt="Preview"
+                    alt="Profile Preview"
                     className="max-h-64 mx-auto rounded-lg"
                   />
+                  <div className="flex items-center justify-center gap-2 text-terracotta font-medium">
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Using Profile Picture
+                  </div>
                   <button
                     onClick={() => {
-                      setSelectedImage(null);
+                      setUseProfilePic(false);
                       setImagePreview('');
-                      if (fileInputRef.current) fileInputRef.current.value = '';
+                      setPhotoSource(null);
                     }}
-                    className="text-sm text-terracotta hover:underline"
+                    className="text-sm text-slate-600 hover:text-terracotta hover:underline"
                   >
-                    Change Image
+                    Choose Different Photo
                   </button>
                 </div>
-              ) : (
-                <div>
-                  <div className="text-6xl mb-4">📷</div>
-                  <p className="text-slate-600 mb-4">
-                    {analysisType === 'skin'
-                      ? 'Take a clear photo of your face in good lighting'
-                      : 'Take photos of your skincare product labels'}
-                  </p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageSelect}
-                    className="hidden"
-                    id="image-upload"
-                  />
-                  <label
-                    htmlFor="image-upload"
-                    className="inline-block px-6 py-3 bg-terracotta text-white rounded-lg cursor-pointer hover:bg-terracotta/90 transition-colors"
-                  >
-                    Choose Image
-                  </label>
-                </div>
-              )}
-            </div>
-
-            {analysisType === 'skin' && (
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800 font-semibold mb-2">💡 Tips for best results:</p>
-                <ul className="text-sm text-yellow-700 space-y-1 list-disc list-inside">
-                  <li>Use natural lighting (near a window is ideal)</li>
-                  <li>Make sure your face is clearly visible and in focus</li>
-                  <li>Remove makeup for most accurate analysis</li>
-                  <li>Face the camera directly</li>
-                </ul>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {analysisType === 'skin' && (
+            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800 font-semibold mb-2">💡 Tips for best results:</p>
+              <ul className="text-sm text-yellow-700 space-y-1 list-disc list-inside">
+                <li>Use natural lighting (near a window is ideal)</li>
+                <li>Make sure your face is clearly visible and in focus</li>
+                <li>Remove makeup for most accurate analysis</li>
+                <li>Face the camera directly</li>
+              </ul>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -475,7 +602,7 @@ export default function SkinAnalysisPage() {
           {/* Analyze Button */}
           <button
             onClick={handleAnalyze}
-            disabled={!selectedImage || loading || pastAnalyses.length > 0}
+            disabled={(!selectedImage && !useProfilePic) || loading || pastAnalyses.length > 0}
             className="w-full py-4 bg-terracotta text-white rounded-lg font-semibold text-lg hover:bg-terracotta/90 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             title={pastAnalyses.length > 0 ? "You already have an analysis. Please request a new one to continue." : ""}
           >

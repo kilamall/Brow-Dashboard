@@ -10,7 +10,7 @@ export default function ConfirmationPage() {
       <p>Your appointment is booked{state?.serviceName ? ` for ${state.serviceName}` : ''}
         {state?.when ? ` at ${state.when}` : ''}.
       </p>
-      <p>We emailed your details and attached a calendar file (.ics).</p>
+      <p>We will confirm and email you your booking details.</p>
       <Link to="/" className="text-terracotta underline">Back to home</Link>
     </section>
   );

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
 import type { Appointment, Service } from '@buenobrows/shared/types';
@@ -18,6 +19,7 @@ import {
 export default function Schedule() {
   const { db } = useFirebase();
   const [month, setMonth] = useState<Date>(() => new Date()); // current visible month
+  const popupRef = useRef<HTMLDivElement>(null);
 
   // Build grid range (start Sunday..Sat end) covering the current month
   const gridStart = useMemo(() => startOfWeek(startOfMonth(month), { weekStartsOn: 0 }), [month]);
@@ -43,7 +45,7 @@ export default function Schedule() {
   const [services, setServices] = useState<Record<string, Service>>({});
   useEffect(() => {
     const ref = collection(db, 'services');
-    return onSnapshot(query(ref, orderBy('name', 'asc')), (snap) => {
+    return onSnapshot(query(ref, where('active', '==', true), orderBy('name', 'asc')), (snap) => {
       const map: Record<string, Service> = {};
       snap.forEach((d) => (map[d.id] = { id: d.id, ...(d.data() as any) }));
       setServices(map);
@@ -58,6 +60,51 @@ export default function Schedule() {
 
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [openAdd, setOpenAdd] = useState<{ open: boolean; date: Date | null }>({ open: false, date: null });
+  const [popupPosition, setPopupPosition] = useState<{ x: number; y: number } | null>(null);
+  const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Calculate popup position to avoid viewport cutoff
+  const calculatePopupPosition = (cellElement: HTMLDivElement) => {
+    const rect = cellElement.getBoundingClientRect();
+    const popupWidth = 256; // w-64 = 16rem = 256px
+    const popupHeight = 200; // Approximate height
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    let x = rect.left + (rect.width / 2) - (popupWidth / 2);
+    let y = rect.bottom + 4; // 4px gap below cell
+    
+    // Adjust if popup would go off the right edge
+    if (x + popupWidth > viewportWidth - 16) {
+      x = viewportWidth - popupWidth - 16;
+    }
+    
+    // Adjust if popup would go off the left edge
+    if (x < 16) {
+      x = 16;
+    }
+    
+    // Adjust if popup would go off the bottom edge
+    if (y + popupHeight > viewportHeight - 16) {
+      y = rect.top - popupHeight - 4; // Show above the cell instead
+    }
+    
+    return { x, y };
+  };
+
+  const handleMouseEnter = (d: Date, idx: number) => {
+    setHoverDate(d);
+    const cellElement = cellRefs.current[idx];
+    if (cellElement) {
+      const position = calculatePopupPosition(cellElement);
+      setPopupPosition(position);
+    }
+  };
+
+  const handleMouseLeave = (d: Date) => {
+    setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev));
+    setPopupPosition(null);
+  };
 
   return (
     <div className="grid gap-4">
@@ -79,16 +126,17 @@ export default function Schedule() {
       </div>
 
       {/* Month grid */}
-      <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-xl overflow-hidden">
+      <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-xl">
         {days.map((d, idx) => {
           const inMonth = isSameMonth(d, month);
           const todaysAppts = appts.filter((a) => isSameDay(new Date(a.start), d) && a.status !== 'cancelled');
           return (
             <div
               key={idx}
+              ref={(el) => (cellRefs.current[idx] = el)}
               className={`relative min-h-[108px] bg-white ${inMonth ? '' : 'bg-slate-50 text-slate-400'}`}
-              onMouseEnter={() => setHoverDate(d)}
-              onMouseLeave={() => setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev))}
+              onMouseEnter={() => handleMouseEnter(d, idx)}
+              onMouseLeave={() => handleMouseLeave(d)}
               onClick={() => setOpenAdd({ open: true, date: d })}
             >
               <div className="flex items-center justify-between px-2 py-1">
@@ -108,22 +156,6 @@ export default function Schedule() {
                   <div className="text-[10px] text-slate-500">+{todaysAppts.length - 3} more…</div>
                 )}
               </div>
-              {/* Hover popover */}
-              {hoverDate && isSameDay(hoverDate, d) && todaysAppts.length > 0 && (
-                <div className="absolute z-10 left-1/2 -translate-x-1/2 top-full mt-1 w-64 bg-white border rounded-xl shadow-lg p-2">
-                  <div className="text-xs font-medium mb-1">{format(d, 'PP')}</div>
-                  <ul className="max-h-48 overflow-auto space-y-1">
-                    {todaysAppts.map((a) => (
-                      <li key={a.id} className="text-xs flex justify-between gap-2">
-                        <span className="truncate">
-                          {format(new Date(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </span>
-                        <span className="truncate text-right">{services[a.serviceId]?.name || 'Service'}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
             </div>
           );
         })}
@@ -136,6 +168,35 @@ export default function Schedule() {
         onClose={() => setOpenAdd({ open: false, date: null })}
         onCreated={() => setOpenAdd({ open: false, date: null })}
       />
+
+      {/* Portal-based popup */}
+      {hoverDate && popupPosition && (() => {
+        const todaysAppts = appts.filter((a) => isSameDay(new Date(a.start), hoverDate) && a.status !== 'cancelled');
+        if (todaysAppts.length === 0) return null;
+        
+        return createPortal(
+          <div 
+            className="fixed z-50 w-64 bg-white border rounded-xl shadow-lg p-2"
+            style={{
+              left: `${popupPosition.x}px`,
+              top: `${popupPosition.y}px`
+            }}
+          >
+            <div className="text-xs font-medium mb-1">{format(hoverDate, 'PP')}</div>
+            <ul className="max-h-48 overflow-auto space-y-1">
+              {todaysAppts.map((a) => (
+                <li key={a.id} className="text-xs flex justify-between gap-2">
+                  <span className="truncate">
+                    {format(new Date(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                  </span>
+                  <span className="truncate text-right">{services[a.serviceId]?.name || 'Service'}</span>
+                </li>
+              ))}
+            </ul>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

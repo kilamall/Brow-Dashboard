@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { updateDoc, doc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Appointment, Service } from '@buenobrows/shared/types';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, addWeeks } from 'date-fns';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 
 interface Props {
@@ -16,6 +17,20 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
   const { db } = useFirebase();
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [editedPrice, setEditedPrice] = useState('');
+  const [tipAmount, setTipAmount] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
+  const functions = getFunctions();
+
+  // Initialize price and tip values when appointment changes
+  useEffect(() => {
+    if (appointment) {
+      setEditedPrice((appointment.bookedPrice ?? service?.price ?? 0).toString());
+      setTipAmount((appointment.tip ?? 0).toString());
+    }
+  }, [appointment, service]);
 
   if (!appointment) return null;
 
@@ -38,6 +53,88 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
     // Navigate to schedule and highlight the date
     nav('/schedule', { state: { highlightDate: date } });
     onClose();
+  };
+
+  const handleResendConfirmation = async () => {
+    if (!confirm('Resend confirmation email to customer?')) return;
+    
+    setResending(true);
+    try {
+      const resendConfirmation = httpsCallable(functions, 'resendAppointmentConfirmation');
+      await resendConfirmation({ appointmentId: appointment.id });
+      alert('✅ Confirmation email sent successfully!');
+    } catch (error: any) {
+      console.error('Failed to resend confirmation:', error);
+      alert(`❌ Failed to resend confirmation: ${error.message}`);
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const handleQuickRebook = () => {
+    // Calculate date 2 weeks from today
+    const twoWeeksFromNow = addWeeks(new Date(), 2);
+    const dateStr = format(twoWeeksFromNow, 'yyyy-MM-dd');
+    
+    // Navigate to schedule with customer info and date
+    nav('/schedule', {
+      state: {
+        quickRebook: {
+          customerId: appointment.customerId,
+          customerName: appointment.customerName,
+          customerEmail: appointment.customerEmail,
+          customerPhone: appointment.customerPhone,
+          serviceId: appointment.serviceId,
+          date: dateStr
+        }
+      }
+    });
+    onClose();
+  };
+
+  const handleSavePrice = async () => {
+    if (!appointment) return;
+    
+    const newPrice = parseFloat(editedPrice);
+    const newTip = parseFloat(tipAmount) || 0;
+    const newTotal = newPrice + newTip;
+    
+    if (isNaN(newPrice) || newPrice < 0) {
+      alert('Please enter a valid price');
+      return;
+    }
+    
+    if (newTip < 0) {
+      alert('Tip amount cannot be negative');
+      return;
+    }
+    
+    setSavingPrice(true);
+    try {
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        bookedPrice: newPrice,
+        tip: newTip,
+        totalPrice: newTotal,
+        isPriceEdited: true,
+        priceEditedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      
+      setIsEditingPrice(false);
+      // Trigger a refresh by calling onClose and reopening or using a callback
+      window.location.reload(); // Simple refresh for now
+    } catch (error) {
+      console.error('Failed to update price:', error);
+      alert('Failed to update price');
+    } finally {
+      setSavingPrice(false);
+    }
+  };
+
+  const handleCancelPriceEdit = () => {
+    setEditedPrice((appointment.bookedPrice ?? service?.price ?? 0).toString());
+    setTipAmount((appointment.tip ?? 0).toString());
+    setIsEditingPrice(false);
   };
 
   return (
@@ -80,9 +177,6 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
           <div>
             <div className="text-sm text-slate-500 mb-1">Service</div>
             <div className="font-medium">{service?.name || 'Unknown Service'}</div>
-            {service?.description && (
-              <div className="text-sm text-slate-600 mt-1">{service.description}</div>
-            )}
           </div>
 
           {/* Customer */}
@@ -113,10 +207,93 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
 
           {/* Price */}
           <div className="bg-terracotta/10 rounded-lg p-4">
-            <div className="text-sm text-slate-600 mb-1">Total Price</div>
-            <div className="text-2xl font-bold text-terracotta">
-              ${(appointment.bookedPrice ?? service?.price ?? 0).toFixed(2)}
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm text-slate-600">Total Price</div>
+              {!isEditingPrice && (
+                <button
+                  onClick={() => setIsEditingPrice(true)}
+                  className="text-xs text-terracotta hover:text-terracotta/80 hover:underline transition-colors"
+                >
+                  Edit Price
+                </button>
+              )}
             </div>
+            
+            {isEditingPrice ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">Service Price</label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editedPrice}
+                      onChange={(e) => setEditedPrice(e.target.value)}
+                      className="flex-1 border rounded px-2 py-1 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">Tip Amount</label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={tipAmount}
+                      onChange={(e) => setTipAmount(e.target.value)}
+                      className="flex-1 border rounded px-2 py-1 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+                
+                <div className="bg-white rounded p-2 border">
+                  <div className="text-xs text-slate-600 mb-1">Total</div>
+                  <div className="text-lg font-bold text-terracotta">
+                    ${(parseFloat(editedPrice) + (parseFloat(tipAmount) || 0)).toFixed(2)}
+                  </div>
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSavePrice}
+                    disabled={savingPrice}
+                    className="flex-1 bg-terracotta text-white rounded px-3 py-1 text-sm hover:bg-terracotta/90 transition-colors disabled:opacity-50"
+                  >
+                    {savingPrice ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    onClick={handleCancelPriceEdit}
+                    className="flex-1 border border-slate-300 text-slate-700 rounded px-3 py-1 text-sm hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-2xl font-bold text-terracotta">
+                  ${(appointment.totalPrice ?? appointment.bookedPrice ?? service?.price ?? 0).toFixed(2)}
+                </div>
+                {appointment.tip && appointment.tip > 0 && (
+                  <div className="text-sm text-slate-600">
+                    <span className="text-slate-500">Service:</span> ${(appointment.bookedPrice ?? service?.price ?? 0).toFixed(2)} 
+                    <span className="text-slate-500 ml-2">Tip:</span> ${appointment.tip.toFixed(2)}
+                  </div>
+                )}
+                {appointment.isPriceEdited && (
+                  <div className="text-xs text-slate-500 italic">
+                    Price manually edited
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Notes */}
@@ -130,30 +307,58 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
           )}
 
           {/* Actions */}
-          <div className="flex gap-3 pt-4 border-t">
-            {onEdit && (
+          <div className="space-y-3 pt-4 border-t">
+            {/* Quick Rebook Button */}
+            {appointment.customerId && appointment.status === 'confirmed' && (
               <button
-                onClick={onEdit}
-                className="flex-1 border border-terracotta text-terracotta rounded-lg px-4 py-2 hover:bg-terracotta/10 transition-colors"
+                onClick={handleQuickRebook}
+                className="w-full bg-green-600 text-white rounded-lg px-4 py-2 hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                title="Book this customer again 2+ weeks from now"
               >
-                Edit Appointment
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Quick Rebook (2+ Weeks)
               </button>
             )}
-            <button
-              onClick={handleViewOnSchedule}
-              className="flex-1 bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors"
-            >
-              View on Schedule
-            </button>
-            {appointment.status === 'confirmed' && (
+            
+            <div className="flex gap-3">
+              {onEdit && (
+                <button
+                  onClick={onEdit}
+                  className="flex-1 border border-terracotta text-terracotta rounded-lg px-4 py-2 hover:bg-terracotta/10 transition-colors"
+                >
+                  Edit Appointment
+                </button>
+              )}
               <button
-                onClick={handleCancel}
-                disabled={loading}
-                className="flex-1 border border-red-300 text-red-600 rounded-lg px-4 py-2 hover:bg-red-50 transition-colors disabled:opacity-50"
+                onClick={handleViewOnSchedule}
+                className="flex-1 bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors"
               >
-                {loading ? 'Cancelling...' : 'Cancel'}
+                View on Schedule
               </button>
-            )}
+            </div>
+            
+            <div className="flex gap-3">
+              {appointment.status === 'confirmed' && appointment.customerEmail && (
+                <button
+                  onClick={handleResendConfirmation}
+                  disabled={resending}
+                  className="flex-1 border border-blue-300 text-blue-600 rounded-lg px-4 py-2 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                >
+                  {resending ? 'Sending...' : 'Resend Email'}
+                </button>
+              )}
+              {appointment.status === 'confirmed' && (
+                <button
+                  onClick={handleCancel}
+                  disabled={loading}
+                  className="flex-1 border border-red-300 text-red-600 rounded-lg px-4 py-2 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Cancelling...' : 'Cancel'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

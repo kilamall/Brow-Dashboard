@@ -3,6 +3,7 @@ import { getFirestore, connectFirestoreEmulator, type Firestore } from 'firebase
 import { getAuth, connectAuthEmulator, type Auth } from 'firebase/auth';
 import { getFunctions, connectFunctionsEmulator, type Functions } from 'firebase/functions';
 import { getMessaging, isSupported, type Messaging } from 'firebase/messaging';
+import { getAnalytics, type Analytics } from 'firebase/analytics';
 
 function assertEnv(name: string) {
   const v = import.meta.env[name as keyof ImportMetaEnv];
@@ -21,6 +22,7 @@ let _firebaseInstance: {
   auth: Auth;
   functions: Functions;
   messaging?: Messaging;
+  analytics?: Analytics;
 } | null = null;
 
 let _emulatorsAttached = false;
@@ -31,6 +33,7 @@ export function initFirebase(): {
   auth: Auth;
   functions: Functions;
   messaging?: Messaging;
+  analytics?: Analytics;
 } {
   // Return cached instance if already initialized
   if (_firebaseInstance) {
@@ -72,17 +75,27 @@ export function initFirebase(): {
     });
   }
 
+  // Initialize Analytics (browser only, not in emulators)
+  let analytics: Analytics | undefined;
+  if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+    try {
+      analytics = getAnalytics(app);
+      console.log('[Firebase] Analytics initialized');
+    } catch (error) {
+      console.warn('[Firebase] Analytics initialization failed:', error);
+    }
+  }
+
   // Connect to local emulators in dev when flag is set
   if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === '1' && !_emulatorsAttached) {
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    connectAuthEmulator(auth, 'http://127.0.0.1:9099');
+    // Only connect functions to emulator, keep Firestore and Auth on production
     connectFunctionsEmulator(functions, '127.0.0.1', 5001);
     _emulatorsAttached = true;
-    console.info('[Firebase] Connected to local emulators.');
+    console.info('[Firebase] Connected to local functions emulator, using production Firestore and Auth.');
   }
 
   // Cache the instance
-  _firebaseInstance = { app, db, auth, functions, messaging };
+  _firebaseInstance = { app, db, auth, functions, messaging, analytics };
   
   return _firebaseInstance;
 }

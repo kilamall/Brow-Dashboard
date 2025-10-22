@@ -31,7 +31,7 @@
 - ❌ Removed `setAdminRole` callable function
 - ❌ Removed `setAdminRoleHTTP` HTTP function  
 - ✅ Verified admin functions return 404
-- ✅ Created legitimate admin user: `regina@buenobrows.com`
+- ✅ Created legitimate admin user: `admin@yourdomain.com`
 
 **Test Results:**
 ```bash
@@ -167,7 +167,7 @@ match /holds/{id} {
 
 ### Admin Panel ✅
 - URL: https://bueno-brows-admin.web.app
-- Login: `regina@buenobrows.com`
+- Login: `admin@yourdomain.com`
 - Access: ✅ Admin role verified
 - Features: ✅ Dashboard, customers, appointments working
 

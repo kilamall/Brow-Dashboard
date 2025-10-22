@@ -7,10 +7,7 @@ import {
   deleteCustomer
 } from '@buenobrows/shared/firestoreActions';
 import type { Customer } from '@buenobrows/shared/types';
-import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { formatMessageTime } from '@buenobrows/shared/messaging';
-import type { Message } from '@buenobrows/shared/messaging';
+import CustomerProfile from '../components/CustomerProfile';
 
 
 export default function Customers(){
@@ -95,8 +92,40 @@ export default function Customers(){
   };
 
   const getCustomerAvatar = (customer: Customer) => {
+    // Debug: Log customer data to see if profilePictureUrl exists
+    console.log('Customer data:', customer.name, 'Profile picture URL:', customer.profilePictureUrl);
+    
+    // If customer has a profile picture, show it
+    if (customer.profilePictureUrl) {
+      console.log('Showing profile picture for:', customer.name);
+      return (
+        <img 
+          src={customer.profilePictureUrl} 
+          alt={customer.name}
+          className="w-12 h-12 rounded-full object-cover"
+          onError={(e) => {
+            console.log('Image failed to load for:', customer.name);
+            // Fallback to initials if image fails to load
+            const target = e.target as HTMLImageElement;
+            target.style.display = 'none';
+            const parent = target.parentElement;
+            if (parent) {
+              const initials = customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+              parent.innerHTML = `<div class="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center"><span class="text-sm font-semibold text-terracotta">${initials}</span></div>`;
+            }
+          }}
+        />
+      );
+    }
+    
+    console.log('No profile picture for:', customer.name, 'showing initials');
+    // Fallback to initials if no profile picture
     const initials = customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
-    return initials;
+    return (
+      <div className="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center">
+        <span className="text-sm font-semibold text-terracotta">{initials}</span>
+      </div>
+    );
   };
 
   const getStatusColor = (status: string) => {
@@ -218,10 +247,8 @@ export default function Customers(){
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-start gap-3 flex-1">
                             {/* Customer Avatar */}
-                            <div className="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center flex-shrink-0">
-                              <span className="text-sm font-semibold text-terracotta">
-                                {getCustomerAvatar(customer)}
-                              </span>
+                            <div className="flex-shrink-0">
+                              {getCustomerAvatar(customer)}
                             </div>
                             
                             {/* Customer Info */}
@@ -297,312 +324,11 @@ export default function Customers(){
       </div>
 
       {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} />}
-      {viewing && <CustomerDetails customer={viewing} onClose={()=>setViewing(null)} db={db} />}
+      {viewing && <CustomerProfile customer={viewing} onClose={()=>setViewing(null)} db={db} />}
     </div>
   );
 }
 
-function CustomerDetails({ customer, onClose, db }: { customer: Customer; onClose: () => void; db: any }) {
-  const [loading, setLoading] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [showChat, setShowChat] = useState(false);
-  const [notes, setNotes] = useState(customer.notes || '');
-  const [savingNotes, setSavingNotes] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const auth = getAuth();
-
-  // Load messages for this customer
-  useEffect(() => {
-    if (!showChat) return;
-
-    const q = query(
-      collection(db, 'messages'),
-      where('customerId', '==', customer.id),
-      orderBy('timestamp', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Message));
-      
-      setMessages(msgs);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    });
-
-    return () => unsubscribe();
-  }, [showChat, customer.id, db]);
-
-  const handleSendMessage = async () => {
-    if (!newMessage.trim()) return;
-
-    try {
-      const adminId = auth.currentUser?.uid || 'admin';
-      const adminName = auth.currentUser?.displayName || 'Admin';
-
-      await addDoc(collection(db, 'messages'), {
-        customerId: customer.id,
-        customerName: customer.name,
-        customerEmail: customer.email || '',
-        adminId,
-        adminName,
-        content: newMessage.trim(),
-        timestamp: new Date(),
-        read: false,
-        type: 'admin',
-        priority: 'medium',
-        isAI: false
-      });
-
-      // Update conversation
-      await updateDoc(doc(db, 'conversations', customer.id), {
-        lastMessage: newMessage.trim(),
-        lastMessageTime: new Date(),
-        status: 'active'
-      }).catch(() => {
-        // Create conversation if it doesn't exist
-        addDoc(collection(db, 'conversations'), {
-          customerId: customer.id,
-          customerName: customer.name,
-          customerEmail: customer.email || '',
-          lastMessage: newMessage.trim(),
-          lastMessageTime: new Date(),
-          unreadCount: 0,
-          status: 'active'
-        });
-      });
-
-      setNewMessage('');
-    } catch (error) {
-      console.error('Error sending message:', error);
-    }
-  };
-
-  const handleSaveNotes = async () => {
-    setSavingNotes(true);
-    try {
-      await updateCustomer(db, customer.id, { ...customer, notes });
-    } catch (error) {
-      console.error('Failed to save notes:', error);
-      alert('Failed to save notes. Please try again.');
-    } finally {
-      setSavingNotes(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!confirm(`Are you sure you want to permanently delete ${customer.name}?\n\nThis action cannot be undone and will remove:\n• Customer profile and contact information\n• All booking history\n• All related data`)) return;
-    
-    setLoading(true);
-    try {
-      await deleteCustomer(db, customer.id);
-      onClose();
-    } catch (error) {
-      console.error('Failed to delete customer:', error);
-      alert('Failed to delete customer. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl p-6 w-full max-w-2xl" onClick={e=>e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="font-serif text-2xl text-slate-800">Customer Details</h3>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        
-        <div className="grid gap-6 mb-6">
-          <div>
-            <h4 className="text-sm font-medium text-slate-600 mb-3">Contact Information</h4>
-            <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center">
-                  <span className="text-sm font-semibold text-terracotta">
-                    {customer.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}
-                  </span>
-                </div>
-                <div>
-                  <div className="font-medium text-slate-800">{customer.name}</div>
-                  <div className="text-sm text-slate-600">Customer since {customer.createdAt ? new Date(customer.createdAt.toMillis?.() || customer.createdAt).toLocaleDateString() : 'Unknown'}</div>
-                </div>
-              </div>
-              
-              {customer.email && (
-                <div className="flex items-center gap-3">
-                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
-                  </svg>
-                  <span className="text-sm text-slate-700">{customer.email}</span>
-                </div>
-              )}
-              
-              {customer.phone && (
-                <div className="flex items-center gap-3">
-                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                  </svg>
-                  <span className="text-sm text-slate-700">{customer.phone}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-medium text-slate-600 mb-3">Customer Stats</h4>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-blue-600">{customer.totalVisits || 0}</div>
-                <div className="text-xs text-slate-600">Total Visits</div>
-              </div>
-              <div className="bg-green-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-green-600">
-                  {customer.status === 'active' ? 'Active' : customer.status === 'blocked' ? 'Blocked' : 'Pending'}
-                </div>
-                <div className="text-xs text-slate-600">Status</div>
-              </div>
-              <div className="bg-purple-50 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-purple-600">
-                  {customer.lastVisit ? new Date((customer.lastVisit as any).toMillis?.() || customer.lastVisit).toLocaleDateString() : 'N/A'}
-                </div>
-                <div className="text-xs text-slate-600">Last Visit</div>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-medium text-slate-600 mb-3">Notes</h4>
-            <div className="space-y-3">
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Add notes about this customer..."
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent resize-none"
-                rows={3}
-              />
-              <div className="flex justify-end">
-                <button
-                  onClick={handleSaveNotes}
-                  disabled={savingNotes || notes === (customer.notes || '')}
-                  className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                >
-                  {savingNotes ? 'Saving...' : 'Save Notes'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Chat Section */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-medium text-slate-600">Messages</h4>
-              <button
-                onClick={() => setShowChat(!showChat)}
-                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-              >
-                {showChat ? 'Hide Chat' : 'Show Chat'}
-              </button>
-            </div>
-
-            {showChat && (
-              <div className="bg-slate-50 rounded-lg overflow-hidden">
-                {/* Messages */}
-                <div className="h-64 overflow-y-auto p-4 space-y-3 bg-white">
-                  {messages.length === 0 ? (
-                    <div className="text-center py-8 text-gray-500">
-                      <p className="text-sm">No messages yet. Start a conversation!</p>
-                    </div>
-                  ) : (
-                    messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${message.type === 'admin' ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div className="max-w-xs">
-                          <div
-                            className={`px-3 py-2 rounded-lg ${
-                              message.type === 'admin'
-                                ? message.isAI
-                                  ? 'bg-purple-600 text-white'
-                                  : 'bg-blue-600 text-white'
-                                : 'bg-gray-200 text-gray-900'
-                            }`}
-                          >
-                            {message.type === 'admin' && (
-                              <p className={`text-xs mb-1 ${message.isAI ? 'text-purple-200' : 'text-blue-200'}`}>
-                                {message.adminName || 'Admin'}
-                                {message.isAI && ' 🤖'}
-                              </p>
-                            )}
-                            <p className="text-sm">{message.content}</p>
-                          </div>
-                          <p className={`text-xs mt-1 ${
-                            message.type === 'admin' ? 'text-right text-gray-400' : 'text-left text-gray-400'
-                          }`}>
-                            {formatMessageTime(message.timestamp)}
-                          </p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {/* Input */}
-                <div className="p-3 border-t border-gray-200">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Type a message..."
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={!newMessage.trim()}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm disabled:opacity-50"
-                    >
-                      Send
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-3 pt-4 border-t">
-          <button
-            onClick={handleDelete}
-            disabled={loading}
-            className="flex-1 border border-red-300 text-red-600 rounded-lg px-4 py-2 hover:bg-red-50 transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Deleting...' : 'Delete Customer'}
-          </button>
-          <button
-            onClick={onClose}
-            className="flex-1 bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void; db: any }){
   const [c, setC] = useState<Customer>(initial);
@@ -702,6 +428,34 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
               rows={3}
             />
           </div>
+
+          {/* Send Initial Request - Only for existing customers */}
+          {c.id && c.email && (
+            <div className="border-t border-slate-200 pt-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-medium text-blue-900 mb-2">Send Initial Request</h4>
+                <p className="text-sm text-blue-700 mb-3">
+                  Send a welcome message and booking invitation to this customer.
+                </p>
+                <button 
+                  className="bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition-colors text-sm font-medium"
+                  onClick={async () => {
+                    if (confirm(`Send initial request to ${c.name} at ${c.email}?`)) {
+                      try {
+                        // TODO: Implement sendInitialRequest function
+                        alert('Initial request sent! (Feature coming soon)');
+                      } catch (error) {
+                        console.error('Failed to send initial request:', error);
+                        alert('Failed to send initial request');
+                      }
+                    }
+                  }}
+                >
+                  📧 Send Initial Request
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex gap-3 pt-4">

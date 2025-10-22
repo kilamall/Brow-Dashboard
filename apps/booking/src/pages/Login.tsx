@@ -10,9 +10,13 @@ import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
   PhoneAuthProvider,
-  signInWithCredential
+  signInWithCredential,
+  sendEmailVerification,
+  sendPasswordResetEmail
 } from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import ProfilePictureUpload from '../components/ProfilePictureUpload';
 
 // Extend Window interface for reCAPTCHA
 declare global {
@@ -39,11 +43,35 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [profilePictureUrl, setProfilePictureUrl] = useState('');
+
+  // Format phone number as user types
+  const formatPhoneNumber = (value: string) => {
+    // Remove all non-digits
+    const digitsOnly = value.replace(/\D/g, '');
+    
+    // If it starts with 1 and has 11 digits, remove the leading 1
+    if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+      return digitsOnly.slice(1);
+    }
+    
+    // Return digits only (max 10)
+    return digitsOnly.slice(0, 10);
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhoneNumber(e.target.value);
+    setPhone(formatted);
+  };
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationId, setVerificationId] = useState('');
   const [showVerification, setShowVerification] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,12 +81,54 @@ export default function Login() {
     try {
       if (isSignUp) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        // Update display name
-        if (name && userCredential.user) {
-          await updateProfile(userCredential.user, { displayName: name });
+        // Update display name and photo URL if provided
+        if (userCredential.user) {
+          const profileUpdates: any = {};
+          if (name) profileUpdates.displayName = name;
+          if (profilePictureUrl) profileUpdates.photoURL = profilePictureUrl;
+          
+          if (Object.keys(profileUpdates).length > 0) {
+            await updateProfile(userCredential.user, profileUpdates);
+          }
+
+          // Create/update customer record in Firestore with profile picture
+          const customerRef = doc(db, 'customers', userCredential.user.uid);
+          const customerDoc = await getDoc(customerRef);
+          
+          if (!customerDoc.exists()) {
+            await setDoc(customerRef, {
+              name: name || 'Customer',
+              email: email,
+              phone: phone || null,
+              profilePictureUrl: profilePictureUrl || null,
+              status: 'active',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+          } else if (profilePictureUrl) {
+            // Update existing customer with profile picture if provided
+            await setDoc(customerRef, {
+              profilePictureUrl,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          }
+
+          // Send verification without custom URL - Firebase will use default
+          await sendEmailVerification(userCredential.user);
+          setError(''); // Clear any errors
+          alert('Account created! Please check your email to verify your account.');
         }
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        // Check if email is verified
+        if (userCredential.user && !userCredential.user.emailVerified) {
+          // Sign out the user since they're not verified
+          await auth.signOut();
+          setUnverifiedEmail(email);
+          setNeedsVerification(true);
+          setError('Please verify your email before signing in. Check your inbox for the verification link.');
+          return;
+        }
       }
       // Redirect back to return URL with cart intact
       nav(returnTo);
@@ -97,7 +167,7 @@ export default function Login() {
 
   // Setup reCAPTCHA verifier
   useEffect(() => {
-    if (authMode === 'phone' && !window.recaptchaVerifier) {
+    if (authMode === 'phone' && !showVerification && !window.recaptchaVerifier) {
       try {
         window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
           size: 'invisible',
@@ -114,7 +184,7 @@ export default function Login() {
     }
     
     return () => {
-      if (window.recaptchaVerifier) {
+      if (window.recaptchaVerifier && authMode !== 'phone') {
         try {
           window.recaptchaVerifier.clear();
         } catch (e) {
@@ -123,7 +193,7 @@ export default function Login() {
         window.recaptchaVerifier = undefined;
       }
     };
-  }, [authMode, auth]);
+  }, [authMode, showVerification, auth]);
 
   const handlePhoneAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,8 +204,18 @@ export default function Login() {
       // Format phone number to E.164 format if not already
       let formattedPhone = phone.trim();
       if (!formattedPhone.startsWith('+')) {
-        // Assume US number if no country code
-        formattedPhone = '+1' + formattedPhone.replace(/\D/g, '');
+        // Remove all non-digits and add +1 prefix for US numbers
+        const digitsOnly = formattedPhone.replace(/\D/g, '');
+        if (digitsOnly.length === 10) {
+          // 10-digit US number
+          formattedPhone = '+1' + digitsOnly;
+        } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+          // 11-digit number starting with 1
+          formattedPhone = '+' + digitsOnly;
+        } else {
+          // Assume US number and add +1
+          formattedPhone = '+1' + digitsOnly;
+        }
       }
 
       const appVerifier = window.recaptchaVerifier;
@@ -145,12 +225,31 @@ export default function Login() {
       setError('');
     } catch (err: any) {
       console.error('Phone auth error:', err);
-      setError(err.message || 'Failed to send verification code');
-      // Reset reCAPTCHA on error
+      console.error('Error code:', err.code);
+      console.error('Error message:', err.message);
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Failed to send verification code';
+      if (err.code === 'auth/invalid-phone-number') {
+        errorMessage = 'Please enter a valid phone number';
+      } else if (err.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many attempts. Please wait a few minutes before trying again.';
+      } else if (err.code === 'auth/quota-exceeded') {
+        errorMessage = 'SMS quota exceeded. Please try again later.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      
+      // Reset reCAPTCHA on error so user can try again
       if (window.recaptchaVerifier) {
-        window.recaptchaVerifier.render().then((widgetId: any) => {
-          window.grecaptcha.reset(widgetId);
-        }).catch(() => {});
+        try {
+          window.recaptchaVerifier.clear();
+          window.recaptchaVerifier = undefined;
+        } catch (e) {
+          console.error('Error resetting reCAPTCHA:', e);
+        }
       }
     } finally {
       setLoading(false);
@@ -165,10 +264,85 @@ export default function Login() {
     try {
       const credential = PhoneAuthProvider.credential(verificationId, verificationCode);
       await signInWithCredential(auth, credential);
+      console.log('✅ Phone verification successful, redirecting to:', returnTo);
       // Redirect back to return URL with cart intact
       nav(returnTo);
     } catch (err: any) {
+      console.error('❌ Phone verification error:', err);
       setError(err.message || 'Invalid verification code');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendEmailVerification = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      // Try to sign in temporarily to send verification email
+      const tempUser = await signInWithEmailAndPassword(auth, unverifiedEmail, password);
+      
+      if (tempUser.user) {
+        console.log('Sending verification email to:', unverifiedEmail);
+        
+        // Send verification without custom URL - Firebase will use default
+        await sendEmailVerification(tempUser.user);
+        
+        console.log('Verification email sent successfully');
+        
+        // Don't sign out - let them stay signed in after verification
+        setError(''); // Clear any errors
+        alert('Verification email sent! Please check your inbox and click the verification link. You can then refresh this page to continue.');
+        
+        // Hide the verification message since they're now signed in
+        setNeedsVerification(false);
+        setUnverifiedEmail('');
+        
+        // Redirect them to the return URL
+        nav(returnTo);
+      }
+    } catch (err: any) {
+      console.error('Resend verification error:', err);
+      if (err.code === 'auth/wrong-password') {
+        setError('Incorrect password. Please try again.');
+      } else if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email. Please sign up first.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many attempts. Please wait a few minutes before trying again.');
+      } else {
+        setError(err.message || 'Failed to send verification email. Please try signing in again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const actionCodeSettings = {
+        url: `https://buenobrows.com/login`,
+        handleCodeInApp: false,
+      };
+
+      await sendPasswordResetEmail(auth, email, actionCodeSettings);
+      setResetEmailSent(true);
+      setError(''); // Clear any errors
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email address.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many attempts. Please wait a few minutes before trying again.');
+      } else {
+        setError(err.message || 'Failed to send password reset email.');
+      }
     } finally {
       setLoading(false);
     }
@@ -223,24 +397,34 @@ export default function Login() {
         </div>
 
         {/* Email Auth Form */}
-        {authMode === 'email' && (
+        {authMode === 'email' && !needsVerification && (
           <form className="mt-8 space-y-6" onSubmit={handleEmailAuth}>
           {isSignUp && (
-            <div>
-              <label htmlFor="name" className="block text-sm font-medium text-slate-700">
-                Full Name
-              </label>
-              <input
-                id="name"
-                name="name"
-                type="text"
-                required={isSignUp}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
-                placeholder="John Doe"
+            <>
+              <div>
+                <label htmlFor="name" className="block text-sm font-medium text-slate-700">
+                  Full Name
+                </label>
+                <input
+                  id="name"
+                  name="name"
+                  type="text"
+                  required={isSignUp}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                  placeholder="John Doe"
+                />
+              </div>
+              
+              {/* Profile Picture Upload */}
+              <ProfilePictureUpload
+                userId={auth.currentUser?.uid}
+                onUploadComplete={(url) => setProfilePictureUrl(url)}
+                currentImageUrl={profilePictureUrl}
+                compact={true}
               />
-            </div>
+            </>
           )}
 
           <div>
@@ -278,7 +462,7 @@ export default function Login() {
           </div>
 
           {error && (
-            <div className="rounded-md bg-red-50 p-4">
+            <div className="rounded-md bg-red-50 p-4" role="alert" aria-live="polite">
               <p className="text-sm text-red-800">{error}</p>
             </div>
           )}
@@ -290,7 +474,180 @@ export default function Login() {
           >
             {loading ? 'Please wait...' : isSignUp ? 'Sign Up' : 'Sign In'}
           </button>
+
+          {/* Forgot Password Link */}
+          {!isSignUp && (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setShowPasswordReset(true)}
+                className="text-sm text-terracotta hover:text-terracotta/80"
+              >
+                Forgot your password?
+              </button>
+            </div>
+          )}
         </form>
+        )}
+
+        {/* Password Reset Form */}
+        {authMode === 'email' && showPasswordReset && (
+          <div className="mt-8 space-y-6">
+            {!resetEmailSent ? (
+              <>
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                  <h3 className="text-sm font-medium text-blue-800">Reset Your Password</h3>
+                  <p className="mt-2 text-sm text-blue-700">
+                    Enter your email address and we'll send you a link to reset your password.
+                  </p>
+                </div>
+
+                <form onSubmit={handlePasswordReset} className="space-y-4">
+                  <div>
+                    <label htmlFor="reset-email" className="block text-sm font-medium text-slate-700">
+                      Email Address
+                    </label>
+                    <input
+                      id="reset-email"
+                      name="email"
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                      placeholder="you@example.com"
+                    />
+                  </div>
+
+                  {error && (
+                    <div className="rounded-md bg-red-50 p-4" role="alert" aria-live="polite">
+                      <p className="text-sm text-red-800">{error}</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPasswordReset(false);
+                        setError('');
+                      }}
+                      className="flex-1 py-2 px-4 border border-slate-300 rounded-md shadow-sm text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-terracotta"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="flex-1 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-terracotta hover:bg-terracotta/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-terracotta disabled:opacity-50"
+                    >
+                      {loading ? 'Sending...' : 'Send Reset Link'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <>
+                <div className="bg-green-50 border border-green-200 rounded-md p-4">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div className="ml-3">
+                      <h3 className="text-sm font-medium text-green-800">
+                        Password Reset Email Sent!
+                      </h3>
+                      <div className="mt-2 text-sm text-green-700">
+                        <p>We've sent a password reset link to <strong>{email}</strong></p>
+                        <p className="mt-1">Please check your inbox and follow the link to reset your password.</p>
+                        <p className="mt-1 text-xs">Didn't receive it? Check your spam folder.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setShowPasswordReset(false);
+                    setResetEmailSent(false);
+                    setEmail('');
+                    setError('');
+                  }}
+                  className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-terracotta hover:bg-terracotta/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-terracotta"
+                >
+                  Back to Login
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Email Verification Required Message */}
+        {authMode === 'email' && needsVerification && (
+          <div className="mt-8 space-y-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-amber-800">
+                    Verify your email for Access to the Bueno Brows App
+                  </h3>
+                  <div className="mt-2 text-sm text-amber-700">
+                    <p>Please check your email for a verification link and click it to verify your account.</p>
+                    <p className="mt-1">After clicking the link, you can return here to sign in.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {error && (
+              <div className="rounded-md bg-red-50 p-4" role="alert" aria-live="polite">
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleResendEmailVerification}
+                  disabled={loading}
+                  className="text-sm text-terracotta hover:text-terracotta/80 disabled:opacity-50"
+                >
+                  {loading ? 'Sending...' : 'Resend Verification Email'}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeedsVerification(false);
+                    setUnverifiedEmail('');
+                    setError('');
+                  }}
+                  className="text-sm text-slate-600 hover:text-slate-800"
+                >
+                  ← Back to login
+                </button>
+              </div>
+              
+              <div className="text-center">
+                <p className="text-xs text-slate-500 mb-2">Can't find the email or need to book now?</p>
+                <button
+                  type="button"
+                  onClick={() => nav('/book')}
+                  className="text-sm text-terracotta hover:text-terracotta/80 font-medium"
+                >
+                  Continue as Guest →
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Phone Auth Form */}
@@ -327,19 +684,19 @@ export default function Login() {
                     autoComplete="tel"
                     required
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={handlePhoneChange}
                     className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
-                    placeholder="+1 (555) 123-4567"
+                    placeholder="(555) 123-4567"
                   />
                   <p className="mt-1 text-xs text-slate-500">
-                    Enter your phone number with country code (e.g., +1 for US)
+                    Enter your 10-digit US phone number (we'll add +1 automatically)
                   </p>
                 </div>
 
                 {error && (
-                  <div className="rounded-md bg-red-50 p-4">
-                    <p className="text-sm text-red-800">{error}</p>
-                  </div>
+            <div className="rounded-md bg-red-50 p-4" role="alert" aria-live="polite">
+              <p className="text-sm text-red-800">{error}</p>
+            </div>
                 )}
 
                 <button
@@ -374,9 +731,9 @@ export default function Login() {
                 </div>
 
                 {error && (
-                  <div className="rounded-md bg-red-50 p-4">
-                    <p className="text-sm text-red-800">{error}</p>
-                  </div>
+            <div className="rounded-md bg-red-50 p-4" role="alert" aria-live="polite">
+              <p className="text-sm text-red-800">{error}</p>
+            </div>
                 )}
 
                 <button
@@ -392,7 +749,17 @@ export default function Login() {
                   onClick={() => {
                     setShowVerification(false);
                     setVerificationCode('');
+                    setVerificationId('');
                     setError('');
+                    // Reset reCAPTCHA verifier so user can try again
+                    if (window.recaptchaVerifier) {
+                      try {
+                        window.recaptchaVerifier.clear();
+                      } catch (e) {
+                        console.error('Error clearing reCAPTCHA:', e);
+                      }
+                      window.recaptchaVerifier = undefined;
+                    }
                   }}
                   className="w-full text-sm text-slate-600 hover:text-slate-800"
                 >

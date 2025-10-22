@@ -14,7 +14,7 @@
 4. **Firestore rules are too permissive** - need to lock down
 
 ### 👥 Your Users
-- `regina@buenobrows.com` - Should be admin
+- `admin@yourdomain.com` - Should be admin
 - `buenobrws@gmail.com` - Possibly admin
 - 7 other users - Customers
 
@@ -44,15 +44,15 @@
 // Run this:
 
 const setAdmin = firebase.functions().httpsCallable('setAdminRole');
-const result = await setAdmin({ email: 'regina@buenobrows.com' });
+const result = await setAdmin({ email: 'admin@yourdomain.com' });
 console.log(result);
 
-// You should see: "Successfully set admin role for regina@buenobrows.com"
+// You should see: "Successfully set admin role for admin@yourdomain.com"
 ```
 
 **Verification:**
 ```bash
-# Log out and log back in as regina@buenobrows.com
+# Log out and log back in as admin@yourdomain.com
 # Then check in browser console:
 const user = firebase.auth().currentUser;
 const token = await user.getIdTokenResult();
@@ -86,7 +86,7 @@ async function setAdmin(email) {
 }
 
 // Set your admin email here
-setAdmin('regina@buenobrows.com');
+setAdmin('admin@yourdomain.com');
 EOF
 
 # Run it
@@ -100,7 +100,7 @@ rm set-first-admin.js
 ```bash
 # Export users and check
 firebase auth:export /tmp/verify-admin.json
-cat /tmp/verify-admin.json | grep -A2 "regina@buenobrows.com"
+cat /tmp/verify-admin.json | grep -A2 "admin@yourdomain.com"
 # Should show: "customClaims": "{\"role\":\"admin\"}"
 ```
 
@@ -109,7 +109,7 @@ cat /tmp/verify-admin.json | grep -A2 "regina@buenobrows.com"
 ### ✅ CHECKPOINT 1: Verify Admin Works
 
 **Test these before proceeding:**
-1. [ ] Log into admin panel as regina@buenobrows.com
+1. [ ] Log into admin panel as admin@yourdomain.com
 2. [ ] Can view customers list
 3. [ ] Can view appointments
 4. [ ] Can view messages

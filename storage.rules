@@ -23,7 +23,7 @@ service firebase.storage {
     }
     
     // Service images - admin upload only
-    match /service-images/{imageId} {
+    match /service-images/{serviceId}/{imageId} {
       allow read: if true;
       allow write: if isAdmin();
     }
@@ -32,6 +32,15 @@ service firebase.storage {
     match /profile-images/{userId}/{imageId} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Temporary profile images during sign-up (before auth)
+    // SECURITY: Limited to small files, short-lived, with cleanup
+    match /profile-images/temp/{imageId} {
+      allow read: if true;
+      allow write: if request.resource.size < 5 * 1024 * 1024 // Max 5MB
+                   && request.resource.contentType.matches('image/.*') // Images only
+                   && request.time < timestamp.date(2025, 12, 31); // Expires end of year
     }
     
     // Skin analysis images - authenticated users ONLY

@@ -95,7 +95,7 @@ I've analyzed your codebase and found:
 
 ### Phase 1: Create Admin (2 min) ✅ No downtime
 ```bash
-# Your admin: regina@buenobrows.com
+# Your admin: admin@yourdomain.com
 # Use browser console or Node.js script
 # See FIX_STEP_BY_STEP.md Step 1
 ```

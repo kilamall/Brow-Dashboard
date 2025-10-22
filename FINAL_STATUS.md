@@ -12,7 +12,7 @@
 **Admin Dashboard**: https://bueno-brows-admin.web.app
 **Customer Booking**: https://bueno-brows-7cce7.web.app
 
-**Login**: regina@buenobrows.com or malikgriffin1@gmail.com
+**Login**: admin@yourdomain.com
 
 ---
 

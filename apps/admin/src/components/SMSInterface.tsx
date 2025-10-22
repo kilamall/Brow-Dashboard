@@ -181,11 +181,38 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                     selectedCustomer === customer?.id ? 'bg-blue-50 border-blue-200' : ''
                   }`}
                 >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-medium text-gray-900 truncate">
-                        {customer?.name || 'SMS Customer'}
-                      </h3>
+                  <div className="flex items-start gap-3">
+                    {/* Customer Avatar */}
+                    <div className="flex-shrink-0">
+                      {customer?.profilePictureUrl ? (
+                        <img 
+                          src={customer.profilePictureUrl} 
+                          alt={customer.name}
+                          className="w-10 h-10 rounded-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            const parent = target.parentElement;
+                            if (parent) {
+                              const initials = customer?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?';
+                              parent.innerHTML = `<div class="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center"><span class="text-xs font-semibold text-terracotta">${initials}</span></div>`;
+                            }
+                          }}
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-terracotta/10 flex items-center justify-center">
+                          <span className="text-xs font-semibold text-terracotta">
+                            {customer?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || '?'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex justify-between items-start flex-1 min-w-0">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-medium text-gray-900 truncate">
+                          {customer?.name || 'SMS Customer'}
+                        </h3>
                       <p className="text-xs text-gray-500 truncate">
                         {phoneNumber}
                       </p>
@@ -194,6 +221,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                           {lastMessage.message}
                         </p>
                       )}
+                      </div>
                     </div>
                     <div className="flex flex-col items-end ml-2">
                       {unreadCount > 0 && (

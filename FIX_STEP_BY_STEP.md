@@ -34,7 +34,7 @@
 
 ### ⭐ STEP 1: Create Your Admin Account (2 minutes)
 
-**Who should be admin?** Looks like `regina@buenobrows.com` - is that you?
+**Who should be admin?** Looks like `admin@yourdomain.com` - is that you?
 
 **Method 1: Quick & Easy (Using Browser)**
 
@@ -42,7 +42,7 @@
 # 1. Open your website
 open "https://your-site-url.com"
 
-# 2. Log in as regina@buenobrows.com
+# 2. Log in as admin@yourdomain.com
 
 # 3. Open browser console (F12 or Cmd+Option+J on Mac)
 
@@ -52,7 +52,7 @@ open "https://your-site-url.com"
 ```javascript
 // Run this in browser console:
 const setAdmin = firebase.functions().httpsCallable('setAdminRole');
-setAdmin({ email: 'regina@buenobrows.com' })
+setAdmin({ email: 'admin@yourdomain.com' })
   .then(result => {
     console.log('✅ Success!', result.data);
     alert('Admin role set! Refresh page and try logging into admin panel.');
@@ -67,7 +67,7 @@ setAdmin({ email: 'regina@buenobrows.com' })
 ```bash
 # In a terminal, run:
 firebase auth:export /tmp/check-admin.json
-cat /tmp/check-admin.json | grep -A5 "regina@buenobrows.com"
+cat /tmp/check-admin.json | grep -A5 "admin@yourdomain.com"
 # Should show: "customClaims": "{\"role\":\"admin\"}"
 ```
 
@@ -106,7 +106,7 @@ async function makeAdmin(email) {
 }
 
 // Set admin email (change if needed)
-makeAdmin('regina@buenobrows.com');
+makeAdmin('admin@yourdomain.com');
 EOF
 
 # Run it (update service account path first!)
@@ -124,7 +124,7 @@ rm create-admin-now.js
 
 ```bash
 # 1. Go to your admin panel
-# 2. Log in as regina@buenobrows.com
+# 2. Log in as admin@yourdomain.com
 # 3. Try these actions:
 
 # ✓ Can you see the dashboard?
@@ -457,7 +457,7 @@ firebase deploy --only functions,firestore:rules
 
 ```bash
 # 1. Admin Panel
-# - Log in as regina@buenobrows.com
+# - Log in as admin@yourdomain.com
 # - [ ] Dashboard loads
 # - [ ] Can view customers
 # - [ ] Can view appointments
@@ -510,7 +510,7 @@ firebase functions:log --limit 50
 ```bash
 # Check admin role
 firebase auth:export /tmp/verify.json
-cat /tmp/verify.json | grep "regina@buenobrows.com" -A5
+cat /tmp/verify.json | grep "admin@yourdomain.com" -A5
 
 # Re-enable admin function temporarily
 mv functions/src/set-admin-role.ts.DISABLED functions/src/set-admin-role.ts
@@ -549,7 +549,7 @@ firebase functions:log --only onCustomerMessageAutoResponse,analyzeSkinPhoto
 
 Use this to track your progress:
 
-- [ ] **STEP 1:** Created admin user (regina@buenobrows.com)
+- [ ] **STEP 1:** Created admin user (admin@yourdomain.com)
   - [ ] Ran setAdminRole command
   - [ ] Verified in Firebase Auth export
   - [ ] Tested admin panel access

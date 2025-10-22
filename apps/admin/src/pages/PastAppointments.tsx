@@ -1,0 +1,208 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { format, parseISO } from 'date-fns';
+import type { Appointment, Service } from '@buenobrows/shared/types';
+import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
+
+// Helper function to safely parse dates
+function safeParseDate(dateString: string): Date {
+  try {
+    const parsed = parseISO(dateString);
+    return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : new Date(dateString);
+  } catch {
+    return new Date();
+  }
+}
+
+// Helper function to safely format appointment time range
+function formatAppointmentTimeRange(start: string, duration: number): string {
+  try {
+    const startDate = safeParseDate(start);
+    const endDate = new Date(startDate.getTime() + duration * 60000);
+    return `${format(startDate, 'h:mm a')} - ${format(endDate, 'h:mm a')}`;
+  } catch {
+    return 'Time TBD';
+  }
+}
+
+function fmtCurrency(num: number): string {
+  return `$${num.toFixed(2)}`;
+}
+
+export default function PastAppointments() {
+  const { db } = useFirebase();
+  const navigate = useNavigate();
+  const [allAppts, setAllAppts] = useState<Appointment[]>([]);
+  const [services, setServices] = useState<Record<string, Service>>({});
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch appointments
+  useEffect(() => {
+    if (!db) return;
+    
+    const q = query(collection(db, 'appointments'), orderBy('start', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const appointments = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Appointment[];
+      setAllAppts(appointments);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [db]);
+
+  // Fetch services
+  useEffect(() => {
+    if (!db) return;
+
+    const unsubscribe = onSnapshot(collection(db, 'services'), (snapshot) => {
+      const servicesMap: Record<string, Service> = {};
+      snapshot.docs.forEach((doc) => {
+        servicesMap[doc.id] = { id: doc.id, ...doc.data() } as Service;
+      });
+      setServices(servicesMap);
+    });
+
+    return () => unsubscribe();
+  }, [db]);
+
+  // Filter to show only past appointments
+  const pastAppointments = allAppts.filter(a => 
+    (a.status === 'confirmed' || a.status === 'pending' || a.status === 'completed' || a.status === 'no-show') 
+    && safeParseDate(a.start) <= new Date()
+  );
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full">✓ Completed</span>;
+      case 'no-show':
+        return <span className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded-full">✗ No-Show</span>;
+      case 'pending':
+        return <span className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded-full">Pending</span>;
+      case 'confirmed':
+        return <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">Confirmed</span>;
+      case 'cancelled':
+        return <span className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded-full">Cancelled</span>;
+      default:
+        return <span className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded-full">{status}</span>;
+    }
+  };
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-serif font-bold text-slate-900">Past Appointments</h1>
+          <p className="text-slate-600 mt-1">View all completed and past appointments</p>
+        </div>
+        <button
+          onClick={() => navigate('/schedule')}
+          className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta-dark transition-colors"
+        >
+          ← Back to Schedule
+        </button>
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-terracotta mx-auto"></div>
+          <p className="text-slate-600 mt-4">Loading appointments...</p>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && pastAppointments.length === 0 && (
+        <div className="bg-white rounded-xl shadow-soft p-12 text-center">
+          <div className="text-6xl mb-4">📅</div>
+          <h2 className="text-xl font-serif font-semibold text-slate-900 mb-2">No Past Appointments</h2>
+          <p className="text-slate-600">There are no past appointments to display.</p>
+        </div>
+      )}
+
+      {/* Appointments List */}
+      {!loading && pastAppointments.length > 0 && (
+        <div className="bg-white rounded-xl shadow-soft">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
+                    Date & Time
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
+                    Customer
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
+                    Service
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-slate-700 uppercase tracking-wider">
+                    Price
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {pastAppointments.map((apt) => (
+                  <tr
+                    key={apt.id}
+                    onClick={() => setSelectedAppointment(apt)}
+                    className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-slate-900">
+                        {format(safeParseDate(apt.start), 'MMM d, yyyy')}
+                      </div>
+                      <div className="text-sm text-slate-500">
+                        {formatAppointmentTimeRange(apt.start, apt.duration)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-slate-900">{apt.customerName || 'N/A'}</div>
+                      {apt.customerEmail && (
+                        <div className="text-sm text-slate-500">{apt.customerEmail}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-slate-900">
+                        {services[apt.serviceId]?.name || 'Unknown Service'}
+                      </div>
+                      {apt.duration && (
+                        <div className="text-sm text-slate-500">{apt.duration} min</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getStatusBadge(apt.status)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-900">
+                      {fmtCurrency(apt.totalPrice ?? apt.bookedPrice ?? services[apt.serviceId]?.price ?? 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Appointment Detail Modal */}
+      {selectedAppointment && (
+        <EnhancedAppointmentDetailModal
+          appointment={selectedAppointment}
+          onClose={() => setSelectedAppointment(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+

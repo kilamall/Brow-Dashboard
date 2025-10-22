@@ -4,12 +4,8 @@
 
 Both users now have the `role: "admin"` custom claim:
 
-1. **regina@buenobrows.com** 
-   - UID: `cgqFyEJZHuTsRKAyRtvkNinfmQJ3`
-   - ✅ Admin role set
-
-2. **malikgriffin1@gmail.com**
-   - UID: `a0SVz4EDwVTwmmjPhSLZkeLPcYc2`
+1. **admin@yourdomain.com** 
+   - UID: `[YOUR_USER_UID]`
    - ✅ Admin role set
 
 ## 🔐 Next Steps to Log In
@@ -20,9 +16,8 @@ The custom claims won't take effect until the user signs out and signs back in. 
 
 1. **Go to Admin Dashboard**: https://bueno-brows-admin.web.app
 
-2. **Sign In** with either:
-   - regina@buenobrows.com (password)
-   - malikgriffin1@gmail.com (Google sign-in)
+2. **Sign In** with your admin account:
+   - admin@yourdomain.com (password or Google sign-in)
 
 3. **If you see "Access Restricted"**:
    - Open browser console (F12)
@@ -65,7 +60,7 @@ firebase functions:delete setAdminRole
 ## 📱 Your Live Apps
 
 **Admin Dashboard**: https://bueno-brows-admin.web.app
-- For regina@buenobrows.com and malikgriffin1@gmail.com
+- For admin@yourdomain.com and admin@yourdomain.com
 - Full access to manage appointments, customers, services
 
 **Customer Booking**: https://bueno-brows-7cce7.web.app
@@ -89,7 +84,7 @@ firebase functions:delete setAdminRole
 ## 🧪 Test the Admin Dashboard
 
 1. Visit: https://bueno-brows-admin.web.app
-2. Sign in with regina@buenobrows.com or malikgriffin1@gmail.com
+2. Sign in with admin@yourdomain.com or admin@yourdomain.com
 3. You should see the full dashboard
 4. Try navigating to:
    - Schedule (view/add appointments)

@@ -13,7 +13,7 @@ export async function sendMagicLink(email: string) {
   if (!url) throw new Error('Missing VITE_AUTH_EMAIL_LINK_URL env');
 
   const actionCodeSettings = {
-    url, // where we'll complete sign-in
+    url: url || 'https://buenobrows.com/verify', // where we'll complete sign-in
     handleCodeInApp: true,
   };
 

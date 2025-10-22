@@ -7,6 +7,32 @@ import { watchAvailabilityByDay, fetchAvailabilityForDay } from '@buenobrows/sha
 import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 
+// Safe date formatter that won't crash - with enhanced logging
+const safeFormatDate = (dateString: any, formatString: string, fallback: string = 'Invalid Date', context?: string): string => {
+  try {
+    if (!dateString) {
+      console.warn(`⚠️ ${context || 'Date'}: No date value provided`);
+      return fallback;
+    }
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      console.error(`❌ ${context || 'Date'}: Invalid date value:`, {
+        rawValue: dateString,
+        type: typeof dateString,
+        stringValue: String(dateString)
+      });
+      return fallback;
+    }
+    return format(date, formatString);
+  } catch (e) {
+    console.error(`❌ ${context || 'Date'}: Error formatting date:`, {
+      rawValue: dateString,
+      error: e
+    });
+    return fallback;
+  }
+};
+
 interface Props {
   appointment: Appointment;
   services: Record<string, Service>;
@@ -217,8 +243,8 @@ export default function EditRequestModal({
             <h3 className="font-semibold text-slate-800 mb-2">Current Appointment</h3>
             <div className="space-y-1 text-sm text-slate-600">
               <p><strong>Service:</strong> {currentService?.name || 'Unknown Service'}</p>
-              <p><strong>Date:</strong> {format(new Date(appointment.start), 'EEEE, MMMM d, yyyy')}</p>
-              <p><strong>Time:</strong> {format(new Date(appointment.start), 'h:mm a')} - {format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a')}</p>
+              <p><strong>Date:</strong> {safeFormatDate(appointment.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `EditRequestModal ${appointment.id}`)}</p>
+              <p><strong>Time:</strong> {safeFormatDate(appointment.start, 'h:mm a', 'Time TBD', `EditRequestModal ${appointment.id}`)} - {appointment.start && !isNaN(new Date(appointment.start).getTime()) ? format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a') : 'End Time TBD'}</p>
               {appointment.notes && <p><strong>Notes:</strong> {appointment.notes}</p>}
             </div>
           </div>

@@ -68,6 +68,25 @@ node_modules/
 .env.*.local
 *.env.local
 
+# Security - Service Account Keys & Secrets
+service-account*.json
+*-key.json
+*.pem
+*-credentials.json
+secrets.json
+.secrets
+
+# Temporary user exports (from admin scripts)
+users-temp.json
+users-export.json
+temp-*.json
+
+# Admin setup scripts (contain sensitive info)
+*-password.js
+set-admin*.js
+create-admin*.js
+reset-*.js
+
 # dataconnect generated files
 .dataconnect
 dist/

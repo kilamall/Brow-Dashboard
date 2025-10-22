@@ -1,6 +1,6 @@
 import { PropsWithChildren, useEffect, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, sendPasswordResetEmail } from 'firebase/auth';
 
 type State = 'loading' | 'authed' | 'unauthed' | 'restricted';
 
@@ -51,14 +51,21 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
   const { auth } = useFirebase();
   
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
     setLoading(true);
     try {
+      console.log('Attempting email/password sign in...');
       await signInWithEmailAndPassword(auth, email, password);
+      console.log('Email/password sign in successful');
     } catch (e: any) {
+      console.error('Email/password sign in error:', e);
       onError(e.message);
     } finally {
       setLoading(false);
@@ -66,14 +73,48 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
   }
 
   async function signInWithGoogle() {
-    setLoading(true);
+    setGoogleLoading(true);
     try {
+      console.log('Attempting Google sign in...');
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
+      console.log('Google sign in successful');
     } catch (e: any) {
+      console.error('Google sign in error:', e);
       onError(e.message || 'Failed to sign in with Google');
     } finally {
-      setLoading(false);
+      setGoogleLoading(false);
+    }
+  }
+
+  async function resetPassword() {
+    if (!email) {
+      onError('Please enter your email address first');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetMessage('');
+    try {
+      // Configure password reset to redirect to admin app
+      const actionCodeSettings = {
+        url: `${window.location.origin}/verify`,
+        handleCodeInApp: true,
+      };
+      
+      await sendPasswordResetEmail(auth, email, actionCodeSettings);
+      setResetMessage('Password reset email sent! Check your inbox and click the link to reset your password.');
+    } catch (e: any) {
+      console.error('Password reset error:', e);
+      if (e.code === 'auth/user-not-found') {
+        onError('No account found with this email address');
+      } else if (e.code === 'auth/invalid-email') {
+        onError('Invalid email address');
+      } else {
+        onError(e.message || 'Failed to send password reset email');
+      }
+    } finally {
+      setResetLoading(false);
     }
   }
   
@@ -85,8 +126,9 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
         
         {/* Google Sign In */}
         <button
+          type="button"
           onClick={signInWithGoogle}
-          disabled={loading}
+          disabled={loading || googleLoading}
           className="w-full border border-slate-300 text-slate-700 rounded-md py-2 mb-4 flex items-center justify-center gap-2 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -95,7 +137,7 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
             <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
           </svg>
-          {loading ? 'Signing in...' : 'Sign in with Google'}
+          {googleLoading ? 'Signing in...' : 'Sign in with Google'}
         </button>
 
         <div className="relative mb-4">
@@ -108,35 +150,52 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
         </div>
 
         {/* Email/Password Sign In */}
-        <form onSubmit={onSubmit}>
+        <form onSubmit={onSubmit} noValidate>
           <input 
             id="admin-email"
             name="admin-email"
+            autoComplete="email"
             className="w-full border rounded-md p-2 mb-3" 
             placeholder="Email" 
             type="email"
             value={email} 
             onChange={e=>setEmail(e.target.value)} 
-            disabled={loading}
+            disabled={loading || googleLoading}
           />
           <input 
             id="admin-password"
             name="admin-password"
+            autoComplete="current-password"
             className="w-full border rounded-md p-2 mb-4" 
             type="password" 
             placeholder="Password" 
             value={password} 
             onChange={e=>setPassword(e.target.value)}
-            disabled={loading}
+            disabled={loading || googleLoading}
           />
           <button 
             type="submit"
-            disabled={loading}
+            disabled={loading || googleLoading || resetLoading}
             className="w-full bg-terracotta text-white rounded-md py-2 hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Signing in...' : 'Sign In with Email'}
           </button>
         </form>
+
+        {/* Password Reset */}
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={resetPassword}
+            disabled={loading || googleLoading || resetLoading || !email}
+            className="text-sm text-terracotta hover:text-terracotta/80 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {resetLoading ? 'Sending...' : 'Forgot Password?'}
+          </button>
+          {resetMessage && (
+            <p className="text-sm text-green-600 mt-2">{resetMessage}</p>
+          )}
+        </div>
       </div>
     </div>
   );

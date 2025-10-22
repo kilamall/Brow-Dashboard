@@ -17,18 +17,17 @@
     "apps/legacy",
     "packages/shared"
   ],
-  "dependencies": {
-  },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/typography": "^0.5.16",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
-    "tailwindcss": "^4.1.12",
-    "typescript": "^5.4.5",
     "eslint": "^9.11.1",
     "eslint-plugin-react": "^7.36.1",
-    "prettier": "^3.3.3"
+    "firebase-admin": "^12.7.0",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^4.1.12",
+    "typescript": "^5.4.5"
   }
 }
