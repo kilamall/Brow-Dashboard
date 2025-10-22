@@ -290,8 +290,33 @@ export default function Login() {
 
     try {
       const credential = PhoneAuthProvider.credential(verificationId, verificationCode);
-      await signInWithCredential(auth, credential);
-      console.log('✅ Phone verification successful, redirecting to:', returnTo);
+      const userCredential = await signInWithCredential(auth, credential);
+      console.log('✅ Phone verification successful');
+      
+      // Create/update customer record using enhanced identity system
+      if (userCredential.user) {
+        const { getFunctions, httpsCallable } = await import('firebase/functions');
+        const functions = getFunctions();
+        const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+        
+        try {
+          const result = await findOrCreate({
+            phone: phone,
+            name: name || userCredential.user.displayName || 'Customer',
+            email: null, // Phone auth doesn't provide email
+            authUid: userCredential.user.uid
+          }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+          
+          if (result.data.merged) {
+            console.log('✅ Merged existing customer record with phone auth account');
+            alert('Welcome back! Your previous bookings have been linked to your account.');
+          }
+        } catch (customerError: any) {
+          console.error('⚠️ Failed to create customer record:', customerError);
+          // Non-critical error - continue with sign in
+        }
+      }
+      
       // Redirect back to return URL with cart intact
       nav(returnTo);
     } catch (err: any) {
