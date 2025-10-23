@@ -67,6 +67,31 @@ export const findOrCreateCustomer = onCall(
         }
       }
       
+      // ENHANCED: Also search by raw phone/email to catch customers created before canonical fields
+      if (!existingCustomer && phone) {
+        const rawPhoneQuery = await db.collection('customers')
+          .where('phone', '==', phone)
+          .limit(1)
+          .get();
+        
+        if (!rawPhoneQuery.empty) {
+          existingCustomer = { id: rawPhoneQuery.docs[0].id, ...rawPhoneQuery.docs[0].data() } as any;
+          console.log('✅ Found customer by raw phone:', phone);
+        }
+      }
+      
+      if (!existingCustomer && email) {
+        const rawEmailQuery = await db.collection('customers')
+          .where('email', '==', email)
+          .limit(1)
+          .get();
+        
+        if (!rawEmailQuery.empty) {
+          existingCustomer = { id: rawEmailQuery.docs[0].id, ...rawEmailQuery.docs[0].data() } as any;
+          console.log('✅ Found customer by raw email:', email);
+        }
+      }
+      
       // Try Auth UID if provided (for web auth flow)
       if (!existingCustomer && authUid) {
         const authDoc = await db.collection('customers').doc(authUid).get();
@@ -104,8 +129,8 @@ export const findOrCreateCustomer = onCall(
             authUid: authUid,
             identityStatus: 'merged',
             mergedFrom: [existingCustomer.id],
-            canonicalEmail: canonicalEmail || existingCustomer.canonicalEmail,
-            canonicalPhone: canonicalPhone || existingCustomer.canonicalPhone,
+            canonicalEmail: canonicalEmail || existingCustomer.canonicalEmail || null,
+            canonicalPhone: canonicalPhone || existingCustomer.canonicalPhone || null,
             email: email || existingCustomer.email,
             phone: phone || existingCustomer.phone,
             name: name || existingCustomer.name,
@@ -120,17 +145,109 @@ export const findOrCreateCustomer = onCall(
           
           console.log(`📦 Migrating ${appointmentsQuery.size} appointments to new customer ID`);
           
-          const batch = db.batch();
-          appointmentsQuery.forEach(doc => {
-            batch.update(doc.ref, { 
-              customerId: authUid,
-              updatedAt: new Date().toISOString()
-            });
-          });
-          
           if (appointmentsQuery.size > 0) {
-            await batch.commit();
+            // Use batch writes for better performance and atomicity
+            const batch = db.batch();
+            const batchSize = 500; // Firestore batch limit
+            let currentBatch = db.batch();
+            let batchCount = 0;
+            
+            appointmentsQuery.forEach(doc => {
+              currentBatch.update(doc.ref, { 
+                customerId: authUid,
+                updatedAt: new Date().toISOString()
+              });
+              batchCount++;
+              
+              // Commit batch when it reaches the limit
+              if (batchCount >= batchSize) {
+                batch.commit();
+                currentBatch = db.batch();
+                batchCount = 0;
+              }
+            });
+            
+            // Commit any remaining updates
+            if (batchCount > 0) {
+              await currentBatch.commit();
+            }
+            
             console.log(`✅ Migrated ${appointmentsQuery.size} appointments`);
+          }
+          
+          // Also migrate any related data (availability, holds, etc.)
+          try {
+            // Migrate availability records
+            const availabilityQuery = await db.collection('availability')
+              .where('customerId', '==', existingCustomer.id)
+              .get();
+            
+            if (availabilityQuery.size > 0) {
+              const availabilityBatch = db.batch();
+              availabilityQuery.forEach(doc => {
+                availabilityBatch.update(doc.ref, { 
+                  customerId: authUid,
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              await availabilityBatch.commit();
+              console.log(`✅ Migrated ${availabilityQuery.size} availability records`);
+            }
+            
+            // Migrate holds
+            const holdsQuery = await db.collection('holds')
+              .where('userId', '==', existingCustomer.id)
+              .get();
+            
+            if (holdsQuery.size > 0) {
+              const holdsBatch = db.batch();
+              holdsQuery.forEach(doc => {
+                holdsBatch.update(doc.ref, { 
+                  userId: authUid,
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              await holdsBatch.commit();
+              console.log(`✅ Migrated ${holdsQuery.size} holds`);
+            }
+            
+            // Migrate skin analyses
+            const skinAnalysesQuery = await db.collection('skinAnalyses')
+              .where('customerId', '==', existingCustomer.id)
+              .get();
+            
+            if (skinAnalysesQuery.size > 0) {
+              const skinAnalysesBatch = db.batch();
+              skinAnalysesQuery.forEach(doc => {
+                skinAnalysesBatch.update(doc.ref, { 
+                  customerId: authUid,
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              await skinAnalysesBatch.commit();
+              console.log(`✅ Migrated ${skinAnalysesQuery.size} skin analyses`);
+            }
+            
+            // Migrate consent forms
+            const consentFormsQuery = await db.collection('consentForms')
+              .where('customerId', '==', existingCustomer.id)
+              .get();
+            
+            if (consentFormsQuery.size > 0) {
+              const consentFormsBatch = db.batch();
+              consentFormsQuery.forEach(doc => {
+                consentFormsBatch.update(doc.ref, { 
+                  customerId: authUid,
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              await consentFormsBatch.commit();
+              console.log(`✅ Migrated ${consentFormsQuery.size} consent forms`);
+            }
+            
+          } catch (migrationError) {
+            console.error('⚠️ Error migrating related data:', migrationError);
+            // Don't fail the merge if related data migration fails
           }
           
           // Mark old customer document as migrated (keep for audit trail)
@@ -181,8 +298,8 @@ export const findOrCreateCustomer = onCall(
         email: email || null,
         phone: phone || null,
         profilePictureUrl: profilePictureUrl || null,
-        canonicalEmail: canonicalEmail,
-        canonicalPhone: canonicalPhone,
+        canonicalEmail: canonicalEmail || null,
+        canonicalPhone: canonicalPhone || null,
         authUid: authUid || null,
         identityStatus: authUid ? 'auth' : 'guest',
         status: 'active',

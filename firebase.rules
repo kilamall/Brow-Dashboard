@@ -210,6 +210,13 @@ service cloud.firestore {
         request.resource.data.requestedChanges is map;
       
       allow update: if isAdmin();
+      
+      // Allow delete if admin OR if customer document matches auth email/phone
+      allow delete: if isAdmin() || 
+        (request.auth != null && 
+         exists(/databases/$(database)/documents/customers/$(resource.data.customerId)) &&
+         (get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.email == request.auth.token.email ||
+          get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.phone == request.auth.token.phone_number));
     }
 
     // Consent Form Templates - Only admins can manage templates

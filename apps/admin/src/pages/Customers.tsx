@@ -8,6 +8,7 @@ import {
 } from '@buenobrows/shared/firestoreActions';
 import type { Customer } from '@buenobrows/shared/types';
 import CustomerProfile from '../components/CustomerProfile';
+import { doc, getDoc } from 'firebase/firestore';
 
 
 export default function Customers(){
@@ -22,6 +23,14 @@ export default function Customers(){
   useEffect(()=> {
     return watchCustomers(db, q, setRows);
   }, [q]);
+  
+  // Refresh customer list when customers are merged/deleted
+  const refreshCustomers = () => {
+    // Force a refresh by briefly changing the query and back
+    const originalQ = q;
+    setQ(q + ' ');
+    setTimeout(() => setQ(originalQ), 100);
+  };
   
   // Sort customers based on selected option
   const sortedRows = useMemo(() => {
@@ -263,6 +272,16 @@ export default function Customers(){
                                 <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(customer.status || 'pending')}`}>
                                   {customer.status || 'pending'}
                                 </span>
+                                {customer.identityStatus === 'migrated' && customer.migratedTo && (
+                                  <span className="text-xs px-2 py-0.5 rounded border bg-blue-100 text-blue-700 border-blue-300">
+                                    Merged
+                                  </span>
+                                )}
+                                {customer.identityStatus === 'auth' && (
+                                  <span className="text-xs px-2 py-0.5 rounded border bg-green-100 text-green-700 border-green-300">
+                                    Authenticated
+                                  </span>
+                                )}
                               </div>
                               
                               <div className="space-y-1 text-sm text-slate-600">
@@ -301,12 +320,64 @@ export default function Customers(){
                                 Edit
                               </button>
                               <button
-                                onClick={() => {
+                                disabled={customer.identityStatus === 'migrated'}
+                                title={customer.identityStatus === 'migrated' ? 'This customer has been merged and cannot be deleted' : 'Delete customer'}
+                                onClick={async () => {
                                   if (confirm(`Are you sure you want to permanently delete ${customer.name}?\n\nThis action cannot be undone and will remove:\n• Customer profile and contact information\n• All booking history\n• All related data`)) {
-                                    deleteCustomer(db, customer.id);
+                                    try {
+                                      console.log('🗑️ Attempting to delete customer:', customer.id, customer.name);
+                                      
+                                      // Check if customer has been merged
+                                      if (customer.identityStatus === 'migrated' && customer.migratedTo) {
+                                        console.log('🔄 Customer has been merged to:', customer.migratedTo);
+                                        alert(`This customer has been merged with their authenticated account. The merged account is now the active one.`);
+                                        refreshCustomers();
+                                        return;
+                                      }
+                                      
+                                      // Additional check: Try to get the current customer document to see if it still exists
+                                      const customerRef = doc(db, 'customers', customer.id);
+                                      const customerDoc = await getDoc(customerRef);
+                                      
+                                      if (!customerDoc.exists()) {
+                                        console.log('🔄 Customer document no longer exists, likely merged');
+                                        alert(`This customer appears to have been merged or deleted. Refreshing the list...`);
+                                        refreshCustomers();
+                                        return;
+                                      }
+                                      
+                                      const currentCustomerData = customerDoc.data();
+                                      
+                                      // Check if the customer has been merged since the list was loaded
+                                      if (currentCustomerData.identityStatus === 'migrated' && currentCustomerData.migratedTo) {
+                                        console.log('🔄 Customer was merged after list load:', currentCustomerData.migratedTo);
+                                        alert(`This customer has been merged with their authenticated account. The merged account is now the active one.`);
+                                        refreshCustomers();
+                                        return;
+                                      }
+                                      
+                                      await deleteCustomer(db, customer.id);
+                                      console.log('✅ Customer deleted successfully:', customer.name);
+                                      refreshCustomers(); // Refresh the list after deletion
+                                    } catch (error: any) {
+                                      console.error('❌ Failed to delete customer:', error);
+                                      
+                                      // Check if customer was already deleted/merged
+                                      if (error.message.includes('does not exist') || error.message.includes('not found')) {
+                                        console.log('🔄 Customer no longer exists, refreshing list...');
+                                        refreshCustomers();
+                                        alert(`This customer appears to have been merged or deleted. Refreshing the list...`);
+                                      } else {
+                                        alert(`Failed to delete customer: ${error.message}`);
+                                      }
+                                    }
                                   }
                                 }}
-                                className="px-3 py-1 text-sm border border-red-300 text-red-600 rounded-md hover:bg-red-50 transition-colors"
+                                className={`px-3 py-1 text-sm border rounded-md transition-colors ${
+                                  customer.identityStatus === 'migrated' 
+                                    ? 'border-gray-300 text-gray-400 bg-gray-100 cursor-not-allowed' 
+                                    : 'border-red-300 text-red-600 hover:bg-red-50'
+                                }`}
                               >
                                 Delete
                               </button>

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getAuth, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, addDoc, deleteDoc } from 'firebase/firestore';
 import type { Appointment, Service, SkinAnalysis, CustomerConsent, AppointmentEditRequest } from '@buenobrows/shared/types';
 import { watchCustomerConsents } from '@buenobrows/shared/consentFormHelpers';
 import { format } from 'date-fns';
@@ -115,22 +115,28 @@ export default function ClientDashboard() {
     fetchingRef.current = true;
     let unsubscribeAppointments: (() => void) | null = null;
 
-    // ✅ FIXED: Use auth.uid directly as customer ID (matches how we create customers in Login.tsx)
-    const custId = user.uid;
-    const customerRef = doc(db, 'customers', custId);
+    // Use findOrCreateCustomer to get the correct customer ID
+    const functions = getFunctions();
+    const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
     
-    console.log(`🔍 Looking for customer by auth.uid:`, custId);
+    console.log(`🔍 Finding customer for auth.uid:`, user.uid);
 
-    const unsubscribeCustomer = onSnapshot(customerRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        console.log(`No customer record found for uid:`, custId);
+    findOrCreateCustomer({
+      authUid: user.uid,
+      email: user.email || undefined,
+      name: user.displayName || 'Customer',
+      phone: user.phoneNumber || undefined,
+    }).then((result: any) => {
+      const custId = result.data?.customerId;
+      if (!custId) {
+        console.log('❌ No customer ID returned from findOrCreateCustomer');
         setAppointments([]);
         setHasCustomerRecord(false);
         setCustomerId(null);
         return;
       }
 
-      console.log('✅ Found customer:', custId);
+      console.log('✅ Found customer ID:', custId);
       setHasCustomerRecord(true);
       setCustomerId(custId);
 
@@ -176,11 +182,15 @@ export default function ClientDashboard() {
         console.log(`✅ Fetched ${appts.length} appointments for customer ${custId}`);
         setAppointments(appts);
       });
+    }).catch((error) => {
+      console.error('❌ Error finding customer:', error);
+      setAppointments([]);
+      setHasCustomerRecord(false);
+      setCustomerId(null);
     });
 
     return () => {
       fetchingRef.current = false;
-      unsubscribeCustomer();
       if (unsubscribeAppointments) {
         unsubscribeAppointments();
       }
@@ -303,6 +313,17 @@ export default function ClientDashboard() {
       alert('Failed to submit edit request. Please try again.');
     } finally {
       setEditRequestLoading(false);
+    }
+  };
+
+  const handleDeleteEditRequest = async (requestId: string) => {
+    if (!confirm('Delete this edit request? This action cannot be undone.')) return;
+    try {
+      await deleteDoc(doc(db, 'appointmentEditRequests', requestId));
+      alert('Edit request deleted successfully');
+    } catch (error: any) {
+      console.error('Error deleting edit request:', error);
+      alert('Failed to delete edit request. Please try again.');
     }
   };
 
@@ -437,22 +458,23 @@ export default function ClientDashboard() {
                 onClick={async () => {
                   if (!user?.uid) return;
                   try {
-                    const { doc, setDoc } = await import('firebase/firestore');
-                    const customerRef = doc(db, 'customers', user.uid);
-                    await setDoc(customerRef, {
+                    console.log('🔄 Creating customer profile via findOrCreateCustomer...');
+                    const functions = getFunctions();
+                    const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
+                    
+                    const result = await findOrCreateCustomer({
+                      authUid: user.uid,
                       name: user.displayName || 'Customer',
-                      email: user.email,
+                      email: user.email || null,
                       phone: user.phoneNumber || null,
-                      profilePictureUrl: user.photoURL || null,
-                      status: 'active',
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString(),
+                      profilePictureUrl: user.photoURL || null
                     });
-                    console.log('✅ Customer document created!');
-                    // The real-time listener will automatically detect the new customer document
+                    
+                    console.log('✅ Customer profile created/updated:', result.data);
+                    // The real-time listener will automatically detect the customer document
                   } catch (error) {
-                    console.error('❌ Failed to create customer document:', error);
-                    alert('Failed to create customer profile. Please try again.');
+                    console.error('❌ Failed to create customer profile:', error);
+                    alert(`Failed to create customer profile: ${error.message || 'Unknown error'}`);
                   }
                 }}
                 className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"
@@ -720,8 +742,8 @@ export default function ClientDashboard() {
           </div>
         )}
 
-        {/* Edit Requests */}
-        {hasCustomerRecord && editRequests.length > 0 && (
+        {/* Edit Requests - Only show pending requests */}
+        {hasCustomerRecord && editRequests.filter(request => request.status === 'pending').length > 0 && (
           <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-serif text-terracotta">Edit Requests</h2>
@@ -742,7 +764,7 @@ export default function ClientDashboard() {
             </div>
             {!collapsedSections.editRequests && (
             <div className="space-y-4">
-              {editRequests.map((request) => {
+              {editRequests.filter(request => request.status === 'pending').map((request) => {
                 const appointment = appointments.find(apt => apt.id === request.appointmentId);
                 const service = appointment ? services[appointment.serviceId] : null;
                 
@@ -812,6 +834,19 @@ export default function ClientDashboard() {
                       <div className="text-xs text-slate-500">
                         Submitted: {safeFormatDate(request.createdAt, 'MMM d, yyyy \'at\' h:mm a', 'Date Unknown', `Edit Request ${request.id} - Submitted`)}
                       </div>
+                    </div>
+                    
+                    {/* Delete Button */}
+                    <div className="mt-3 pt-3 border-t border-blue-200">
+                      <button
+                        onClick={() => handleDeleteEditRequest(request.id)}
+                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Delete Request
+                      </button>
                     </div>
                   </div>
                 );

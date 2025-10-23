@@ -33,10 +33,9 @@ export const syncCustomerVisits = onCall(
       // Process each customer
       for (const customer of customers) {
         try {
-          // Get all confirmed appointments for this customer
+          // Get all appointments for this customer
           const appointmentsSnapshot = await db.collection('appointments')
             .where('customerId', '==', customer.id)
-            .where('status', '==', 'confirmed')
             .get();
 
           const appointments = appointmentsSnapshot.docs.map(doc => ({
@@ -44,16 +43,26 @@ export const syncCustomerVisits = onCall(
             ...doc.data()
           } as any));
 
-          // Calculate total visits and last visit
-          const totalVisits = appointments.length;
+          // Calculate total visits using the same logic as CustomerProfile
+          // Count only completed appointments OR confirmed appointments in the past
+          const now = new Date();
+          const completedVisits = appointments.filter(appointment => {
+            const appointmentDate = new Date(appointment.start);
+            return (
+              (appointment.status === 'completed') ||
+              (appointment.status === 'confirmed' && appointmentDate < now)
+            );
+          });
+
+          const totalVisits = completedVisits.length;
           let lastVisit = null;
 
-          if (appointments.length > 0) {
-            // Find the most recent appointment
-            const sortedAppointments = appointments.sort((a, b) => 
+          if (completedVisits.length > 0) {
+            // Find the most recent completed visit
+            const sortedCompletedVisits = completedVisits.sort((a, b) => 
               new Date(b.start).getTime() - new Date(a.start).getTime()
             );
-            lastVisit = new Date(sortedAppointments[0].start);
+            lastVisit = new Date(sortedCompletedVisits[0].start);
           }
 
           // Update customer with correct stats

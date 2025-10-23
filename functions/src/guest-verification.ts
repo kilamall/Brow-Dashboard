@@ -381,9 +381,10 @@ export const sendSMSVerificationCode = onCall(
       throw new HttpsError('invalid-argument', 'Invalid phone number format');
     }
 
-    if (!initAWS()) {
-      throw new HttpsError('failed-precondition', 'SMS service not configured');
-    }
+    // If no provider is configured, we still proceed and log the attempt.
+    // sendVerificationSMS() already supports a fallback that logs instead of sending.
+    // This keeps UX consistent with sign-in where SMS can still be used.
+    initAWS();
 
     try {
       const code = generateVerificationCode();

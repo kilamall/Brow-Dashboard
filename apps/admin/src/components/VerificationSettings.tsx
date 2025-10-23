@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 
 interface VerificationSettings {
   emailVerificationEnabled: boolean;
   smsVerificationEnabled: boolean;
   requireVerification: boolean;
+  useFirebasePhoneAuth: boolean;
 }
 
 export default function VerificationSettings() {
@@ -13,7 +14,8 @@ export default function VerificationSettings() {
   const [settings, setSettings] = useState<VerificationSettings>({
     emailVerificationEnabled: true,
     smsVerificationEnabled: true,
-    requireVerification: true
+    requireVerification: true,
+    useFirebasePhoneAuth: false
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,10 +44,15 @@ export default function VerificationSettings() {
     setMessage('');
 
     try {
-      await updateDoc(doc(db, 'settings', 'verification'), {
-        ...settings,
-        updatedAt: new Date()
-      });
+      // Create the doc if it doesn't exist; merge to avoid clobbering
+      await setDoc(
+        doc(db, 'settings', 'verification'),
+        {
+          ...settings,
+          updatedAt: new Date()
+        },
+        { merge: true }
+      );
       setMessage('Settings saved successfully!');
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
@@ -129,6 +136,44 @@ export default function VerificationSettings() {
         )}
       </div>
 
+      {/* Firebase Phone Auth */}
+      <div className="border border-slate-200 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-medium text-slate-800">Use Firebase Phone Auth</h3>
+            <p className="text-sm text-slate-600">Use Firebase's built-in phone authentication instead of custom SMS providers</p>
+          </div>
+          <button
+            onClick={() => handleToggle('useFirebasePhoneAuth')}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              settings.useFirebasePhoneAuth ? 'bg-terracotta' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                settings.useFirebasePhoneAuth ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+        
+        {settings.useFirebasePhoneAuth && (
+          <div className="bg-green-50 border border-green-200 rounded p-3">
+            <p className="text-sm text-green-800">
+              <strong>Firebase Phone Auth enabled.</strong> SMS verification will use Firebase's managed service with better delivery rates.
+            </p>
+          </div>
+        )}
+        
+        {!settings.useFirebasePhoneAuth && (
+          <div className="bg-blue-50 border border-blue-200 rounded p-3">
+            <p className="text-sm text-blue-800">
+              <strong>Custom SMS providers.</strong> Using AWS SNS or Twilio for SMS delivery.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Require Verification */}
       <div className="border border-slate-200 rounded-lg p-4">
         <div className="flex items-center justify-between mb-4">
@@ -165,6 +210,7 @@ export default function VerificationSettings() {
         <div className="space-y-1 text-sm text-slate-600">
           <p>• Email verification: {settings.emailVerificationEnabled ? 'Enabled' : 'Disabled'}</p>
           <p>• SMS verification: {settings.smsVerificationEnabled ? 'Enabled' : 'Disabled'}</p>
+          <p>• Firebase Phone Auth: {settings.useFirebasePhoneAuth ? 'Enabled' : 'Disabled'}</p>
           <p>• Verification required: {settings.requireVerification ? 'Yes' : 'No'}</p>
         </div>
       </div>

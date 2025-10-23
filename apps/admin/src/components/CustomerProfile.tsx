@@ -95,6 +95,20 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
     }
   };
 
+  // Calculate completed visits (only past appointments with completed/confirmed status)
+  const getCompletedVisits = () => {
+    const now = new Date();
+    return appointments.filter(appointment => {
+      const appointmentDate = new Date(appointment.start);
+      return (
+        (appointment.status === 'completed') ||
+        (appointment.status === 'confirmed' && appointmentDate < now)
+      );
+    });
+  };
+
+  const completedVisits = getCompletedVisits();
+
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
 
@@ -141,9 +155,11 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
   };
 
   const calculateAverageSpending = () => {
-    const validAppointments = appointments.filter(apt => apt.status === 'confirmed' || apt.status === 'completed' || apt.status === 'pending');
-    if (validAppointments.length === 0) return 0;
-    return calculateTotalSpent() / validAppointments.length;
+    if (completedVisits.length === 0) return 0;
+    const completedSpending = completedVisits.reduce((total, apt) => {
+      return total + (apt.totalPrice || apt.bookedPrice || getServicePrice(apt.serviceId) || 0);
+    }, 0);
+    return completedSpending / completedVisits.length;
   };
 
   const getCustomerAvatar = () => {
@@ -382,7 +398,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                   <div className="text-xs text-slate-600">Average per Visit</div>
                 </div>
                 <div className="bg-purple-50 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-purple-600">{appointments.length}</div>
+                  <div className="text-2xl font-bold text-purple-600">{completedVisits.length}</div>
                   <div className="text-xs text-slate-600">Total Visits</div>
                 </div>
               </div>
@@ -515,13 +531,13 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-slate-600">Total Visits:</span>
-                      <span className="font-medium">{appointments.length}</span>
+                      <span className="font-medium">{completedVisits.length}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-600">Average per Month:</span>
                       <span className="font-medium">
                         {customer.createdAt ? 
-                          (appointments.length / Math.max(1, Math.floor((Date.now() - (customer.createdAt.toMillis?.() || customer.createdAt)) / (1000 * 60 * 60 * 24 * 30)))).toFixed(1) : 
+                          (completedVisits.length / Math.max(1, Math.floor((Date.now() - (customer.createdAt.toMillis?.() || customer.createdAt)) / (1000 * 60 * 60 * 24 * 30)))).toFixed(1) : 
                           'N/A'
                         }
                       </span>

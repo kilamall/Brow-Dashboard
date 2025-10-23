@@ -122,3 +122,5 @@ firebase deploy --only hosting:admin
 The Edit Requests tab has been **completely removed** from the sidebar and replaced with a much better modal-based system. Users can now access edit request history from any appointment view without losing context, and the interface is more professional and user-friendly.
 
 **The Edit Requests tab is now completely gone from the sidebar!** ✅
+
+

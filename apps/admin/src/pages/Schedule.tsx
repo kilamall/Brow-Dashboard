@@ -275,7 +275,30 @@ export default function Schedule() {
 
   const days: Date[] = useMemo(() => {
     const list: Date[] = [];
-    for (let d = new Date(gridStart); d <= gridEnd; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) list.push(new Date(d));
+    const current = new Date(gridStart);
+    const end = new Date(gridEnd);
+    
+    // Add safety check to prevent infinite loops
+    let iterations = 0;
+    const maxIterations = 50; // Should never need more than 6 weeks
+    
+    // Use date-fns addDays to handle DST transitions properly
+    while (current <= end && iterations < maxIterations) {
+      list.push(new Date(current));
+      current.setDate(current.getDate() + 1);
+      iterations++;
+    }
+    
+    // Debug logging for calendar issues
+    if (iterations >= maxIterations) {
+      console.error('Calendar days calculation hit max iterations:', {
+        gridStart: gridStart.toISOString(),
+        gridEnd: gridEnd.toISOString(),
+        current: current.toISOString(),
+        listLength: list.length
+      });
+    }
+    
     return list;
   }, [gridStart, gridEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -336,34 +359,40 @@ export default function Schedule() {
 
   // Calculate smart positioning for hover popup
   const calculateHoverPosition = (cellElement: HTMLElement): { x: number; y: number; position: 'above' | 'below' } => {
-    const rect = cellElement.getBoundingClientRect();
-    const popupHeight = 200; // Approximate height
-    const popupWidth = 256; // w-64 = 256px
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    
-    // Determine if popup should go above or below
-    const spaceBelow = viewportHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    const position: 'above' | 'below' = spaceBelow < popupHeight + 16 && spaceAbove > spaceBelow ? 'above' : 'below';
-    
-    // Calculate horizontal position
-    let x = rect.left + rect.width / 2 - popupWidth / 2;
-    
-    // Adjust if popup would go off the left edge
-    if (x < 16) {
-      x = 16;
+    try {
+      const rect = cellElement.getBoundingClientRect();
+      const popupHeight = 200; // Approximate height
+      const popupWidth = 256; // w-64 = 256px
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+      
+      // Determine if popup should go above or below
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const position: 'above' | 'below' = spaceBelow < popupHeight + 16 && spaceAbove > spaceBelow ? 'above' : 'below';
+      
+      // Calculate horizontal position
+      let x = rect.left + rect.width / 2 - popupWidth / 2;
+      
+      // Adjust if popup would go off the left edge
+      if (x < 16) {
+        x = 16;
+      }
+      
+      // Adjust if popup would go off the right edge
+      if (x + popupWidth > viewportWidth - 16) {
+        x = viewportWidth - popupWidth - 16;
+      }
+      
+      // Calculate vertical position
+      const y = position === 'above' ? rect.top - 8 : rect.bottom + 8;
+      
+      return { x, y, position };
+    } catch (error) {
+      console.error('Error calculating hover position:', error);
+      // Return a safe default position
+      return { x: 100, y: 100, position: 'below' as const };
     }
-    
-    // Adjust if popup would go off the right edge
-    if (x + popupWidth > viewportWidth - 16) {
-      x = viewportWidth - popupWidth - 16;
-    }
-    
-    // Calculate vertical position
-    const y = position === 'above' ? rect.top - 8 : rect.bottom + 8;
-    
-    return { x, y, position };
   };
 
   // Persist layout and multiEmployee state
@@ -575,6 +604,24 @@ export default function Schedule() {
     }
   };
 
+  // Handle edit request deletion
+  const handleDeleteEditRequest = async (request: AppointmentEditRequest) => {
+    if (!db) return;
+    
+    try {
+      const confirmed = window.confirm('Delete this edit request? This action cannot be undone.');
+      if (!confirmed) return;
+
+      // Delete the edit request document
+      await deleteDoc(doc(db, 'appointmentEditRequests', request.id));
+
+      console.log('✅ Edit request deleted');
+    } catch (error) {
+      console.error('❌ Error deleting edit request:', error);
+      alert('Failed to delete edit request. Please try again.');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Error Messages */}
@@ -747,7 +794,11 @@ export default function Schedule() {
                       && safeParseDate(a.start) <= new Date()
                       && safeParseDate(a.start) >= sevenDaysAgo;
                   })
-                  .reverse()
+                  .sort((a, b) => {
+                    const dateA = safeParseDate(a.start).getTime();
+                    const dateB = safeParseDate(b.start).getTime();
+                    return dateB - dateA; // Most recent first
+                  })
                   .slice(0, 5)
                 .map((a) => (
                   <div 
@@ -871,6 +922,13 @@ export default function Schedule() {
                     >
                       Deny
                     </button>
+                    <button
+                      onClick={() => handleDeleteEditRequest(request)}
+                      className="px-3 py-1.5 bg-gray-600 text-white text-xs rounded-md hover:bg-gray-700 transition-colors"
+                      title="Delete this edit request"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               );
@@ -913,7 +971,20 @@ export default function Schedule() {
       <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-xl overflow-hidden">
         {days.map((d, idx) => {
           const inMonth = isSameMonth(d, month);
-          const todaysAppts = appts.filter((a) => isSameDay(safeParseDate(a.start), d) && a.status !== 'cancelled');
+          const todaysAppts = appts.filter((a) => {
+            try {
+              const appointmentDate = safeParseDate(a.start);
+              return isSameDay(appointmentDate, d) && a.status !== 'cancelled';
+            } catch (error) {
+              console.error('Error filtering appointment for date:', {
+                appointmentId: a.id,
+                start: a.start,
+                targetDate: d.toISOString(),
+                error
+              });
+              return false;
+            }
+          });
           return (
             <CalendarDayHighlighting
               key={idx}
@@ -983,7 +1054,20 @@ export default function Schedule() {
           }}
         >
           {(() => {
-            const todaysAppts = appts.filter((a) => isSameDay(safeParseDate(a.start), hoverDate) && a.status !== 'cancelled');
+            const todaysAppts = appts.filter((a) => {
+              try {
+                const appointmentDate = safeParseDate(a.start);
+                return isSameDay(appointmentDate, hoverDate) && a.status !== 'cancelled';
+              } catch (error) {
+                console.error('Error filtering appointment in hover popup:', {
+                  appointmentId: a.id,
+                  start: a.start,
+                  hoverDate: hoverDate.toISOString(),
+                  error
+                });
+                return false;
+              }
+            });
             return (
               <>
                 <div className="text-xs font-medium mb-2">{format(hoverDate, 'PP')}</div>

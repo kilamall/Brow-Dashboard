@@ -23,7 +23,8 @@ export const manualCleanup = onCall(
       'expiredHolds', 
       'expiredTokens',
       'oldMessages',
-      'oldSkinAnalysisRequests'
+      'oldSkinAnalysisRequests',
+      'oldEditRequests'
     ];
 
     console.log('Starting manual cleanup for types:', typesToClean);
@@ -34,6 +35,7 @@ export const manualCleanup = onCall(
       expiredTokens: 0,
       oldMessages: 0,
       oldSkinAnalysisRequests: 0,
+      oldEditRequests: 0,
       errors: 0,
       timestamp: new Date().toISOString()
     };
@@ -57,6 +59,10 @@ export const manualCleanup = onCall(
       
       if (typesToClean.includes('oldSkinAnalysisRequests')) {
         await cleanupOldSkinAnalysisRequests(cleanupResults);
+      }
+      
+      if (typesToClean.includes('oldEditRequests')) {
+        await cleanupOldEditRequests(cleanupResults);
       }
       
       console.log('Manual cleanup completed:', cleanupResults);
@@ -85,6 +91,7 @@ export const getCleanupStats = onCall(
         expiredTokens: 0,
         oldMessages: 0,
         oldSkinAnalysisRequests: 0,
+        oldEditRequests: 0,
         timestamp: new Date().toISOString()
       };
 
@@ -120,6 +127,13 @@ export const getCleanupStats = onCall(
         .where('createdAt', '<', sixMonthsAgo.toISOString())
         .get();
       stats.oldSkinAnalysisRequests = oldSkinRequests.size;
+
+      // Count old edit requests (30+ days, approved/denied)
+      const oldEditRequests = await db.collection('appointmentEditRequests')
+        .where('status', 'in', ['approved', 'denied'])
+        .where('processedAt', '<', thirtyDaysAgo.toISOString())
+        .get();
+      stats.oldEditRequests = oldEditRequests.size;
 
       // Count old messages (approximate - messages older than 1 year)
       const oneYearAgo = new Date();
@@ -325,6 +339,43 @@ async function cleanupOldSkinAnalysisRequests(results: any) {
     
   } catch (error) {
     console.error('Error cleaning up old skin analysis requests:', error);
+    results.errors++;
+  }
+}
+
+async function cleanupOldEditRequests(results: any) {
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const oldRequests = await db.collection('appointmentEditRequests')
+      .where('status', 'in', ['approved', 'denied'])
+      .where('processedAt', '<', thirtyDaysAgo.toISOString())
+      .limit(1000)
+      .get();
+    
+    if (oldRequests.empty) {
+      console.log('No old edit requests to clean up');
+      return;
+    }
+
+    const batchSize = 500;
+    const docs = oldRequests.docs;
+    
+    for (let i = 0; i < docs.length; i += batchSize) {
+      const batch = db.batch();
+      const batchDocs = docs.slice(i, i + batchSize);
+      
+      batchDocs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      
+      await batch.commit();
+      results.oldEditRequests += batchDocs.length;
+    }
+    
+  } catch (error) {
+    console.error('Error cleaning up old edit requests:', error);
     results.errors++;
   }
 }

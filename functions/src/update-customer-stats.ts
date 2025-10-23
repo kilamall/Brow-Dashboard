@@ -13,32 +13,10 @@ export const onAppointmentCreatedUpdateStats = onDocumentCreated(
     const appointmentData = event.data?.data();
     if (!appointmentData) return;
 
-    const { customerId, start, status } = appointmentData;
-    
-    // Only update stats for confirmed appointments
-    if (status !== 'confirmed') return;
+    const { customerId } = appointmentData;
 
     try {
-      const customerRef = db.collection('customers').doc(customerId);
-      const customerDoc = await customerRef.get();
-      
-      if (!customerDoc.exists) {
-        console.log('Customer not found:', customerId);
-        return;
-      }
-
-      const customerData = customerDoc.data();
-      const currentVisits = customerData?.totalVisits || 0;
-      const appointmentDate = new Date(start);
-
-      // Update customer stats
-      await customerRef.update({
-        totalVisits: currentVisits + 1,
-        lastVisit: appointmentDate,
-        updatedAt: new Date().toISOString()
-      });
-
-      console.log(`Updated customer ${customerId} stats: ${currentVisits + 1} total visits`);
+      await recalculateCustomerStats(customerId);
     } catch (error) {
       console.error('Error updating customer stats:', error);
     }
@@ -62,37 +40,61 @@ export const onAppointmentStatusChangedUpdateStats = onDocumentUpdated(
     if (oldStatus === newStatus) return;
 
     try {
-      const customerRef = db.collection('customers').doc(customerId);
-      const customerDoc = await customerRef.get();
-      
-      if (!customerDoc.exists) {
-        console.log('Customer not found:', customerId);
-        return;
-      }
-
-      const customerData = customerDoc.data();
-      const currentVisits = customerData?.totalVisits || 0;
-
-      // If appointment was cancelled, decrement visits
-      if (oldStatus === 'confirmed' && newStatus === 'cancelled') {
-        await customerRef.update({
-          totalVisits: Math.max(0, currentVisits - 1),
-          updatedAt: new Date().toISOString()
-        });
-        console.log(`Decremented visits for customer ${customerId}: ${Math.max(0, currentVisits - 1)} total visits`);
-      }
-      // If appointment was confirmed, increment visits
-      else if (oldStatus !== 'confirmed' && newStatus === 'confirmed') {
-        const appointmentDate = new Date(afterData.start);
-        await customerRef.update({
-          totalVisits: currentVisits + 1,
-          lastVisit: appointmentDate,
-          updatedAt: new Date().toISOString()
-        });
-        console.log(`Incremented visits for customer ${customerId}: ${currentVisits + 1} total visits`);
-      }
+      await recalculateCustomerStats(customerId);
     } catch (error) {
       console.error('Error updating customer stats on status change:', error);
     }
   }
 );
+
+// Helper function to recalculate customer stats using the same logic as CustomerProfile
+async function recalculateCustomerStats(customerId: string) {
+  const customerRef = db.collection('customers').doc(customerId);
+  const customerDoc = await customerRef.get();
+  
+  if (!customerDoc.exists) {
+    console.log('Customer not found:', customerId);
+    return;
+  }
+
+  // Get all appointments for this customer
+  const appointmentsSnapshot = await db.collection('appointments')
+    .where('customerId', '==', customerId)
+    .get();
+
+  const appointments = appointmentsSnapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  } as any));
+
+  // Calculate total visits using the same logic as CustomerProfile
+  // Count only completed appointments OR confirmed appointments in the past
+  const now = new Date();
+  const completedVisits = appointments.filter(appointment => {
+    const appointmentDate = new Date(appointment.start);
+    return (
+      (appointment.status === 'completed') ||
+      (appointment.status === 'confirmed' && appointmentDate < now)
+    );
+  });
+
+  const totalVisits = completedVisits.length;
+  let lastVisit = null;
+
+  if (completedVisits.length > 0) {
+    // Find the most recent completed visit
+    const sortedCompletedVisits = completedVisits.sort((a, b) => 
+      new Date(b.start).getTime() - new Date(a.start).getTime()
+    );
+    lastVisit = new Date(sortedCompletedVisits[0].start);
+  }
+
+  // Update customer with correct stats
+  await customerRef.update({
+    totalVisits,
+    lastVisit: lastVisit ? lastVisit.toISOString() : null,
+    updatedAt: new Date().toISOString()
+  });
+
+  console.log(`Recalculated customer ${customerId} stats: ${totalVisits} total visits`);
+}

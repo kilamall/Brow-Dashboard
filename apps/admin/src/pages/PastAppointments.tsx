@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { format, parseISO } from 'date-fns';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
+import AttendanceConfirmationModal from '@/components/AttendanceConfirmationModal';
 
 // Helper function to safely parse dates
 function safeParseDate(dateString: string): Date {
@@ -34,10 +36,17 @@ function fmtCurrency(num: number): string {
 export default function PastAppointments() {
   const { db } = useFirebase();
   const navigate = useNavigate();
+  const functions = getFunctions();
   const [allAppts, setAllAppts] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Record<string, Service>>({});
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [loading, setLoading] = useState(true);
+  const [markingAttendanceIds, setMarkingAttendanceIds] = useState<Set<string>>(new Set());
+  const [attendanceModal, setAttendanceModal] = useState<{
+    open: boolean;
+    appointment: Appointment | null;
+    service: Service | null;
+  }>({ open: false, appointment: null, service: null });
 
   // Fetch appointments
   useEffect(() => {
@@ -76,6 +85,46 @@ export default function PastAppointments() {
     (a.status === 'confirmed' || a.status === 'pending' || a.status === 'completed' || a.status === 'no-show') 
     && safeParseDate(a.start) <= new Date()
   );
+
+  const handleMarkAttended = (appointmentId: string) => {
+    const appointment = allAppts.find(a => a.id === appointmentId);
+    const service = appointment ? services[appointment.serviceId] : null;
+    
+    if (!appointment || !service) {
+      alert('Appointment or service not found');
+      return;
+    }
+    
+    setAttendanceModal({
+      open: true,
+      appointment,
+      service
+    });
+  };
+
+  const handleAttendanceConfirmed = () => {
+    setAttendanceModal({ open: false, appointment: null, service: null });
+    // Data will auto-refresh from Firestore listener
+  };
+
+  const handleMarkNoShow = async (appointmentId: string) => {
+    if (!confirm('Mark this appointment as no-show?')) return;
+    setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
+    try {
+      const markAttendanceFn = httpsCallable(functions, 'markAttendance');
+      await markAttendanceFn({ appointmentId, attendance: 'no-show' });
+      alert('Appointment marked as no-show.');
+    } catch (error: any) {
+      console.error('Error marking no-show:', error);
+      alert(`Failed to mark no-show: ${error.message}`);
+    } finally {
+      setMarkingAttendanceIds(prev => {
+        const next = new Set(prev);
+        next.delete(appointmentId);
+        return next;
+      });
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -181,7 +230,33 @@ export default function PastAppointments() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(apt.status)}
+                      {apt.status === 'confirmed' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">Confirmed</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkAttended(apt.id);
+                            }}
+                            className="p-1 hover:bg-green-100 rounded text-green-600"
+                            title="Mark as attended"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkNoShow(apt.id);
+                            }}
+                            className="p-1 hover:bg-red-100 rounded text-red-600"
+                            title="Mark as no-show"
+                          >
+                            ✗
+                          </button>
+                        </div>
+                      ) : (
+                        getStatusBadge(apt.status)
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-900">
                       {fmtCurrency(apt.totalPrice ?? apt.bookedPrice ?? services[apt.serviceId]?.price ?? 0)}
@@ -201,6 +276,15 @@ export default function PastAppointments() {
           onClose={() => setSelectedAppointment(null)}
         />
       )}
+
+      {/* Attendance Confirmation Modal */}
+      <AttendanceConfirmationModal
+        open={attendanceModal.open}
+        appointment={attendanceModal.appointment}
+        service={attendanceModal.service}
+        onClose={() => setAttendanceModal({ open: false, appointment: null, service: null })}
+        onConfirmed={handleAttendanceConfirmed}
+      />
     </div>
   );
 }

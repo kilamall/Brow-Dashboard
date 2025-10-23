@@ -32,7 +32,7 @@ import {
 } from '@buenobrows/shared/consentFormHelpers';
 
 import { format } from 'date-fns';
-import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, type User, RecaptchaVerifier, signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
 import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
@@ -82,6 +82,7 @@ export default function Book() {
     emailVerificationEnabled: boolean;
     smsVerificationEnabled: boolean;
     requireVerification: boolean;
+    useFirebasePhoneAuth: boolean;
   } | null>(null);
   
   useEffect(() => {
@@ -136,7 +137,8 @@ export default function Book() {
           setVerificationSettings({
             emailVerificationEnabled: true,
             smsVerificationEnabled: true,
-            requireVerification: true
+            requireVerification: true,
+            useFirebasePhoneAuth: false
           });
         }
       } catch (error) {
@@ -145,7 +147,8 @@ export default function Book() {
         setVerificationSettings({
           emailVerificationEnabled: true,
           smsVerificationEnabled: true,
-          requireVerification: true
+          requireVerification: true,
+          useFirebasePhoneAuth: false
         });
       }
     };
@@ -695,6 +698,11 @@ export default function Book() {
   const [emailVerificationCode, setEmailVerificationCode] = useState('');
   const [phoneVerificationCode, setPhoneVerificationCode] = useState('');
   const [sentEmailCode, setSentEmailCode] = useState('');
+  
+  // Firebase Phone Auth state
+  const [recaptchaVerifier, setRecaptchaVerifier] = useState<RecaptchaVerifier | null>(null);
+  const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [firebasePhoneAuthLoading, setFirebasePhoneAuthLoading] = useState(false);
   const [sentPhoneCode, setSentPhoneCode] = useState('');
   const [verificationLoading, setVerificationLoading] = useState(false);
 
@@ -849,6 +857,82 @@ export default function Book() {
     }
   };
 
+  // Initialize Firebase Phone Auth reCAPTCHA
+  const initializeRecaptcha = () => {
+    if (recaptchaVerifier) return recaptchaVerifier;
+    
+    const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+      size: 'invisible',
+      callback: () => {
+        console.log('reCAPTCHA solved');
+      },
+      'expired-callback': () => {
+        console.log('reCAPTCHA expired');
+      }
+    });
+    
+    setRecaptchaVerifier(verifier);
+    return verifier;
+  };
+
+  // Send Firebase Phone Auth verification code
+  const sendFirebasePhoneVerification = async () => {
+    if (!gPhone) {
+      setError('Please enter a phone number first.');
+      return;
+    }
+
+    setFirebasePhoneAuthLoading(true);
+    setError('');
+
+    try {
+      const verifier = initializeRecaptcha();
+      const phoneNumber = gPhone.startsWith('+') ? gPhone : `+1${gPhone}`;
+      
+      const result = await signInWithPhoneNumber(auth, phoneNumber, verifier);
+      setConfirmationResult(result);
+      setSentPhoneCode(gPhone);
+      setError('');
+    } catch (err: any) {
+      console.error('Firebase Phone Auth error:', err);
+      setError(err.message || 'Failed to send verification code');
+    } finally {
+      setFirebasePhoneAuthLoading(false);
+    }
+  };
+
+  // Verify Firebase Phone Auth code
+  const verifyFirebasePhoneCode = async () => {
+    if (!phoneVerificationCode) {
+      setError('Please enter the verification code.');
+      return;
+    }
+
+    if (!confirmationResult) {
+      setError('No verification session found. Please request a new code.');
+      return;
+    }
+
+    setFirebasePhoneAuthLoading(true);
+    setError('');
+
+    try {
+      const credential = PhoneAuthProvider.credential(confirmationResult.verificationId, phoneVerificationCode);
+      await signInWithCredential(auth, credential);
+      
+      // Sign out immediately after verification to keep user as guest
+      await auth.signOut();
+      
+      setPhoneVerified(true);
+      setError('');
+    } catch (err: any) {
+      console.error('Firebase Phone Auth verification error:', err);
+      setError(err.message || 'Invalid verification code. Please try again.');
+    } finally {
+      setFirebasePhoneAuthLoading(false);
+    }
+  };
+
   // ---------- Consent form ----------
   const [consentForm, setConsentForm] = useState<ConsentFormTemplate | null>(null);
   const [showConsentForm, setShowConsentForm] = useState(false);
@@ -890,12 +974,17 @@ export default function Book() {
   async function ensureCustomerId(): Promise<string> {
     try {
       // Signed in: use Cloud Function to find or create customer
-      if (user?.email) {
-        console.log('Finding/creating customer for authenticated user:', user.email);
+      if (user) {
+        console.log('Finding/creating customer for authenticated user:', { 
+          email: user.email, 
+          phone: user.phoneNumber,
+          uid: user.uid 
+        });
         const result = await findOrCreateCustomerClient({
-          email: user.email,
+          authUid: user.uid,
+          email: user.email || undefined,
           name: user.displayName || 'Customer',
-          phone: undefined,
+          phone: user.phoneNumber || undefined,
         });
         console.log('Customer result for authenticated user:', result);
         
@@ -1774,206 +1863,350 @@ export default function Book() {
               </div>
             </div>
 
-            {/* Booking information form */}
+            {/* Sleek Booking Information Form */}
             {guestOpen && hold && !holdExpired && (
-              <div className="mt-3 grid gap-3">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <div>
-                    <label htmlFor="guest-name" className="sr-only">
-                      {user ? "Full name" : "Full name (optional)"}
-                    </label>
-                    <input
-                      type="text"
-                      id="guest-name"
-                      name="guest-name"
-                      className="rounded-md border p-2"
-                      placeholder={user ? "Full name" : "Full name (optional)"}
-                      value={gName}
-                      onChange={(e) => setGName(e.target.value)}
-                      autoComplete="name"
-                      aria-label={user ? "Full name" : "Full name (optional)"}
-                    />
+              <div className="mt-4 space-y-4">
+                {/* Dynamic Banner based on admin settings */}
+                {!user && verificationSettings && (
+                  <div className={`rounded-lg p-3 ${
+                    verificationSettings.requireVerification 
+                      ? 'bg-blue-50 border border-blue-200' 
+                      : 'bg-green-50 border border-green-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                        verificationSettings.requireVerification 
+                          ? 'bg-blue-100' 
+                          : 'bg-green-100'
+                      }`}>
+                        <svg className={`w-3 h-3 ${
+                          verificationSettings.requireVerification 
+                            ? 'text-blue-600' 
+                            : 'text-green-600'
+                        }`} fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <p className={`text-sm font-medium ${
+                          verificationSettings.requireVerification 
+                            ? 'text-blue-900' 
+                            : 'text-green-900'
+                        }`}>
+                          {verificationSettings.requireVerification 
+                            ? 'Contact verification required'
+                            : 'Contact verification optional'
+                          }
+                        </p>
+                        <p className={`text-xs mt-1 ${
+                          verificationSettings.requireVerification 
+                            ? 'text-blue-700' 
+                            : 'text-green-700'
+                        }`}>
+                          {verificationSettings.requireVerification 
+                            ? `Provide ${verificationSettings.emailVerificationEnabled && verificationSettings.smsVerificationEnabled 
+                                ? 'email or phone' 
+                                : verificationSettings.emailVerificationEnabled 
+                                  ? 'email' 
+                                  : 'phone'} and verify to book.`
+                            : 'You can book without verification, but we recommend providing contact info for confirmations.'
+                          }
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label htmlFor="guest-email" className="sr-only">
-                      {user ? "Email address" : "Email address"}
-                    </label>
-                    <input
-                      type="email"
-                      id="guest-email"
-                      name="guest-email"
-                      className={`rounded-md border p-2 ${!user && (gEmail || (!gEmail && !gPhone)) ? 'border-blue-300 bg-blue-50/30' : ''}`}
-                      placeholder={user ? "Email address" : "Email address"}
-                      value={gEmail}
-                      onChange={(e) => setGEmail(e.target.value)}
-                      inputMode="email"
-                      autoComplete="email"
-                      disabled={emailVerified}
-                      aria-label={user ? "Email address" : "Email address"}
-                      aria-describedby={emailVerified ? "email-verified" : undefined}
-                    />
-                    {emailVerified && (
-                      <span id="email-verified" className="sr-only">Email verified</span>
-                    )}
+                )}
+
+                {/* Sleek Contact Form */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label htmlFor="guest-name" className="text-sm font-medium text-slate-700">
+                        {user ? "Full name" : "Full name (optional)"}
+                      </label>
+                      <input
+                        type="text"
+                        id="guest-name"
+                        name="guest-name"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-terracotta focus:ring-1 focus:ring-terracotta/20 transition-colors"
+                        placeholder="Enter your name"
+                        value={gName}
+                        onChange={(e) => setGName(e.target.value)}
+                        autoComplete="name"
+                        aria-label={user ? "Full name" : "Full name (optional)"}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor="guest-email" className="text-sm font-medium text-slate-700">
+                        Email address
+                        {verificationSettings?.emailVerificationEnabled && (
+                          <span className="text-xs text-slate-500 ml-1">(will be verified)</span>
+                        )}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          id="guest-email"
+                          name="guest-email"
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:ring-1 focus:ring-terracotta/20 transition-colors ${
+                            emailVerified 
+                              ? 'border-green-300 bg-green-50' 
+                              : 'border-slate-300 focus:border-terracotta'
+                          }`}
+                          placeholder="your@email.com"
+                          value={gEmail}
+                          onChange={(e) => setGEmail(e.target.value)}
+                          inputMode="email"
+                          autoComplete="email"
+                          disabled={emailVerified}
+                          aria-label="Email address"
+                          aria-describedby={emailVerified ? "email-verified" : undefined}
+                        />
+                        {emailVerified && (
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                            <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                        )}
+                      </div>
+                      {emailVerified && (
+                        <span id="email-verified" className="sr-only">Email verified</span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <label htmlFor="guest-phone" className="sr-only">
+                  
+                  <div className="space-y-1">
+                    <label htmlFor="guest-phone" className="text-sm font-medium text-slate-700">
                       Phone number
+                      {verificationSettings?.smsVerificationEnabled && (
+                        <span className="text-xs text-slate-500 ml-1">(will be verified)</span>
+                      )}
                     </label>
-                    <input
-                      type="tel"
-                      id="guest-phone"
-                      name="guest-phone"
-                      className={`rounded-md border p-2 ${!user && (gPhone || (!gEmail && !gPhone)) ? 'border-blue-300 bg-blue-50/30' : ''}`}
-                      placeholder="Phone number"
-                      value={gPhone}
-                      onChange={(e) => setGPhone(e.target.value)}
-                      inputMode="tel"
-                      autoComplete="tel"
-                      disabled={phoneVerified}
-                      aria-label="Phone number"
-                      aria-describedby={phoneVerified ? "phone-verified" : undefined}
-                    />
+                    <div className="relative">
+                      <input
+                        type="tel"
+                        id="guest-phone"
+                        name="guest-phone"
+                        className={`w-full rounded-lg border px-3 py-2 text-sm focus:ring-1 focus:ring-terracotta/20 transition-colors ${
+                          phoneVerified 
+                            ? 'border-green-300 bg-green-50' 
+                            : 'border-slate-300 focus:border-terracotta'
+                        }`}
+                        placeholder="(555) 123-4567"
+                        value={gPhone}
+                        onChange={(e) => setGPhone(e.target.value)}
+                        inputMode="tel"
+                        autoComplete="tel"
+                        disabled={phoneVerified}
+                        aria-label="Phone number"
+                        aria-describedby={phoneVerified ? "phone-verified" : undefined}
+                      />
+                      {phoneVerified && (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
                     {phoneVerified && (
                       <span id="phone-verified" className="sr-only">Phone verified</span>
                     )}
                   </div>
                 </div>
                 
-                {!user && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 -mt-1">
-                    <p className="text-xs text-amber-900 flex items-start gap-2">
-                      <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                      </svg>
-                      <span>
-                        <strong>At least one contact method required.</strong> Provide either email or phone (or both). You must verify the contact method you provide.
-                      </span>
-                    </p>
-                  </div>
-                )}
-                
-                {/* Verification Section for Guest Users */}
+                {/* Sleek Verification Section */}
                 {!user && (gEmail || gPhone) && verificationSettings && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-                    <h4 className="font-semibold text-blue-900 text-sm">📧 Verify Your Contact Information</h4>
-                    <p className="text-xs text-blue-800 mb-2">Verify the contact method you provided to receive your appointment confirmation and reminders.</p>
-                    
-                    {/* Email Verification - only show if email was provided and email verification is enabled */}
-                    {gEmail && verificationSettings.emailVerificationEnabled && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-blue-900">Email:</span>
-                          {emailVerified ? (
-                            <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
-                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                              </svg>
-                              Verified
-                            </span>
-                          ) : (sentEmailCode || sentEmailCode === 'sent') ? (
-                            <div className="flex gap-2 flex-1">
-                              <input
-                                type="text"
-                                placeholder="Enter 6-digit code"
-                                value={emailVerificationCode}
-                                onChange={(e) => setEmailVerificationCode(e.target.value)}
-                                className="flex-1 px-3 py-1 border rounded text-sm"
-                                maxLength={6}
-                                aria-label="Email verification code"
-                                inputMode="numeric"
-                                pattern="[0-9]{6}"
-                              />
-                              <button
-                                onClick={verifyEmailCode}
-                                className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-                              >
-                                Verify
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={sendGuestEmailVerification}
-                              disabled={!gEmail || verificationLoading}
-                              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-                            >
-                              {verificationLoading ? 'Sending...' : 'Send Code'}
-                            </button>
-                          )}
-                        </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                        <svg className="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
                       </div>
-                    )}
+                      <h4 className="font-semibold text-slate-900 text-sm">Verify Your Contact Information</h4>
+                    </div>
+                    <p className="text-xs text-slate-600">We'll send you a verification code to confirm your contact details.</p>
                     
-                    {/* Phone Verification - only show if phone was provided and SMS verification is enabled */}
-                    {gPhone && verificationSettings.smsVerificationEnabled && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-blue-900">Phone:</span>
-                          {phoneVerified ? (
-                            <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
-                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    <div className="space-y-3">
+                      {/* Email Verification */}
+                      {gEmail && verificationSettings.emailVerificationEnabled && (
+                        <div className="bg-white border border-slate-200 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <svg className="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                                <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
                               </svg>
-                              Verified
-                            </span>
-                          ) : (sentPhoneCode || sentPhoneCode === 'sent') ? (
-                            <div className="flex gap-2 flex-1">
-                              <input
-                                type="text"
-                                placeholder="Enter 6-digit code"
-                                value={phoneVerificationCode}
-                                onChange={(e) => setPhoneVerificationCode(e.target.value)}
-                                className="flex-1 px-3 py-1 border rounded text-sm"
-                                maxLength={6}
-                                aria-label="Phone verification code"
-                                inputMode="numeric"
-                                pattern="[0-9]{6}"
-                              />
-                              <button
-                                onClick={verifyPhoneCode}
-                                className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
-                              >
-                                Verify
-                              </button>
+                              <span className="text-sm font-medium text-slate-700">Email verification</span>
                             </div>
-                          ) : (
-                            <button
-                              onClick={sendGuestPhoneVerification}
-                              disabled={!gPhone || verificationLoading}
-                              className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-                            >
-                              {verificationLoading ? 'Sending...' : 'Send Code'}
-                            </button>
-                          )}
+                            {emailVerified ? (
+                              <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                Verified
+                              </span>
+                            ) : (sentEmailCode || sentEmailCode === 'sent') ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Enter 6-digit code"
+                                  value={emailVerificationCode}
+                                  onChange={(e) => setEmailVerificationCode(e.target.value)}
+                                  className="w-24 px-2 py-1 border border-slate-300 rounded text-sm text-center"
+                                  maxLength={6}
+                                  aria-label="Email verification code"
+                                  inputMode="numeric"
+                                  pattern="[0-9]{6}"
+                                />
+                                <button
+                                  onClick={verifyEmailCode}
+                                  className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition-colors"
+                                >
+                                  Verify
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={sendGuestEmailVerification}
+                                disabled={!gEmail || verificationLoading}
+                                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                              >
+                                {verificationLoading ? 'Sending...' : 'Send Code'}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                      
+                      {/* Phone Verification */}
+                      {gPhone && verificationSettings.smsVerificationEnabled && (
+                        <div className="bg-white border border-slate-200 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <svg className="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
+                              </svg>
+                              <span className="text-sm font-medium text-slate-700">Phone verification</span>
+                            </div>
+                            {phoneVerified ? (
+                              <span className="inline-flex items-center gap-1 text-green-600 text-sm font-medium">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                Verified
+                              </span>
+                            ) : (sentPhoneCode || sentPhoneCode === 'sent') ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Enter 6-digit code"
+                                  value={phoneVerificationCode}
+                                  onChange={(e) => setPhoneVerificationCode(e.target.value)}
+                                  className="w-24 px-2 py-1 border border-slate-300 rounded text-sm text-center"
+                                  maxLength={6}
+                                  aria-label="Phone verification code"
+                                  inputMode="numeric"
+                                  pattern="[0-9]{6}"
+                                />
+                                <button
+                                  onClick={verificationSettings.useFirebasePhoneAuth ? verifyFirebasePhoneCode : verifyPhoneCode}
+                                  disabled={firebasePhoneAuthLoading || verificationLoading}
+                                  className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {firebasePhoneAuthLoading || verificationLoading ? 'Verifying...' : 'Verify'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={verificationSettings.useFirebasePhoneAuth ? sendFirebasePhoneVerification : sendGuestPhoneVerification}
+                                disabled={!gPhone || firebasePhoneAuthLoading || verificationLoading}
+                                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                              >
+                                {firebasePhoneAuthLoading || verificationLoading ? 'Sending...' : 'Send Code'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
                 
-                {/* SMS Consent - only show if phone number was provided */}
+                {/* SMS Consent */}
                 {gPhone && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <label className="flex items-start gap-2 cursor-pointer">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
                         id="sms-consent"
                         name="sms-consent"
                         checked={smsConsent}
                         onChange={(e) => setSmsConsent(e.target.checked)}
-                        className="mt-1"
+                        className="mt-0.5 w-4 h-4 text-terracotta border-slate-300 rounded focus:ring-terracotta/20"
                         aria-describedby="sms-consent-description"
                       />
-                      <span id="sms-consent-description" className="text-xs text-slate-700">
-                        <strong>Opt-in to SMS messages:</strong> I agree to receive automated text messages from Bueno Brows at <strong>(650) 613-8455</strong> for appointment confirmations, reminders, and updates. Message frequency varies. Message and data rates may apply. Reply <strong>STOP</strong> to opt out anytime, <strong>HELP</strong> for assistance. Responses may be automated by our AI assistant.
-                      </span>
+                      <div className="flex-1">
+                        <span className="text-sm font-medium text-slate-700">SMS notifications</span>
+                        <p id="sms-consent-description" className="text-xs text-slate-600 mt-1">
+                          I agree to receive automated text messages from Bueno Brows at (650) 613-8455 for appointment confirmations, reminders, and updates. Message and data rates may apply. Reply STOP to opt out anytime.
+                        </p>
+                      </div>
                     </label>
                   </div>
                 )}
 
-                <div className="flex justify-end">
+                {/* Dynamic Status Messages */}
+                {!user && verificationSettings && (
+                  <div className="space-y-2">
+                    {(() => {
+                      const hasEmail = !!gEmail;
+                      const hasPhone = !!gPhone;
+                      const hasEmailToVerify = hasEmail && verificationSettings.emailVerificationEnabled;
+                      const hasPhoneToVerify = hasPhone && verificationSettings.smsVerificationEnabled;
+                      const hasAtLeastOneVerified = emailVerified || phoneVerified;
+                      
+                      if (verificationSettings.requireVerification && (hasEmailToVerify || hasPhoneToVerify) && !hasAtLeastOneVerified) {
+                        return (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                            <div className="flex items-center gap-2">
+                              <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              <span className="text-sm font-medium text-amber-800">
+                                Please verify your contact information to continue
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      if (!hasEmail && !hasPhone) {
+                        return (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="flex items-center gap-2">
+                              <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                              </svg>
+                              <span className="text-sm font-medium text-blue-800">
+                                Please provide at least one contact method
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      return null;
+                    })()}
+                  </div>
+                )}
+
+                {/* Sleek Booking Button */}
+                <div className="flex justify-end pt-2">
                   <button
-                    className="rounded-md bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90 font-medium"
+                    className="rounded-xl bg-terracotta px-6 py-3 text-white font-medium disabled:opacity-50 hover:bg-terracotta/90 transition-colors shadow-sm"
                     onClick={() => void finalizeBooking()}
                     disabled={user ? false : ((!gEmail && !gPhone) || (!emailVerified && !phoneVerified))}
                   >
@@ -2042,6 +2275,9 @@ export default function Book() {
           isOpen={showConsentForm}
         />
       )}
+
+      {/* reCAPTCHA Container for Firebase Phone Auth */}
+      <div id="recaptcha-container" className="hidden"></div>
 
       {/* Service Details Modal */}
       {showServiceModal && selectedService && (

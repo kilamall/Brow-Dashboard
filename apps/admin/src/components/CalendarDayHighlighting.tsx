@@ -115,3 +115,4 @@ export function useIsDayOpen(date: Date) {
 
   return { isOpen, loading };
 }
+

@@ -59,8 +59,8 @@ export default function ConsentForm({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full my-8 max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full my-2 sm:my-8 max-h-[95vh] sm:max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="border-b border-slate-200 p-6 flex-shrink-0">
           <div className="flex items-start justify-between">
@@ -88,8 +88,9 @@ export default function ConsentForm({
 
         {/* Scrollable Content */}
         <div
-          className="flex-grow overflow-y-auto p-6 space-y-6"
+          className="flex-grow overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 overscroll-contain"
           onScroll={handleScroll}
+          style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {/* Introduction */}
           <div className="prose prose-sm max-w-none">
@@ -150,7 +151,7 @@ export default function ConsentForm({
         </div>
 
         {/* Footer - Signature */}
-        <div className="border-t border-slate-200 p-6 bg-slate-50 flex-shrink-0 space-y-4">
+        <div className="border-t border-slate-200 p-4 sm:p-6 bg-slate-50 flex-shrink-0 space-y-3 sm:space-y-4">
           {/* Signature Input */}
           <div>
             <label htmlFor="signature" className="block text-sm font-medium text-slate-700 mb-2">
@@ -192,11 +193,11 @@ export default function ConsentForm({
           )}
 
           {/* Action Buttons */}
-          <div className="flex gap-3 justify-end pt-2">
+          <div className="flex flex-col sm:flex-row gap-3 justify-end pt-2">
             {onDecline && (
               <button
                 onClick={onDecline}
-                className="px-6 py-3 rounded-lg border-2 border-slate-300 text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+                className="px-6 py-3 rounded-lg border-2 border-slate-300 text-slate-700 font-medium hover:bg-slate-50 transition-colors order-2 sm:order-1"
               >
                 Cancel
               </button>
@@ -204,7 +205,7 @@ export default function ConsentForm({
             <button
               onClick={() => canSubmit && onAgree(signature)}
               disabled={!canSubmit}
-              className="px-8 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-8 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors order-1 sm:order-2"
             >
               I Agree & Sign
             </button>

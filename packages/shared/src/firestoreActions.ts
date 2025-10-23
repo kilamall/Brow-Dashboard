@@ -368,8 +368,29 @@ export async function ensureCustomerDataConsistency(
 }
 
 export async function deleteCustomer(db: Firestore, id: string) {
-  await deleteDoc(doc(db, 'customers', id));
-  // Soft-delete alternative -> await updateCustomer(db, id, { status: 'blocked' });
+  try {
+    console.log('🗑️ deleteCustomer: Starting deletion for customer ID:', id);
+    
+    // Check if customer exists first
+    const customerRef = doc(db, 'customers', id);
+    const customerSnap = await getDoc(customerRef);
+    
+    if (!customerSnap.exists()) {
+      throw new Error(`Customer with ID ${id} does not exist`);
+    }
+    
+    console.log('✅ deleteCustomer: Customer exists, proceeding with deletion');
+    
+    // Delete the customer document
+    await deleteDoc(customerRef);
+    
+    console.log('✅ deleteCustomer: Customer deleted successfully');
+    
+    // Soft-delete alternative -> await updateCustomer(db, id, { status: 'blocked' });
+  } catch (error) {
+    console.error('❌ deleteCustomer: Error deleting customer:', error);
+    throw error; // Re-throw to let the UI handle it
+  }
 }
 
 export async function findCustomerByEmail(db: Firestore, email: string): Promise<Customer | null> {
@@ -397,6 +418,24 @@ export function watchCustomers(db: Firestore, term: string | undefined, cb: (row
   const all = query(base, orderBy('name', 'asc'), limit(500));
   return onSnapshot(all, (snap) => {
     let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Customer);
+    
+    // Filter out migrated customers to prevent confusion in admin UI
+    const beforeFilter = customers.length;
+    customers = customers.filter(customer => {
+      // Hide customers that have been migrated or have migratedTo field
+      const isMigrated = customer.identityStatus === 'migrated' || customer.migratedTo;
+      if (isMigrated) {
+        console.log('🚫 Hiding migrated customer:', customer.name, customer.id, {
+          identityStatus: customer.identityStatus,
+          migratedTo: customer.migratedTo
+        });
+      }
+      return !isMigrated;
+    });
+    
+    if (beforeFilter !== customers.length) {
+      console.log(`📊 Filtered out ${beforeFilter - customers.length} migrated customers`);
+    }
     
     // Case-insensitive filtering
     if (searchTerm) {

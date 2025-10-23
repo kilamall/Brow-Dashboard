@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, getDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { format, parseISO } from 'date-fns';
 import type { AppointmentEditRequest, Appointment, Service, Customer } from '@buenobrows/shared/types';
@@ -185,6 +185,24 @@ export default function EditRequestsModal({ isOpen, onClose }: Props) {
     } catch (error) {
       console.error('Error denying edit request:', error);
       alert('❌ Failed to deny edit request');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDelete = async (request: AppointmentEditRequest) => {
+    if (!db) return;
+    
+    const confirmed = window.confirm('Delete this edit request? This cannot be undone.');
+    if (!confirmed) return;
+
+    setProcessing(true);
+    try {
+      await deleteDoc(doc(db, 'appointmentEditRequests', request.id));
+      alert('Edit request deleted');
+    } catch (error) {
+      console.error('Error deleting edit request:', error);
+      alert('Failed to delete edit request');
     } finally {
       setProcessing(false);
     }
@@ -419,6 +437,32 @@ export default function EditRequestsModal({ isOpen, onClose }: Props) {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                               </svg>
                               Deny
+                            </button>
+                            <button
+                              onClick={() => handleDelete(request)}
+                              disabled={processing}
+                              className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                        
+                        {/* Delete button for approved/denied requests */}
+                        {request.status !== 'pending' && (
+                          <div className="flex gap-3 mt-4 pt-4 border-t border-slate-200">
+                            <button
+                              onClick={() => handleDelete(request)}
+                              disabled={processing}
+                              className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Delete
                             </button>
                           </div>
                         )}

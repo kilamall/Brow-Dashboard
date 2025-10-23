@@ -2,12 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { updateDoc, doc, getDoc, collection, query, where, onSnapshot, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import type { Appointment, Service, Customer, AppointmentEditRequest } from '@buenobrows/shared/types';
+import type { Appointment, Service, Customer } from '@buenobrows/shared/types';
 import { format, parseISO, addWeeks } from 'date-fns';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { addCustomerNote, updateCustomerNote, deleteCustomerNote } from '@buenobrows/shared/firestoreActions';
-import EditRequestConfirmModal from './EditRequestConfirmModal';
-import EditRequestsModal from './EditRequestsModal';
 
 interface Props {
   appointment: Appointment;
@@ -26,12 +24,27 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [newNote, setNewNote] = useState({ category: 'general' as const, content: '' });
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [noteContent, setNoteContent] = useState('');
-  const [editRequest, setEditRequest] = useState<AppointmentEditRequest | null>(null);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [approvingEdit, setApprovingEdit] = useState(false);
   const [services, setServices] = useState<Record<string, Service>>({});
-  const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
+  const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [editedPrice, setEditedPrice] = useState('');
+  const [tipAmount, setTipAmount] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
   const functions = getFunctions();
+
+  // Initialize price and tip values when appointment changes
+  useEffect(() => {
+    if (appointment) {
+      console.log('🔍 Appointment price data:', {
+        bookedPrice: appointment.bookedPrice,
+        totalPrice: appointment.totalPrice,
+        tip: appointment.tip,
+        serviceId: appointment.serviceId,
+        servicePrice: services[appointment.serviceId]?.price
+      });
+      setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+      setTipAmount((appointment.tip ?? 0).toString());
+    }
+  }, [appointment, services]);
 
   // Load customer data
   useEffect(() => {
@@ -67,26 +80,49 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     });
   }, [db]);
 
-  // Watch for pending edit requests for this appointment
-  useEffect(() => {
-    if (!db || !appointment.id) return;
+
+  const handleCancelPriceEdit = () => {
+    setIsEditingPrice(false);
+    setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+    setTipAmount((appointment.tip ?? 0).toString());
+  };
+
+  const handleSavePrice = async () => {
+    if (!appointment) return;
     
-    const ref = collection(db, 'appointmentEditRequests');
-    const q = query(
-      ref,
-      where('appointmentId', '==', appointment.id),
-      where('status', '==', 'pending')
-    );
+    const newPrice = parseFloat(editedPrice);
+    const newTip = parseFloat(tipAmount) || 0;
+    const newTotal = newPrice + newTip;
     
-    return onSnapshot(q, (snap) => {
-      if (!snap.empty) {
-        const doc = snap.docs[0];
-        setEditRequest({ id: doc.id, ...doc.data() } as AppointmentEditRequest);
-      } else {
-        setEditRequest(null);
-      }
-    });
-  }, [db, appointment.id]);
+    if (isNaN(newPrice) || newPrice < 0) {
+      alert('Please enter a valid price');
+      return;
+    }
+    
+    if (newTip < 0) {
+      alert('Tip amount cannot be negative');
+      return;
+    }
+    
+    setSavingPrice(true);
+    try {
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        bookedPrice: newPrice,
+        tip: newTip,
+        totalPrice: newTotal,
+        isPriceEdited: true,
+        updatedAt: new Date().toISOString()
+      });
+      
+      setIsEditingPrice(false);
+      alert('Price updated successfully!');
+    } catch (error) {
+      console.error('Failed to update price:', error);
+      alert('Failed to update price. Please try again.');
+    } finally {
+      setSavingPrice(false);
+    }
+  };
 
   const handleCancel = async () => {
     if (!confirm('Cancel this appointment? This action cannot be undone.')) return;
@@ -143,158 +179,6 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     }
   };
 
-  const handleApproveEditRequest = () => {
-    setShowConfirmModal(true);
-  };
-
-  const handleConfirmApproval = async () => {
-    if (!db || !editRequest) return;
-    
-    setApprovingEdit(true);
-    try {
-      // Update appointment in-place with only the changed fields
-      const updateData: any = {
-        updatedAt: new Date().toISOString(),
-        updatedForEdit: true,
-        editRequestId: editRequest.id,
-        editProcessedAt: new Date().toISOString(),
-        editProcessedBy: auth.currentUser?.uid || 'admin'
-      };
-
-      // Only apply changed fields
-      if (editRequest.requestedChanges.start) {
-        updateData.start = editRequest.requestedChanges.start;
-      }
-      if (editRequest.requestedChanges.serviceIds && editRequest.requestedChanges.serviceIds.length > 0) {
-        updateData.serviceId = editRequest.requestedChanges.serviceIds[0];
-        updateData.selectedServices = editRequest.requestedChanges.serviceIds;
-        
-        // Calculate total duration from selected services
-        const totalDuration = editRequest.requestedChanges.serviceIds.reduce((sum, id) => {
-          const service = services[id];
-          return sum + (service?.duration || 0);
-        }, 0);
-        updateData.duration = totalDuration;
-        
-        // Calculate total price from selected services
-        const totalPrice = editRequest.requestedChanges.serviceIds.reduce((sum, id) => {
-          const service = services[id];
-          return sum + (service?.price || 0);
-        }, 0);
-        updateData.bookedPrice = totalPrice;
-        updateData.totalPrice = totalPrice;
-      }
-      if (editRequest.requestedChanges.notes !== undefined) {
-        updateData.notes = editRequest.requestedChanges.notes || '';
-      }
-
-      // ✅ ROBUST: Update appointment first, then edit request status
-      let appointmentUpdateSuccess = false;
-      let editRequestUpdateSuccess = false;
-      
-      try {
-        // Step 1: Update the appointment
-        await updateDoc(doc(db, 'appointments', appointment.id), updateData);
-        appointmentUpdateSuccess = true;
-        console.log('✅ Appointment updated successfully');
-        
-        // Step 2: Mark edit request as approved
-        await updateDoc(doc(db, 'appointmentEditRequests', editRequest.id), {
-          status: 'approved',
-          processedAt: new Date().toISOString(),
-          processedBy: auth.currentUser?.uid || 'admin'
-        });
-        editRequestUpdateSuccess = true;
-        console.log('✅ Edit request status updated to approved');
-
-        setShowConfirmModal(false);
-        console.log('Edit request approved successfully');
-        
-      } catch (appointmentError) {
-        const errorMsg = appointmentError instanceof Error ? appointmentError.message : 'Unknown error';
-        
-        // If appointment update failed, don't update edit request status
-        if (!appointmentUpdateSuccess) {
-          throw new Error(`Failed to update appointment: ${errorMsg}`);
-        }
-        
-        // If edit request status update failed, try to rollback appointment
-        if (appointmentUpdateSuccess && !editRequestUpdateSuccess) {
-          try {
-            // Rollback appointment to original state
-            const rollbackData: Record<string, any> = {
-              updatedAt: new Date().toISOString(),
-              updatedForEdit: false,
-              editRequestId: null,
-              editProcessedAt: null,
-              editProcessedBy: null,
-            };
-            
-            // Restore original values if they were changed
-            if (editRequest.requestedChanges.start) {
-              rollbackData.start = appointment.start;
-            }
-            if (editRequest.requestedChanges.serviceIds) {
-              rollbackData.serviceId = appointment.serviceId;
-              rollbackData.selectedServices = (appointment as any).selectedServices;
-              rollbackData.duration = appointment.duration;
-              rollbackData.bookedPrice = appointment.bookedPrice;
-              rollbackData.totalPrice = appointment.totalPrice;
-            }
-            if (editRequest.requestedChanges.notes !== undefined) {
-              rollbackData.notes = appointment.notes;
-            }
-            
-            await updateDoc(doc(db, 'appointments', appointment.id), rollbackData);
-          } catch (rollbackError) {
-            const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : 'Unknown error';
-            throw new Error(`Appointment updated but edit request status update failed. Manual intervention may be required. Rollback failed: ${rollbackMsg}`);
-          }
-        }
-        
-        throw appointmentError;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      alert(`Failed to approve edit request: ${errorMessage}. Please try again or contact support if the issue persists.`);
-    } finally {
-      setApprovingEdit(false);
-    }
-  };
-
-  const handleDenyEditRequest = async () => {
-    if (!db || !editRequest) return;
-    
-    const confirmed = window.confirm('Are you sure you want to deny this edit request?');
-    if (!confirmed) return;
-
-    setLoading(true);
-    try {
-      // Update edit request status
-      await updateDoc(doc(db, 'appointmentEditRequests', editRequest.id), {
-        status: 'denied',
-        processedAt: new Date().toISOString(),
-        processedBy: auth.currentUser?.uid || 'admin'
-      });
-
-      // ✅ NEW: Check if there's a pending appointment for this request
-      // If so, cancel it
-      if (appointment && appointment.status === 'pending') {
-        await updateDoc(doc(db, 'appointments', appointment.id), {
-          status: 'cancelled',
-          updatedAt: new Date().toISOString()
-        });
-        console.log('✅ Cancelled pending appointment for denied edit request');
-      }
-
-      console.log('Edit request denied successfully');
-    } catch (error) {
-      console.error('Error denying edit request:', error);
-      alert('Failed to deny edit request. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleQuickRebook = () => {
     // Calculate date 2 weeks from today
@@ -522,9 +406,92 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     </button>
                   )}
                 </div>
-                {appointment.bookedPrice && (
-                  <div className="text-sm text-slate-500 mt-2">
-                    Price: ${appointment.bookedPrice}
+                
+                {/* Clickable Price Section */}
+                <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm text-slate-600">Total Price</div>
+                      <div className="text-2xl font-bold text-terracotta">
+                        ${(appointment.totalPrice ?? appointment.bookedPrice ?? 0).toFixed(2)}
+                      </div>
+                      {appointment.tip && appointment.tip > 0 && (
+                        <div className="text-sm text-slate-600">
+                          Service: ${(appointment.bookedPrice ?? 0).toFixed(2)} + Tip: ${appointment.tip.toFixed(2)}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setIsEditingPrice(true)}
+                      className="px-3 py-1 text-sm bg-terracotta text-white rounded hover:bg-terracotta/90 transition-colors"
+                    >
+                      Edit Price
+                    </button>
+                  </div>
+                </div>
+                {/* Price Editing Modal */}
+                {isEditingPrice && (
+                  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+                      <h3 className="text-lg font-semibold text-slate-800 mb-4">Edit Appointment Price</h3>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm text-slate-600 mb-1">Service Price</label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-500">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedPrice}
+                              onChange={(e) => setEditedPrice(e.target.value)}
+                              className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm text-slate-600 mb-1">Tip Amount</label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-500">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={tipAmount}
+                              onChange={(e) => setTipAmount(e.target.value)}
+                              className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                        
+                        <div className="bg-slate-50 rounded p-3 border">
+                          <div className="text-sm text-slate-600 mb-1">Total</div>
+                          <div className="text-xl font-bold text-terracotta">
+                            ${(parseFloat(editedPrice) + (parseFloat(tipAmount) || 0)).toFixed(2)}
+                          </div>
+                        </div>
+                        
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            onClick={handleSavePrice}
+                            disabled={savingPrice}
+                            className="flex-1 bg-terracotta text-white rounded px-4 py-2 text-sm hover:bg-terracotta/90 transition-colors disabled:opacity-50"
+                          >
+                            {savingPrice ? 'Saving...' : 'Save Changes'}
+                          </button>
+                          <button
+                            onClick={handleCancelPriceEdit}
+                            className="flex-1 border border-slate-300 text-slate-700 rounded px-4 py-2 text-sm hover:bg-slate-50 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -731,70 +698,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                 </div>
               )}
 
-              {/* Edit Request History Button */}
-              <div className="mb-6">
-                <button
-                  onClick={() => setShowEditRequestsModal(true)}
-                  className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg border border-blue-200 transition-colors flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  View Edit History
-                </button>
-              </div>
 
-              {/* Pending Edit Request Section */}
-              {editRequest && (
-                <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-6">
-                  <h3 className="font-semibold text-lg text-slate-800 mb-4 flex items-center gap-2">
-                    <span className="text-xl">📝</span>
-                    Pending Edit Request
-                  </h3>
-                  <div className="space-y-3 mb-4">
-                    {editRequest.requestedChanges.start && editRequest.requestedChanges.start !== appointment.start && (
-                      <div className="text-sm">
-                        <span className="font-medium text-slate-700">New Date/Time:</span>
-                        <div className="text-green-700 font-medium">
-                          {format(parseISO(editRequest.requestedChanges.start), 'MMM d, yyyy h:mm a')}
-                        </div>
-                      </div>
-                    )}
-                    {editRequest.requestedChanges.serviceIds && JSON.stringify(editRequest.requestedChanges.serviceIds.sort()) !== JSON.stringify([appointment.serviceId].sort()) && (
-                      <div className="text-sm">
-                        <span className="font-medium text-slate-700">New Service(s):</span>
-                        <div className="text-green-700 font-medium">
-                          {editRequest.requestedChanges.serviceIds.map(id => services[id]?.name || 'Unknown').join(', ')}
-                        </div>
-                      </div>
-                    )}
-                    {editRequest.reason && (
-                      <div className="text-sm">
-                        <span className="font-medium text-slate-700">Reason:</span>
-                        <div className="text-slate-600 italic">
-                          {editRequest.reason}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={handleApproveEditRequest}
-                      disabled={approvingEdit}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {approvingEdit ? 'Approving...' : 'Approve Changes'}
-                    </button>
-                    <button
-                      onClick={handleDenyEditRequest}
-                      disabled={loading}
-                      className="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Deny Request
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Actions */}
               <div className="bg-white border border-slate-200 rounded-xl p-6">
@@ -845,25 +749,6 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     </>
                   )}
 
-                  {/* Conditional Approve/Deny for edit requests */}
-                  {editRequest && (
-                    <>
-                      <button
-                        onClick={() => setShowConfirmModal(true)}
-                        className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors text-left flex items-center gap-3"
-                      >
-                        <span className="text-lg">✓</span>
-                        <span>Approve Edit Request</span>
-                      </button>
-                      <button
-                        onClick={handleDenyEditRequest}
-                        className="w-full bg-red-600 text-white rounded-lg px-4 py-3 hover:bg-red-700 transition-colors text-left flex items-center gap-3"
-                      >
-                        <span className="text-lg">✗</span>
-                        <span>Deny Edit Request</span>
-                      </button>
-                    </>
-                  )}
                   
                   {onEdit && (
                     <button
@@ -912,24 +797,6 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
       </div>
     </div>
 
-    {/* Edit Request Confirmation Modal */}
-    {editRequest && (
-      <EditRequestConfirmModal
-        isOpen={showConfirmModal}
-        onClose={() => setShowConfirmModal(false)}
-        onConfirm={handleConfirmApproval}
-        appointment={appointment}
-        editRequest={editRequest}
-        services={services}
-        loading={approvingEdit}
-      />
-    )}
-
-    {/* Edit Requests Modal */}
-    <EditRequestsModal 
-      isOpen={showEditRequestsModal} 
-      onClose={() => setShowEditRequestsModal(false)} 
-    />
     </>
   );
 }

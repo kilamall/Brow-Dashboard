@@ -37,15 +37,22 @@ export default function SkinAnalysisPage() {
       
       // Load customer's profile picture if they have one
       if (currentUser) {
-        const db = getFirestore();
-        const customerRef = doc(db, 'customers', currentUser.uid);
-        const customerDoc = await getDoc(customerRef);
-        
-        if (customerDoc.exists()) {
-          const customerData = customerDoc.data() as Customer;
-          if (customerData.profilePictureUrl) {
-            setCustomerProfilePic(customerData.profilePictureUrl);
+        try {
+          const db = getFirestore();
+          const customerRef = doc(db, 'customers', currentUser.uid);
+          const customerDoc = await getDoc(customerRef);
+          
+          if (customerDoc.exists()) {
+            const customerData = customerDoc.data() as Customer;
+            if (customerData.profilePictureUrl) {
+              setCustomerProfilePic(customerData.profilePictureUrl);
+            }
+          } else {
+            console.log('ℹ️ Customer profile not found for user:', currentUser.uid);
           }
+        } catch (error) {
+          console.error('❌ Error loading customer profile:', error);
+          // Don't block the page if profile loading fails
         }
       }
       
@@ -58,30 +65,43 @@ export default function SkinAnalysisPage() {
   useEffect(() => {
     if (!user) return;
 
-    const db = getFirestore();
-    const q = query(
-      collection(db, 'skinAnalyses'),
-      where('customerId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
+    try {
+      const db = getFirestore();
+      const q = query(
+        collection(db, 'skinAnalyses'),
+        where('customerId', '==', user.uid),
+        orderBy('createdAt', 'desc')
+      );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const analyses = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id,
-      })) as SkinAnalysis[];
-      setPastAnalyses(analyses);
-      
-      // Automatically show the most recent completed analysis
-      if (analyses.length > 0 && !analysis) {
-        const mostRecent = analyses[0];
-        if (mostRecent.status === 'completed') {
-          setAnalysis(mostRecent);
+      const unsubscribe = onSnapshot(
+        q, 
+        (snapshot) => {
+          const analyses = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            id: doc.id,
+          })) as SkinAnalysis[];
+          setPastAnalyses(analyses);
+          
+          // Automatically show the most recent completed analysis
+          if (analyses.length > 0 && !analysis) {
+            const mostRecent = analyses[0];
+            if (mostRecent.status === 'completed') {
+              setAnalysis(mostRecent);
+            }
+          }
+        },
+        (error) => {
+          console.error('❌ Error loading past analyses:', error);
+          // Don't block the page if past analyses fail to load
+          setPastAnalyses([]);
         }
-      }
-    });
+      );
 
-    return () => unsubscribe();
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('❌ Error setting up past analyses listener:', error);
+      setPastAnalyses([]);
+    }
   }, [user]);
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -184,8 +204,8 @@ export default function SkinAnalysisPage() {
         type: analysisType,
         imageUrl,
         customerId: user.uid,
-        customerEmail: user.email || '',
-        customerName: user.displayName || 'Customer',
+        customerEmail: user.email || user.phoneNumber || '',
+        customerName: user.displayName || user.phoneNumber || 'Customer',
         status: 'pending',
         createdAt: serverTimestamp(),
       };

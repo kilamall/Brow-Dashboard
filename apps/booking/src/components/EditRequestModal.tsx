@@ -5,6 +5,7 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import { watchAvailabilityByDay, fetchAvailabilityForDay } from '@buenobrows/shared/availabilityHelpers';
 import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
+import { getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 
 // Safe date formatter that won't crash - with enhanced logging
@@ -75,6 +76,9 @@ export default function EditRequestModal({
   const [bookedSlots, setBookedSlots] = useState<AvailabilitySlot[]>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [findingNextDate, setFindingNextDate] = useState(false);
+  const [nextAvailableDay, setNextAvailableDay] = useState<Date | null>(null);
+  const [nextAvailableSlots, setNextAvailableSlots] = useState<string[]>([]);
+  const [loadingNextDay, setLoadingNextDay] = useState(false);
 
   // Calculate total duration for selected services
   const totalDuration = useMemo(() => {
@@ -132,6 +136,54 @@ export default function EditRequestModal({
     findNextAvailableDate();
   }, [db, businessHours, appointment.start, totalDuration]);
 
+  // Function to find next available day with actual slots
+  const findNextAvailableDayWithSlots = async (startDate: Date) => {
+    if (!db || !businessHours || totalDuration === 0) return null;
+    
+    setLoadingNextDay(true);
+    
+    try {
+      // Check up to 30 days ahead
+      for (let i = 0; i < 30; i++) {
+        const checkDate = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+        
+        // Fetch availability for this day
+        const daySlots = await fetchAvailabilityForDay(db, checkDate);
+        
+        // Check if there are any available slots for this duration
+        const availableSlots = availableSlotsFromAvailability(checkDate, totalDuration, businessHours, daySlots);
+        
+        if (availableSlots.length > 0) {
+          console.log('✅ Found next available day with slots:', checkDate.toISOString());
+          setNextAvailableDay(checkDate);
+          setNextAvailableSlots(availableSlots);
+          setLoadingNextDay(false);
+          
+          // Auto-populate the date field with the next available day
+          setRequestedDate(checkDate.toISOString().split('T')[0]);
+          
+          return checkDate;
+        }
+      }
+      
+      // If no slots found in 30 days, just find the next business day
+      const nextBusinessDay = getNextValidBookingDateAfter(startDate, businessHours);
+      if (nextBusinessDay) {
+        setNextAvailableDay(nextBusinessDay);
+        setNextAvailableSlots([]);
+        
+        // Auto-populate the date field with the next business day
+        setRequestedDate(nextBusinessDay.toISOString().split('T')[0]);
+      }
+    } catch (error) {
+      console.error('Error finding next available day:', error);
+    } finally {
+      setLoadingNextDay(false);
+    }
+    
+    return null;
+  };
+
   // Load availability when date changes
   useEffect(() => {
     if (!requestedDate || !db || !businessHours) return;
@@ -151,13 +203,23 @@ export default function EditRequestModal({
       console.log('📅 Received availability slots:', slots.length);
       setBookedSlots(slots);
       setLoadingAvailability(false);
+      
+      // If no slots available, find next available day
+      const availableSlots = availableSlotsFromAvailability(dayDate, totalDuration, businessHours, slots);
+      if (availableSlots.length === 0) {
+        findNextAvailableDayWithSlots(dayDate);
+      } else {
+        // Clear next available day if current date has slots
+        setNextAvailableDay(null);
+        setNextAvailableSlots([]);
+      }
     });
     
     return () => {
       unsubscribe();
       setLoadingAvailability(false);
     };
-  }, [requestedDate, db, businessHours]);
+  }, [requestedDate, db, businessHours, totalDuration]);
 
   // Calculate available time slots
   const availableSlots = useMemo(() => {
@@ -321,7 +383,7 @@ export default function EditRequestModal({
                       {availableSlots.map((slot, index) => {
                         try {
                           // Handle both string and object formats
-                          const slotISO = typeof slot === 'string' ? slot : slot.startISO;
+                          const slotISO = typeof slot === 'string' ? slot : (slot as any).startISO;
                           const slotDate = new Date(slotISO);
                           if (isNaN(slotDate.getTime())) {
                             console.error('Invalid date for slot:', slot, 'ISO:', slotISO);
@@ -355,8 +417,71 @@ export default function EditRequestModal({
                       }).filter(Boolean)}
                     </div>
                   ) : (
-                    <div className="text-sm text-red-600 p-4 text-center border border-red-200 rounded-lg bg-red-50">
-                      No available times for this date. Please select a different date.
+                    <div className="space-y-3">
+                      <div className="text-sm text-red-600 p-4 text-center border border-red-200 rounded-lg bg-red-50">
+                        No available times for this date.
+                      </div>
+                      
+                      {/* Next Available Day Section */}
+                      {loadingNextDay ? (
+                        <div className="text-sm text-blue-600 p-4 text-center border border-blue-200 rounded-lg bg-blue-50">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            Finding next available day...
+                          </div>
+                        </div>
+                      ) : nextAvailableDay ? (
+                        <div className="border border-green-200 rounded-lg bg-green-50 p-4">
+                          <div className="text-sm text-green-800 mb-3">
+                            <strong>Next available day:</strong> {formatNextAvailableDate(nextAvailableDay)}
+                          </div>
+                          
+                          {nextAvailableSlots.length > 0 ? (
+                            <div>
+                              <div className="text-sm text-green-700 mb-2">Available times:</div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto">
+                                {nextAvailableSlots.slice(0, 8).map((slot, index) => {
+                                  try {
+                                    const slotDate = new Date(slot);
+                                    if (isNaN(slotDate.getTime())) return null;
+                                    
+                                    const slotTime = format(slotDate, 'h:mm a');
+                                    
+                                    return (
+                                      <button
+                                        key={index}
+                                        type="button"
+                                        onClick={() => {
+                                          setRequestedDate(nextAvailableDay.toISOString().split('T')[0]);
+                                          const timeString = format(slotDate, 'HH:mm');
+                                          setRequestedTime(timeString);
+                                        }}
+                                        className="px-2 py-1 text-xs rounded border bg-white text-green-700 border-green-300 hover:bg-green-100 transition-colors"
+                                      >
+                                        {slotTime}
+                                      </button>
+                                    );
+                                  } catch (error) {
+                                    console.error('Error formatting next day slot:', error);
+                                    return null;
+                                  }
+                                }).filter(Boolean)}
+                              </div>
+                              <div className="text-xs text-green-600 mt-2">
+                                Click a time to select this day and time
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm text-green-700">
+                              We're open this day - please select a time above
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-amber-600 p-4 text-center border border-amber-200 rounded-lg bg-amber-50">
+                          Unable to find next available day. Please try a different date.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
