@@ -5,7 +5,7 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import { watchAvailabilityByDay, fetchAvailabilityForDay } from '@buenobrows/shared/availabilityHelpers';
 import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
-import { getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
+import { getNextValidBookingDateAfter, formatNextAvailableDate, isValidBookingDate } from '@buenobrows/shared/businessHoursUtils';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 
 // Safe date formatter that won't crash - with enhanced logging
@@ -143,9 +143,15 @@ export default function EditRequestModal({
     setLoadingNextDay(true);
     
     try {
-      // Check up to 30 days ahead
-      for (let i = 0; i < 30; i++) {
+      // First try to find next business day with actual available slots
+      let nextBusinessDay = getNextValidBookingDateAfter(startDate, businessHours);
+      
+      // Check up to 30 days ahead for actual available slots
+      for (let i = 0; i < 30 && nextBusinessDay; i++) {
         const checkDate = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+        
+        // Skip if this date is not a valid business day
+        if (!isValidBookingDate(checkDate, businessHours)) continue;
         
         // Fetch availability for this day
         const daySlots = await fetchAvailabilityForDay(db, checkDate);
@@ -166,8 +172,7 @@ export default function EditRequestModal({
         }
       }
       
-      // If no slots found in 30 days, just find the next business day
-      const nextBusinessDay = getNextValidBookingDateAfter(startDate, businessHours);
+      // If no slots found in 30 days, fall back to next business day
       if (nextBusinessDay) {
         setNextAvailableDay(nextBusinessDay);
         setNextAvailableSlots([]);

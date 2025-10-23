@@ -16,6 +16,7 @@ import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { format, parseISO } from 'date-fns';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { collection, query, onSnapshot, orderBy, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import DataManagement from '../components/DataManagement';
 import VerificationSettings from '../components/VerificationSettings';
 import AdminEmailSetup from '../components/AdminEmailSetup';
@@ -25,12 +26,14 @@ import AITrainingPanel from '../components/AITrainingPanel';
 type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining';
 
 export default function Settings() {
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
   const [activeTab, setActiveTab] = useState<Tab>('business');
   const [targets, setTargetsState] = useState<AnalyticsTargets | null>(null);
   const [bh, setBhState] = useState<BusinessHours | null>(null);
   const [businessInfo, setBusinessInfoState] = useState<BusinessInfo | null>(null);
   const [homeContent, setHomeContentState] = useState<HomePageContent | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [colorAccessibility, setColorAccessibility] = useState(false);
 
   // Persist activeTab state
   useEffect(() => {
@@ -51,6 +54,54 @@ export default function Settings() {
   useEffect(() => watchBusinessHours(db, setBhState), []);
   useEffect(() => watchBusinessInfo(db, setBusinessInfoState), []);
   useEffect(() => watchHomePageContent(db, setHomeContentState), []);
+
+  // Load color accessibility setting
+  useEffect(() => {
+    const saved = localStorage.getItem('colorAccessibility');
+    if (saved) setColorAccessibility(JSON.parse(saved));
+  }, []);
+
+  // Sync availability function
+  const syncAvailability = async () => {
+    setSyncing(true);
+    try {
+      const functions = getFunctions(app, 'us-central1');
+      const syncFunction = httpsCallable(functions, 'quickSyncAvailability');
+      const result = await syncFunction({});
+      
+      console.log('Sync result:', result.data);
+      const data = result.data as any;
+      alert(`✅ Sync complete! ${data.message}`);
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      alert(`❌ Failed to sync availability: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Clear all holds function using Cloud Function
+  const clearAllHolds = async () => {
+    if (!confirm('Are you sure you want to clear all active holds? This will release all time slots.')) {
+      return;
+    }
+    
+    setSyncing(true);
+    try {
+      const functions = getFunctions(app, 'us-central1');
+      const clearAllHoldsFn = httpsCallable(functions, 'clearAllHolds');
+      const result = await clearAllHoldsFn({});
+      const data = result.data as any;
+      
+      console.log('Clear holds result:', data);
+      alert(`✅ ${data.message}`);
+    } catch (error: any) {
+      console.error('Clear holds error:', error);
+      alert(`❌ Failed to clear holds: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'business', label: 'Business Info', icon: '🏢' },
@@ -188,6 +239,37 @@ export default function Settings() {
           <section className="bg-white rounded-xl shadow-soft p-6">
             <h2 className="font-serif text-xl mb-2">Data Management</h2>
             <p className="text-sm text-slate-600 mb-6">Manage your database and perform maintenance operations</p>
+            
+            {/* Quick Actions Section */}
+            <div className="mb-8">
+              <h3 className="font-semibold text-lg mb-4">Quick Actions</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button 
+                  onClick={syncAvailability}
+                  disabled={syncing}
+                  className={`px-6 py-4 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    syncing 
+                      ? 'bg-gray-400 text-white cursor-not-allowed' 
+                      : colorAccessibility ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white shadow-lg hover:shadow-xl' : 'bg-gradient-to-r from-blue-500 to-cyan-600 text-white shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {syncing ? '🔄 Syncing...' : '🔄 Sync Availability'}
+                </button>
+                
+                <button 
+                  onClick={clearAllHolds}
+                  disabled={syncing}
+                  className={`px-6 py-4 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    syncing 
+                      ? 'bg-gray-400 text-white cursor-not-allowed' 
+                      : colorAccessibility ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white shadow-lg hover:shadow-xl' : 'bg-gradient-to-r from-red-500 to-pink-600 text-white shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {syncing ? '⏳ Working...' : '🗑️ Clear All Holds'}
+                </button>
+              </div>
+            </div>
+            
             <DataManagement />
           </section>
         )}

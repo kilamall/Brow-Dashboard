@@ -19,7 +19,6 @@ export default function AnalyticsHome() {
   const [allAppts, setAllAppts] = useState<Appointment[]>([]); // For displaying appointments list
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [colorAccessibility, setColorAccessibility] = useState(false);
   const [growthMode, setGrowthMode] = useState(true); // Default to Growth Mode
@@ -216,45 +215,6 @@ export default function AnalyticsHome() {
     return { revenue, cancelledValue, uniqueCustomers, avgCustomerValue, expectedCogs, targetValue, progressPct, topServices, netProfit, grossProfit, margin, breakEvenStatus, growthMetrics };
   }, [appts, services, targets, period, fromISO, toISO]);
 
-  // Sync availability function
-  const syncAvailability = async () => {
-    setSyncing(true);
-    try {
-      const syncFunction = httpsCallable(functions, 'quickSyncAvailability');
-      const result = await syncFunction({});
-      
-      console.log('Sync result:', result.data);
-      const data = result.data as any;
-      alert(`✅ Sync complete! ${data.message}`);
-    } catch (error: any) {
-      console.error('Sync error:', error);
-      alert(`❌ Sync failed: ${error.message}`);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Clear all holds function using Cloud Function
-  const clearAllHolds = async () => {
-    if (!confirm('Are you sure you want to clear all active holds? This will release all time slots.')) {
-      return;
-    }
-    
-    setSyncing(true);
-    try {
-      const clearAllHoldsFn = httpsCallable(functions, 'clearAllHolds');
-      const result = await clearAllHoldsFn({});
-      const data = result.data as any;
-      
-      console.log('Clear holds result:', data);
-      alert(`✅ ${data.message}`);
-    } catch (error: any) {
-      console.error('Clear holds error:', error);
-      alert(`❌ Failed to clear holds: ${error.message}`);
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -295,29 +255,6 @@ export default function AnalyticsHome() {
             {colorAccessibility ? '🎨 Colors Off' : '🎨 Colors On'}
           </button>
 
-          <button 
-            onClick={syncAvailability}
-            disabled={syncing}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              syncing 
-                ? 'bg-gray-400 text-white cursor-not-allowed' 
-                : colorAccessibility ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white shadow-lg hover:shadow-xl' : 'bg-gradient-to-r from-blue-500 to-cyan-600 text-white shadow-lg hover:shadow-xl'
-            }`}
-          >
-            {syncing ? '🔄 Syncing...' : '🔄 Sync Availability'}
-          </button>
-          
-          <button 
-            onClick={clearAllHolds}
-            disabled={syncing}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              syncing 
-                ? 'bg-gray-400 text-white cursor-not-allowed' 
-                : colorAccessibility ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white shadow-lg hover:shadow-xl' : 'bg-gradient-to-r from-red-500 to-pink-600 text-white shadow-lg hover:shadow-xl'
-            }`}
-          >
-            {syncing ? '⏳ Working...' : '🗑️ Clear All Holds'}
-          </button>
         </div>
         </div>
       </div>
