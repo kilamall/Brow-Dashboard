@@ -706,6 +706,36 @@ export default function Book() {
   const [sentPhoneCode, setSentPhoneCode] = useState('');
   const [verificationLoading, setVerificationLoading] = useState(false);
 
+  // Authentication prompt state
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false);
+  const [existingCustomer, setExistingCustomer] = useState<any>(null);
+  const [checkingCustomer, setCheckingCustomer] = useState(false);
+
+  // Check for existing customer when email/phone is entered
+  const checkExistingCustomer = async (email?: string, phone?: string) => {
+    if (!email && !phone) return;
+    
+    setCheckingCustomer(true);
+    try {
+      const { findOrCreateCustomerClient } = await import('@buenobrows/shared/functionsClient');
+      const result = await findOrCreateCustomerClient({
+        email: email || undefined,
+        phone: phone || undefined,
+        name: gName || 'Guest',
+        authUid: undefined // Check mode - not authenticated
+      });
+      
+      if (result.needsSignIn) {
+        setExistingCustomer(result);
+        setShowAuthPrompt(true);
+      }
+    } catch (error) {
+      console.error('Error checking existing customer:', error);
+    } finally {
+      setCheckingCustomer(false);
+    }
+  };
+
   // Auto-populate guest form from authenticated user
   useEffect(() => {
     if (user) {
@@ -734,6 +764,28 @@ export default function Book() {
       }
     }
   }, [user, gName, gEmail, gPhone, hold, guestOpen]);
+
+  // Check for existing customer when email is entered (debounced)
+  useEffect(() => {
+    if (!user && gEmail && gEmail.includes('@')) {
+      const timeoutId = setTimeout(() => {
+        checkExistingCustomer(gEmail, undefined);
+      }, 1000); // 1 second debounce
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [gEmail, user]);
+
+  // Check for existing customer when phone is entered (debounced)
+  useEffect(() => {
+    if (!user && gPhone && gPhone.length >= 10) {
+      const timeoutId = setTimeout(() => {
+        checkExistingCustomer(undefined, gPhone);
+      }, 1000); // 1 second debounce
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [gPhone, user]);
   
   // Send email verification code for guest booking
   const sendGuestEmailVerification = async () => {
@@ -981,10 +1033,10 @@ export default function Book() {
           uid: user.uid 
         });
         const result = await findOrCreateCustomerClient({
-          authUid: user.uid,
           email: user.email || undefined,
           name: user.displayName || 'Customer',
           phone: user.phoneNumber || undefined,
+          authUid: user.uid,
         });
         console.log('Customer result for authenticated user:', result);
         
@@ -2274,6 +2326,69 @@ export default function Book() {
           }}
           isOpen={showConsentForm}
         />
+      )}
+
+      {/* Authentication Prompt Modal */}
+      {showAuthPrompt && existingCustomer && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowAuthPrompt(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-slate-800 mb-2">We found your account!</h3>
+              <p className="text-slate-600">
+                We found an existing account with this {gEmail ? 'email' : 'phone number'}. 
+                Sign in to continue with your booking history, or proceed as a guest.
+              </p>
+            </div>
+            
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  // Store booking state before redirecting
+                  const bookingState = {
+                    selectedServiceIds,
+                    dateStr,
+                    gName,
+                    gEmail,
+                    gPhone,
+                    hold
+                  };
+                  sessionStorage.setItem('bb_booking_state', JSON.stringify(bookingState));
+                  
+                  // Redirect to login with prefill
+                  const prefill = gEmail ? `email=${encodeURIComponent(gEmail)}` : `phone=${encodeURIComponent(gPhone)}`;
+                  window.location.href = `/login?returnTo=/book&prefill=${prefill}`;
+                }}
+                className="w-full bg-terracotta text-white rounded-xl px-6 py-3 font-semibold hover:bg-terracotta/90 transition-colors"
+              >
+                Sign In to Continue
+              </button>
+              
+              <button
+                onClick={() => {
+                  setShowAuthPrompt(false);
+                  setExistingCustomer(null);
+                }}
+                className="w-full border-2 border-slate-300 text-slate-700 rounded-xl px-6 py-3 font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Continue as Guest
+              </button>
+            </div>
+            
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => setShowAuthPrompt(false)}
+                className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* reCAPTCHA Container for Firebase Phone Auth */}

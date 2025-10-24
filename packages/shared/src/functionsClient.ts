@@ -90,12 +90,13 @@ export async function findOrCreateCustomerClient(data: {
   email?: string;
   name?: string;
   phone?: string;
-}): Promise<{ customerId: string; isNew: boolean }> {
+  authUid?: string;
+}): Promise<{ customerId: string; isNew: boolean; merged?: boolean; needsSignIn?: boolean }> {
   const { app } = initFirebase();
   const functions = getFunctions(app, 'us-central1');
   const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
   const result = await findOrCreateCustomer(data);
-  return result.data as { customerId: string; isNew: boolean };
+  return result.data as { customerId: string; isNew: boolean; merged?: boolean; needsSignIn?: boolean };
 }
 
 // Delete customer data (admin only)
@@ -104,6 +105,21 @@ export async function deleteCustomerDataClient(customerId: string) {
   const functions = getFunctions(app, 'us-central1');
   const deleteCustomerData = httpsCallable(functions, 'deleteCustomerData');
   return await deleteCustomerData({ customerId });
+}
+
+// Create customer with uniqueness enforcement
+export async function createCustomerUniqueClient(data: {
+  name: string;
+  email?: string;
+  phone?: string;
+  profilePictureUrl?: string;
+  notes?: string;
+  authUid?: string;
+}): Promise<{ customerId: string; alreadyExists: boolean; customer: any }> {
+  const { app } = initFirebase();
+  const functions = getFunctions(app, 'us-central1');
+  const createCustomerUnique = httpsCallable(functions, 'createCustomerUnique');
+  return await createCustomerUnique(data);
 }
 
 // Create custom consent form (admin only)

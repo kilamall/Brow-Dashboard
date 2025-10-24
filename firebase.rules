@@ -27,14 +27,20 @@ service cloud.firestore {
          (request.auth.token.email == resource.data.email ||
           request.auth.token.phone_number == resource.data.phone));
       
-      // Allow authenticated creation only
-      allow create: if request.auth != null;
+      // BLOCK direct customer creation - force use of Cloud Functions
+      // Only allow creation via Cloud Functions (admin SDK bypasses rules)
+      allow create: if false;
       
       allow update: if isAdmin() || 
         (request.auth != null && 
          (request.auth.token.email == resource.data.email ||
           request.auth.token.phone_number == resource.data.phone));
       allow delete: if isAdmin();
+    }
+
+    // uniqueContacts collection - only Cloud Functions can access
+    match /uniqueContacts/{id} {
+      allow read, write: if false; // Only Cloud Functions can access
     }
 
     match /appointments/{id} {

@@ -12,6 +12,8 @@ export * from './confirm-appointment.js';
 // export * from './seed-data.js';
 // export * from './update-business-hours.js';
 export * from './find-or-create-customer.js';
+export * from './create-customer-unique.js';
+export * from './on-user-created.js';
 export * from './migrate-customer-identities.js';
 export * from './train-ai-from-admin-messages.js';
 export * from './ai-response-with-training.js';

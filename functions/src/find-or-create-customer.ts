@@ -117,6 +117,9 @@ export const findOrCreateCustomer = onCall(
           updates.phone = phone;
         }
         
+        // Check if customer exists but caller isn't authenticated (needsSignIn scenario)
+        const needsSignIn = !authUid && existingCustomer.authUid;
+        
         // Link Auth UID if provided and not already linked (merge scenario)
         const wasMerged = authUid && !existingCustomer.authUid && existingCustomer.id !== authUid;
         if (wasMerged) {
@@ -262,7 +265,8 @@ export const findOrCreateCustomer = onCall(
           return {
             customerId: authUid,
             isNew: false,
-            merged: true
+            merged: true,
+            needsSignIn: false
           };
         }
         
@@ -285,7 +289,8 @@ export const findOrCreateCustomer = onCall(
         return { 
           customerId: existingCustomer.id,
           isNew: false,
-          merged: wasMerged
+          merged: wasMerged,
+          needsSignIn: needsSignIn
         };
       }
 
@@ -312,7 +317,8 @@ export const findOrCreateCustomer = onCall(
       return { 
         customerId,
         isNew: true,
-        merged: false
+        merged: false,
+        needsSignIn: false
       };
     } catch (error: any) {
       console.error('❌ findOrCreateCustomer error:', error);

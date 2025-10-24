@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import {
   watchCustomers,
-  createCustomer,
   updateCustomer,
   deleteCustomer
 } from '@buenobrows/shared/firestoreActions';
+import { createCustomerUniqueClient } from '@buenobrows/shared/functionsClient';
 import type { Customer } from '@buenobrows/shared/types';
 import CustomerProfile from '../components/CustomerProfile';
 import { doc, getDoc } from 'firebase/firestore';
@@ -413,11 +413,30 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
   async function save(){
     setLoading(true);
     try {
-      if (c.id) await updateCustomer(db, c.id, c);
-      else await createCustomer(db, c);
-      onClose();
+      if (c.id) {
+        await updateCustomer(db, c.id, c);
+        onClose();
+      } else {
+        // Use uniqueness-enforced customer creation
+        const result = await createCustomerUniqueClient({
+          name: c.name,
+          email: c.email,
+          phone: c.phone,
+          profilePictureUrl: c.profilePictureUrl,
+          notes: c.notes
+        });
+        
+        if (result.alreadyExists) {
+          // Show error message and link to existing customer
+          alert(`Customer already exists! Found customer: ${result.customer.name}. Please search for this customer instead.`);
+          return;
+        }
+        
+        onClose();
+      }
     } catch (error) {
       console.error('Failed to save customer:', error);
+      alert('Failed to save customer. Please try again.');
     } finally {
       setLoading(false);
     }

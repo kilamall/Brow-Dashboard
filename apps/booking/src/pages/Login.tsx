@@ -36,6 +36,7 @@ export default function Login() {
   // Get return URL from query params
   const searchParams = new URLSearchParams(window.location.search);
   const returnTo = searchParams.get('returnTo') || '/book';
+  const prefill = searchParams.get('prefill') || '';
   
   const [authMode, setAuthMode] = useState<AuthMode>('email');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -73,6 +74,21 @@ export default function Login() {
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
   const [showPasswordReset, setShowPasswordReset] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
+
+  // Handle prefill from booking flow
+  useEffect(() => {
+    if (prefill) {
+      if (prefill.startsWith('email=')) {
+        const emailValue = decodeURIComponent(prefill.replace('email=', ''));
+        setEmail(emailValue);
+        setAuthMode('email');
+      } else if (prefill.startsWith('phone=')) {
+        const phoneValue = decodeURIComponent(prefill.replace('phone=', ''));
+        setPhone(phoneValue);
+        setAuthMode('phone');
+      }
+    }
+  }, [prefill]);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,6 +149,29 @@ export default function Login() {
           return;
         }
       }
+      
+      // Restore booking state if coming from booking flow
+      if (returnTo === '/book') {
+        const bookingState = sessionStorage.getItem('bb_booking_state');
+        if (bookingState) {
+          try {
+            const state = JSON.parse(bookingState);
+            // Restore the booking cart
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify({
+              selectedServiceIds: state.selectedServiceIds || [],
+              dateStr: state.dateStr,
+              gName: state.gName,
+              gEmail: state.gEmail,
+              gPhone: state.gPhone
+            }));
+            // Clear the temporary state
+            sessionStorage.removeItem('bb_booking_state');
+          } catch (error) {
+            console.error('Failed to restore booking state:', error);
+          }
+        }
+      }
+      
       // Redirect back to return URL with cart intact
       nav(returnTo);
     } catch (err: any) {
@@ -178,6 +217,28 @@ export default function Login() {
         } catch (customerError: any) {
           console.error('⚠️ Failed to create customer record:', customerError);
           // Non-critical error - continue with sign in
+        }
+      }
+      
+      // Restore booking state if coming from booking flow
+      if (returnTo === '/book') {
+        const bookingState = sessionStorage.getItem('bb_booking_state');
+        if (bookingState) {
+          try {
+            const state = JSON.parse(bookingState);
+            // Restore the booking cart
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify({
+              selectedServiceIds: state.selectedServiceIds || [],
+              dateStr: state.dateStr,
+              gName: state.gName,
+              gEmail: state.gEmail,
+              gPhone: state.gPhone
+            }));
+            // Clear the temporary state
+            sessionStorage.removeItem('bb_booking_state');
+          } catch (error) {
+            console.error('Failed to restore booking state:', error);
+          }
         }
       }
       
@@ -306,6 +367,28 @@ export default function Login() {
         } catch (customerError: any) {
           console.error('⚠️ Failed to create customer record:', customerError);
           // Non-critical error - continue with sign in
+        }
+      }
+      
+      // Restore booking state if coming from booking flow
+      if (returnTo === '/book') {
+        const bookingState = sessionStorage.getItem('bb_booking_state');
+        if (bookingState) {
+          try {
+            const state = JSON.parse(bookingState);
+            // Restore the booking cart
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify({
+              selectedServiceIds: state.selectedServiceIds || [],
+              dateStr: state.dateStr,
+              gName: state.gName,
+              gEmail: state.gEmail,
+              gPhone: state.gPhone
+            }));
+            // Clear the temporary state
+            sessionStorage.removeItem('bb_booking_state');
+          } catch (error) {
+            console.error('Failed to restore booking state:', error);
+          }
         }
       }
       
