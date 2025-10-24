@@ -1,5 +1,73 @@
 export type ID = string;
 
+// Cost Monitoring Types
+export interface CostMonitoringSettings {
+  projectId: string;
+  budgetThresholds: {
+    warning: number;    // 50% of budget
+    critical: number;   // 80% of budget
+    max: number;        // 100% of budget
+  };
+  alertEmails: string[];
+  autoSync: boolean;
+  currency: string;
+  lastSyncAt: string;
+  sendGridApiKey?: string; // Optional for email alerts
+}
+
+export interface CostMetrics {
+  date: string; // YYYY-MM-DD
+  totalCost: number;
+  services: {
+    firestore: { reads: number; writes: number; cost: number };
+    functions: { invocations: number; cost: number };
+    storage: { gb: number; bandwidth: number; cost: number };
+    hosting: { bandwidth: number; cost: number };
+    geminiAI: { calls: number; cost: number };
+    sendGrid: { emails: number; cost: number };
+  };
+  projectedMonthly: number;
+  createdAt: string;
+}
+
+export interface CostAlert {
+  id: string;
+  type: 'warning' | 'critical' | 'exceeded';
+  threshold: number;
+  currentCost: number;
+  projectedCost: number;
+  message: string;
+  sentAt: string;
+  emails: string[];
+}
+
+export interface UsageStats {
+  firestore: {
+    reads: number;
+    writes: number;
+    deletes: number;
+    storage: number; // GB
+  };
+  functions: {
+    invocations: number;
+    computeTime: number; // GB-seconds
+  };
+  storage: {
+    totalGB: number;
+    downloadsGB: number;
+  };
+  hosting: {
+    bandwidthGB: number;
+  };
+  geminiAI: {
+    requests: number;
+    tokens: number;
+  };
+  sendGrid: {
+    emails: number;
+  };
+}
+
 
 export interface Service {
   id: ID;
@@ -110,6 +178,12 @@ export interface Appointment {
   attendanceMarkedBy?: string;
   completedAt?: string;
   completedBy?: string;
+  
+  // Override tracking fields
+  previousAttendance?: 'pending' | 'attended' | 'no-show';
+  attendanceOverrideReason?: string;
+  attendanceOverriddenAt?: string;
+  attendanceOverriddenBy?: string;
 }
 
 export interface AppointmentEditRequest {

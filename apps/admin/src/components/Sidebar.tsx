@@ -5,14 +5,58 @@ import { watchDayClosures, createDayClosure, deleteDayClosure } from '@buenobrow
 import type { DayClosure } from '@buenobrows/shared/types';
 import { format } from 'date-fns';
 
-const LinkItem = ({ to, children }: { to: string; children: React.ReactNode }) => (
+// Navigation Groups
+const navGroups = [
+  {
+    label: 'Overview',
+    items: [
+      { to: '/home', icon: '🏠', label: 'Dashboard' },
+      { to: '/schedule', icon: '📅', label: 'Schedule' }
+    ]
+  },
+  {
+    label: 'Business',
+    items: [
+      { to: '/customers', icon: '👥', label: 'Customers' },
+      { to: '/services', icon: '✨', label: 'Services' }
+    ]
+  },
+  {
+    label: 'Communications',
+    items: [
+      { to: '/messages', icon: '💬', label: 'Messages' },
+      { to: '/sms', icon: '📱', label: 'SMS Support' },
+      { to: '/ai-conversations', icon: '🤖', label: 'AI Conversations' }
+    ]
+  },
+  {
+    label: 'Analytics',
+    items: [
+      { to: '/cost-monitoring', icon: '💰', label: 'Cost Monitoring' },
+      { to: '/reviews', icon: '⭐', label: 'Reviews' }
+    ]
+  },
+  {
+    label: 'Settings',
+    items: [
+      { to: '/settings', icon: '⚙️', label: 'Settings' }
+    ]
+  }
+];
+
+const LinkItem = ({ to, icon, label }: { to: string; icon: string; label: string }) => (
   <NavLink
     to={to}
     className={({ isActive }) =>
-      `block px-4 py-2 rounded-md ${isActive ? 'bg-terracotta text-white' : 'text-slate-800 hover:bg-cream'}`
+      `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${
+        isActive 
+          ? 'border-l-3 border-terracotta bg-terracotta/10 text-terracotta font-medium' 
+          : 'border-l-3 border-transparent hover:bg-slate-50 text-slate-700 hover:text-slate-900'
+      }`
     }
   >
-    {children}
+    <span className="text-lg">{icon}</span>
+    <span className="font-medium">{label}</span>
   </NavLink>
 );
 
@@ -94,36 +138,44 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="min-h-screen bg-white border-r p-4 flex flex-col">
-      <div className="text-2xl mb-6">
+    <aside className="min-h-screen bg-white shadow-sm border-r border-slate-200 p-6 flex flex-col">
+      {/* Logo */}
+      <div className="text-2xl mb-8">
         <span className="font-brandBueno text-brand-bueno">BUENO</span>
         <span className="ml-2 font-brandBrows text-brand-brows">BROWS</span>
       </div>
       
-      <nav className="space-y-2 flex-1">
-        <LinkItem to="/home">Home</LinkItem>
-        <LinkItem to="/schedule">Schedule</LinkItem>
-        <LinkItem to="/customers">Customers</LinkItem>
-        <LinkItem to="/services">Services</LinkItem>
-        <LinkItem to="/reviews">Reviews</LinkItem>
-        <LinkItem to="/messages">Messages</LinkItem>
-        <LinkItem to="/sms">SMS Support</LinkItem>
-        <LinkItem to="/ai-conversations">AI Conversations</LinkItem>
-        <LinkItem to="/skin-analyses">Skin Analyses</LinkItem>
-        <LinkItem to="/consent-forms">Consent Forms</LinkItem>
-        <LinkItem to="/settings">Settings</LinkItem>
+      {/* Navigation Groups */}
+      <nav className="space-y-6 flex-1">
+        {navGroups.map((group, groupIndex) => (
+          <div key={group.label}>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-3">
+              {group.label}
+            </h3>
+            <div className="space-y-1">
+              {group.items.map((item) => (
+                <LinkItem
+                  key={item.to}
+                  to={item.to}
+                  icon={item.icon}
+                  label={item.label}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
       </nav>
 
-      {/* Quick Shop Status Button */}
-      <div className="mt-auto pt-4 border-t border-slate-200">
-        <div className="space-y-2">
+      {/* Shop Status Section */}
+      <div className="mt-auto pt-6 border-t border-slate-200">
+        <div className="space-y-3">
           {/* Status Message */}
           {message && (
             <div
-              className={`p-2 rounded text-xs ${
+              className={`p-3 rounded-lg text-sm font-medium ${
                 message.type === 'success'
-                  ? 'bg-green-50 text-green-700 border border-green-200'
-                  : 'bg-red-50 text-red-700 border border-red-200'
+                  ? 'bg-green-50 text-green-800 border border-green-200'
+                  : 'bg-red-50 text-red-800 border border-red-200'
               }`}
             >
               {message.text}
@@ -134,10 +186,10 @@ export default function Sidebar() {
           <button
             onClick={handleToggleShopStatus}
             disabled={loading}
-            className={`w-full px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${
+            className={`w-full px-4 py-3 rounded-lg text-sm font-semibold transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-3 shadow-sm ${
               isTodayClosed
-                ? 'bg-green-600 text-white hover:bg-green-700'
-                : 'bg-red-600 text-white hover:bg-red-700'
+                ? 'bg-green-600 text-white hover:bg-green-700 hover:shadow-md'
+                : 'bg-red-600 text-white hover:bg-red-700 hover:shadow-md'
             }`}
           >
             {loading ? (

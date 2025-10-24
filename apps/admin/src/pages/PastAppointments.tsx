@@ -7,6 +7,7 @@ import { format, parseISO } from 'date-fns';
 import type { Appointment, Service } from '@buenobrows/shared/types';
 import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
 import AttendanceConfirmationModal from '@/components/AttendanceConfirmationModal';
+import NoShowConfirmationModal from '@/components/NoShowConfirmationModal';
 
 // Helper function to safely parse dates
 function safeParseDate(dateString: string): Date {
@@ -43,6 +44,11 @@ export default function PastAppointments() {
   const [loading, setLoading] = useState(true);
   const [markingAttendanceIds, setMarkingAttendanceIds] = useState<Set<string>>(new Set());
   const [attendanceModal, setAttendanceModal] = useState<{
+    open: boolean;
+    appointment: Appointment | null;
+    service: Service | null;
+  }>({ open: false, appointment: null, service: null });
+  const [noShowModal, setNoShowModal] = useState<{
     open: boolean;
     appointment: Appointment | null;
     service: Service | null;
@@ -107,16 +113,93 @@ export default function PastAppointments() {
     // Data will auto-refresh from Firestore listener
   };
 
-  const handleMarkNoShow = async (appointmentId: string) => {
-    if (!confirm('Mark this appointment as no-show?')) return;
+  const handleMarkNoShow = (appointmentId: string) => {
+    const appointment = allAppts.find(a => a.id === appointmentId);
+    const service = appointment ? services[appointment.serviceId] : null;
+    
+    if (!appointment || !service) {
+      alert('Appointment or service not found');
+      return;
+    }
+    
+    setNoShowModal({
+      open: true,
+      appointment,
+      service
+    });
+  };
+
+  const handleNoShowConfirmed = async () => {
+    if (!noShowModal.appointment) return;
+    
+    const appointmentId = noShowModal.appointment.id;
+    const customerName = noShowModal.appointment.customerName || 'Customer';
+    
     setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
     try {
       const markAttendanceFn = httpsCallable(functions, 'markAttendance');
       await markAttendanceFn({ appointmentId, attendance: 'no-show' });
-      alert('Appointment marked as no-show.');
+      alert(`✅ ${customerName} marked as no-show. Email notification sent.`);
     } catch (error: any) {
       console.error('Error marking no-show:', error);
       alert(`Failed to mark no-show: ${error.message}`);
+    } finally {
+      setMarkingAttendanceIds(prev => {
+        const next = new Set(prev);
+        next.delete(appointmentId);
+        return next;
+      });
+      setNoShowModal({ open: false, appointment: null, service: null });
+    }
+  };
+
+  const handleChangeAttendance = async (appointmentId: string, newAttendance: 'attended' | 'no-show') => {
+    const appointment = allAppts.find(a => a.id === appointmentId);
+    if (!appointment) return;
+    
+    const currentStatus = appointment.attendance || 'pending';
+    const customerName = appointment.customerName || 'Customer';
+    
+    // Prompt for override reason
+    const reason = prompt(
+      `Change attendance from "${currentStatus}" to "${newAttendance}"?\n\n` +
+      `Customer: ${customerName}\n` +
+      `Please provide a reason for this change:\n` +
+      `(e.g., "Customer arrived late", "Marked by mistake", etc.)`
+    );
+    
+    if (!reason || reason.trim() === '') {
+      alert('Override reason is required to change attendance status.');
+      return;
+    }
+    
+    if (!confirm(
+      `Change attendance for ${customerName}?\n\n` +
+      `From: ${currentStatus}\n` +
+      `To: ${newAttendance}\n` +
+      `Reason: ${reason}\n\n` +
+      `${currentStatus === 'no-show' && newAttendance === 'attended' ? 'Note: This will decrement their no-show count.' : ''}`
+    )) {
+      return;
+    }
+    
+    setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
+    
+    try {
+      const functions = getFunctions();
+      const markAttendance = httpsCallable(functions, 'markAttendance');
+      
+      const result = await markAttendance({
+        appointmentId,
+        attendance: newAttendance,
+        overrideReason: reason.trim()
+      });
+      
+      console.log('✅ Attendance changed:', result.data);
+      alert(`✅ ${customerName} marked as ${newAttendance}. Email notification sent.`);
+    } catch (error: any) {
+      console.error('❌ Error changing attendance:', error);
+      alert(`Failed to change attendance: ${error.message}`);
     } finally {
       setMarkingAttendanceIds(prev => {
         const next = new Set(prev);
@@ -248,12 +331,34 @@ export default function PastAppointments() {
                               e.stopPropagation();
                               handleMarkNoShow(apt.id);
                             }}
-                            className="p-1 hover:bg-red-100 rounded text-red-600"
-                            title="Mark as no-show"
+                            className="p-1 hover:bg-red-100 rounded text-red-600 border border-red-300 hover:border-red-400 transition-all duration-200 font-bold"
+                            title="⚠️ Mark as no-show - Requires confirmation"
                           >
                             ✗
                           </button>
                         </div>
+                      ) : apt.status === 'completed' ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeAttendance(apt.id, 'no-show');
+                          }}
+                          className="text-xs text-green-600 font-medium hover:bg-green-50 px-2 py-1 rounded transition-colors cursor-pointer border border-transparent hover:border-green-200"
+                          title="Click to change to no-show"
+                        >
+                          ✓ Completed
+                        </button>
+                      ) : apt.status === 'no-show' ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeAttendance(apt.id, 'attended');
+                          }}
+                          className="text-xs text-red-600 font-medium hover:bg-red-50 px-2 py-1 rounded transition-colors cursor-pointer border border-transparent hover:border-red-200"
+                          title="Click to change to attended"
+                        >
+                          ✗ No-Show
+                        </button>
                       ) : (
                         getStatusBadge(apt.status)
                       )}
@@ -284,6 +389,16 @@ export default function PastAppointments() {
         service={attendanceModal.service}
         onClose={() => setAttendanceModal({ open: false, appointment: null, service: null })}
         onConfirmed={handleAttendanceConfirmed}
+      />
+
+      {/* No-Show Confirmation Modal */}
+      <NoShowConfirmationModal
+        open={noShowModal.open}
+        onClose={() => setNoShowModal({ open: false, appointment: null, service: null })}
+        appointment={noShowModal.appointment}
+        service={noShowModal.service}
+        onConfirm={handleNoShowConfirmed}
+        loading={markingAttendanceIds.size > 0}
       />
     </div>
   );

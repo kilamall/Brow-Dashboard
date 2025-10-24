@@ -15,6 +15,7 @@ import AIConversations from './pages/AIConversations';
 import SkinAnalyses from './pages/SkinAnalyses';
 import ConsentForms from './pages/ConsentForms';
 import PastAppointments from './pages/PastAppointments';
+import CostMonitoring from './pages/CostMonitoring';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="/skin-analyses" element={<SkinAnalyses />} />
               <Route path="/consent-forms" element={<ConsentForms />} />
               <Route path="/past-appointments" element={<PastAppointments />} />
+              <Route path="/cost-monitoring" element={<CostMonitoring />} />
               <Route path="/settings" element={<Settings />} />
 
               {/* Catch-all */}

@@ -39,9 +39,18 @@ export const markAttendance = onCall(
       
       const appointment: any = appointmentDoc.data();
       
-      // Check if already marked
+      // Check if already marked - but allow admin override with reason
       if (appointment.attendance && appointment.attendance !== 'pending') {
-        throw new HttpsError('failed-precondition', `Appointment attendance already marked as ${appointment.attendance}`);
+        const { overrideReason } = req.data;
+        
+        if (!overrideReason || overrideReason.trim() === '') {
+          throw new HttpsError('failed-precondition', 
+            `Appointment attendance already marked as "${appointment.attendance}". ` +
+            `To change it, provide an "overrideReason" explaining why.`
+          );
+        }
+        
+        console.log(`⚠️ OVERRIDE: Changing attendance from "${appointment.attendance}" to "${attendance}". Reason: ${overrideReason}`);
       }
 
       const now = new Date().toISOString();
@@ -51,6 +60,37 @@ export const markAttendance = onCall(
         attendanceMarkedBy: req.auth.uid,
         updatedAt: now
       };
+
+      // If this is an override, log the previous state
+      if (appointment.attendance && appointment.attendance !== 'pending') {
+        updateData.previousAttendance = appointment.attendance;
+        updateData.attendanceOverrideReason = req.data.overrideReason?.trim();
+        updateData.attendanceOverriddenAt = now;
+        updateData.attendanceOverriddenBy = req.auth.uid;
+        
+        // IMPORTANT: Adjust customer no-show count if reversing a no-show
+        if (appointment.attendance === 'no-show' && attendance === 'attended') {
+          try {
+            const customerRef = db.collection('customers').doc(appointment.customerId);
+            const customerDoc = await customerRef.get();
+            
+            if (customerDoc.exists) {
+              const customerData = customerDoc.data();
+              const currentCount = customerData?.noShowCount || 0;
+              
+              await customerRef.update({
+                noShowCount: Math.max(0, currentCount - 1),
+                updatedAt: now
+              });
+              
+              console.log(`✅ Decremented no-show count for customer ${appointment.customerId} from ${currentCount} to ${Math.max(0, currentCount - 1)}`);
+            }
+          } catch (error) {
+            console.error('⚠️ Error adjusting customer no-show count:', error);
+            // Don't fail the attendance marking if count adjustment fails
+          }
+        }
+      }
 
       // Add financial tracking data if provided
       if (attendance === 'attended' && actualPrice !== undefined) {
@@ -74,15 +114,55 @@ export const markAttendance = onCall(
         
         await appointmentRef.update(updateData);
         
-        // Send post-service receipt
+        // Send completion/thank you email
         try {
-          const { sendPostServiceReceipt } = await import('./post-service-receipt.js');
-          await sendPostServiceReceipt(appointmentId);
+          // Get customer details
+          const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+          if (customerDoc.exists) {
+            const customerData = customerDoc.data();
+            const customerEmail = customerData?.email;
+            const customerName = customerData?.name || 'Valued Customer';
+
+            if (customerEmail) {
+              // Get service details
+              const serviceDoc = await db.collection('services').doc(appointment.serviceId).get();
+              const serviceData = serviceDoc.data();
+              const serviceName = serviceData?.name || 'Service';
+
+              // Get business hours for timezone
+              const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
+              const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
+              const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
+
+              // Format date and time
+              const appointmentDate = new Date(appointment.start);
+              const time = appointmentDate.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: businessTimezone,
+              });
+
+              // Import and send completion email
+              const { sendAppointmentCompletionEmail } = await import('./email');
+              await sendAppointmentCompletionEmail(customerEmail, customerName, {
+                serviceName,
+                date: appointment.start,
+                time,
+                duration: appointment.duration || 60,
+                actualPrice: parseFloat(actualPrice) || appointment.bookedPrice,
+                tipAmount: parseFloat(tipAmount) || 0,
+                notes: notes?.trim(),
+                businessTimezone,
+              });
+
+              console.log('✅ Completion email sent to customer');
+            }
+          }
         } catch (error) {
-          console.error('⚠️ Error sending post-service receipt:', error);
-          // Don't fail the attendance marking if receipt fails
+          console.error('⚠️ Error sending completion email:', error);
+          // Don't fail the attendance marking if email fails
         }
-        
         
         return {
           success: true,
@@ -111,10 +191,57 @@ export const markAttendance = onCall(
           // Don't fail the attendance marking if customer update fails
         }
         
+        // Send no-show email
+        try {
+          // Get customer details
+          const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+          if (customerDoc.exists) {
+            const customerData = customerDoc.data();
+            const customerEmail = customerData?.email;
+            const customerName = customerData?.name || 'Valued Customer';
+
+            if (customerEmail) {
+              // Get service details
+              const serviceDoc = await db.collection('services').doc(appointment.serviceId).get();
+              const serviceData = serviceDoc.data();
+              const serviceName = serviceData?.name || 'Service';
+
+              // Get business hours for timezone
+              const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
+              const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
+              const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
+
+              // Format date and time
+              const appointmentDate = new Date(appointment.start);
+              const time = appointmentDate.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: businessTimezone,
+              });
+
+              // Import and send no-show email
+              const { sendAppointmentNoShowEmail } = await import('./email');
+              await sendAppointmentNoShowEmail(customerEmail, customerName, {
+                serviceName,
+                date: appointment.start,
+                time,
+                duration: appointment.duration || 60,
+                price: appointment.bookedPrice,
+                businessTimezone,
+              });
+
+              console.log('✅ No-show email sent to customer');
+            }
+          }
+        } catch (error) {
+          console.error('⚠️ Error sending no-show email:', error);
+          // Don't fail the attendance marking if email fails
+        }
         
         return {
           success: true,
-          message: 'Appointment marked as no-show',
+          message: 'Appointment marked as no-show and customer notified',
           appointmentId,
           status: 'no-show',
           attendance: 'no-show'

@@ -4,6 +4,7 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { doc, onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
 import type { Customer, Appointment, Service } from '@buenobrows/shared/types';
 import { format, parseISO } from 'date-fns';
+import CustomerNotes from '../components/CustomerNotes';
 
 export default function CustomerProfile() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -14,6 +15,7 @@ export default function CustomerProfile() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Record<string, Service>>({});
   const [loading, setLoading] = useState(true);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Load customer data
   useEffect(() => {
@@ -29,7 +31,7 @@ export default function CustomerProfile() {
     });
 
     return unsubscribe;
-  }, [customerId, db]);
+  }, [customerId, db, refreshTrigger]);
 
   // Load customer appointments
   useEffect(() => {
@@ -170,6 +172,14 @@ export default function CustomerProfile() {
           )}
         </div>
       </div>
+
+      {/* Admin Notes */}
+      {customer && (
+        <CustomerNotes 
+          customer={customer} 
+          onUpdate={() => setRefreshTrigger(prev => prev + 1)} 
+        />
+      )}
 
       {/* Appointment History */}
       <div className="bg-white rounded-xl shadow-soft p-6">

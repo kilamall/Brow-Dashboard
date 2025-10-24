@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy, updateDoc, doc, getDocs, deleteDoc } from 'firebase/firestore';
@@ -9,12 +9,15 @@ import AddAppointmentModal from '@/components/AddAppointmentModal';
 import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
 import EditAppointmentModal from '@/components/EditAppointmentModal';
 import CalendarDayView from '@/components/CalendarDayView';
+import CalendarWeekView from '@/components/CalendarWeekView';
 import EditRequestConfirmModal from '@/components/EditRequestConfirmModal';
 import EditRequestsModal from '@/components/EditRequestsModal';
 import AttendanceConfirmationModal from '@/components/AttendanceConfirmationModal';
+import NoShowConfirmationModal from '@/components/NoShowConfirmationModal';
 import CalendarDayHighlighting from '@/components/CalendarDayHighlighting';
 import {
   addMonths,
+  addWeeks,
   endOfDay,
   endOfMonth,
   endOfWeek,
@@ -61,6 +64,11 @@ export default function Schedule() {
     appointment: Appointment | null;
     service: Service | null;
   }>({ open: false, appointment: null, service: null });
+  const [noShowModal, setNoShowModal] = useState<{
+    open: boolean;
+    appointment: Appointment | null;
+    service: Service | null;
+  }>({ open: false, appointment: null, service: null });
 
   const handleMarkAttended = (appointmentId: string) => {
     const appointment = appts.find(a => a.id === appointmentId);
@@ -83,13 +91,33 @@ export default function Schedule() {
     // Data will auto-refresh from Firestore listener
   };
 
-  const handleMarkNoShow = async (appointmentId: string) => {
-    if (!confirm('Mark this appointment as no-show?')) return;
+  const handleMarkNoShow = (appointmentId: string) => {
+    const appointment = appts.find(a => a.id === appointmentId);
+    const service = appointment ? services[appointment.serviceId] : null;
+    
+    if (!appointment || !service) {
+      alert('Appointment or service not found');
+      return;
+    }
+    
+    setNoShowModal({
+      open: true,
+      appointment,
+      service
+    });
+  };
+
+  const handleNoShowConfirmed = async () => {
+    if (!noShowModal.appointment) return;
+    
+    const appointmentId = noShowModal.appointment.id;
+    const customerName = noShowModal.appointment.customerName || 'Customer';
+    
     setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
     try {
       const markAttendanceFn = httpsCallable(functions, 'markAttendance');
       await markAttendanceFn({ appointmentId, attendance: 'no-show' });
-      alert('Appointment marked as no-show.');
+      alert(`✅ ${customerName} marked as no-show. Email notification sent.`);
     } catch (error: any) {
       console.error('Error marking no-show:', error);
       alert(`Failed to mark no-show: ${error.message}`);
@@ -99,6 +127,7 @@ export default function Schedule() {
         next.delete(appointmentId);
         return next;
       });
+      setNoShowModal({ open: false, appointment: null, service: null });
     }
   };
 
@@ -120,6 +149,7 @@ export default function Schedule() {
     try {
       await updateDoc(doc(db, 'appointments', appointmentId), { 
         status: 'cancelled',
+        cancelledBy: 'admin',
         updatedAt: new Date().toISOString()
       });
       
@@ -137,7 +167,63 @@ export default function Schedule() {
     }
   };
 
-  const [layout, setLayout] = useState<'grid' | 'stacked' | 'day'>('grid');
+  const handleChangeAttendance = async (appointmentId: string, newAttendance: 'attended' | 'no-show') => {
+    const appointment = appts.find(a => a.id === appointmentId);
+    if (!appointment) return;
+    
+    const currentStatus = appointment.attendance || 'pending';
+    const customerName = appointment.customerName || 'Customer';
+    
+    // Prompt for override reason
+    const reason = prompt(
+      `Change attendance from "${currentStatus}" to "${newAttendance}"?\n\n` +
+      `Customer: ${customerName}\n` +
+      `Please provide a reason for this change:\n` +
+      `(e.g., "Customer arrived late", "Marked by mistake", etc.)`
+    );
+    
+    if (!reason || reason.trim() === '') {
+      alert('Override reason is required to change attendance status.');
+      return;
+    }
+    
+    if (!confirm(
+      `Change attendance for ${customerName}?\n\n` +
+      `From: ${currentStatus}\n` +
+      `To: ${newAttendance}\n` +
+      `Reason: ${reason}\n\n` +
+      `${currentStatus === 'no-show' && newAttendance === 'attended' ? 'Note: This will decrement their no-show count.' : ''}`
+    )) {
+      return;
+    }
+    
+    setMarkingAttendanceIds(prev => new Set(prev).add(appointmentId));
+    
+    try {
+      const functions = getFunctions();
+      const markAttendance = httpsCallable(functions, 'markAttendance');
+      
+      const result = await markAttendance({
+        appointmentId,
+        attendance: newAttendance,
+        overrideReason: reason.trim()
+      });
+      
+      console.log('✅ Attendance changed:', result.data);
+      alert(`✅ ${customerName} marked as ${newAttendance}. Email notification sent.`);
+    } catch (error: any) {
+      console.error('❌ Error changing attendance:', error);
+      alert(`Failed to change attendance: ${error.message}`);
+    } finally {
+      setMarkingAttendanceIds(prev => {
+        const next = new Set(prev);
+        next.delete(appointmentId);
+        return next;
+      });
+    }
+  };
+
+  const [layout, setLayout] = useState<'grid' | 'week' | 'day'>('grid');
   const [selectedDay, setSelectedDay] = useState<Date>(() => new Date());
   const [multiEmployee, setMultiEmployee] = useState(false);
   const [showStaffManager, setShowStaffManager] = useState(false);
@@ -146,6 +232,39 @@ export default function Schedule() {
   const [confirmingRequest, setConfirmingRequest] = useState<AppointmentEditRequest | null>(null);
   const [approvingEdit, setApprovingEdit] = useState(false);
   const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
+  const [showScrollToCalendar, setShowScrollToCalendar] = useState(false);
+  const calendarRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to calendar function
+  const scrollToCalendar = () => {
+    if (calendarRef.current) {
+      calendarRef.current.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'start' 
+      });
+    }
+  };
+
+  // Helper function to get button state
+  const getButtonState = (buttonLayout: 'grid' | 'week' | 'day') => {
+    return buttonLayout === layout;
+  };
+
+  // Check if calendar is in view
+  useEffect(() => {
+    const handleScroll = () => {
+      if (calendarRef.current) {
+        const rect = calendarRef.current.getBoundingClientRect();
+        const isInView = rect.top >= 0 && rect.top <= window.innerHeight * 0.5;
+        setShowScrollToCalendar(!isInView && (layout === 'grid' || layout === 'week' || layout === 'day'));
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    handleScroll(); // Check initial state
+
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [layout]);
   
   // Get quick rebook data from navigation state
   const locationState = location.state as {
@@ -399,8 +518,8 @@ export default function Schedule() {
   useEffect(() => {
     const savedLayout = localStorage.getItem('scheduleLayout');
     const savedMultiEmployee = localStorage.getItem('scheduleMultiEmployee');
-    if (savedLayout && (savedLayout === 'grid' || savedLayout === 'stacked' || savedLayout === 'day')) {
-      setLayout(savedLayout as 'grid' | 'stacked' | 'day');
+    if (savedLayout && (savedLayout === 'grid' || savedLayout === 'week' || savedLayout === 'day')) {
+      setLayout(savedLayout as 'grid' | 'week' | 'day');
     }
     if (savedMultiEmployee) {
       setMultiEmployee(savedMultiEmployee === 'true');
@@ -645,69 +764,6 @@ export default function Schedule() {
         </div>
       )}
       
-      {/* View Mode Selector */}
-      <div className="bg-white rounded-xl shadow-soft p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="font-serif text-2xl text-slate-800">Schedule Management</h2>
-            <p className="text-sm text-slate-600 mt-1">Choose your preferred view for managing appointments</p>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Multi-Employee Toggle */}
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={multiEmployee}
-                  onChange={(e) => setMultiEmployee(e.target.checked)}
-                  className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
-                />
-                <span className="text-slate-700">Multi-Employee</span>
-              </label>
-              {multiEmployee && (
-                <button
-                  onClick={() => setShowStaffManager(true)}
-                  className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition-colors"
-                >
-                  Manage Staff
-                </button>
-              )}
-            </div>
-            
-            {/* Layout Toggle */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setLayout('grid')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  layout === 'grid' ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-                aria-pressed={layout === 'grid'}
-              >
-                Grid
-              </button>
-              <button
-                onClick={() => setLayout('stacked')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  layout === 'stacked' ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-                aria-pressed={layout === 'stacked'}
-              >
-                Stacked
-              </button>
-              <button
-                onClick={() => setLayout('day')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  layout === 'day' ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-                aria-pressed={layout === 'day'}
-              >
-                Day
-              </button>
-            </div>
-          </div>
-        </div>
-        
-      </div>
 
       {/* Appointment Cards for Schedule Page */}
       <div className="grid md:grid-cols-2 gap-6">
@@ -818,10 +874,28 @@ export default function Schedule() {
                         <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
                       )}
                       {a.status === 'completed' && (
-                        <div className="text-xs text-green-600 font-medium">✓ Completed</div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeAttendance(a.id, 'no-show');
+                          }}
+                          className="text-xs text-green-600 font-medium hover:bg-green-50 px-2 py-1 rounded transition-colors cursor-pointer border border-transparent hover:border-green-200"
+                          title="Click to change to no-show"
+                        >
+                          ✓ Completed
+                        </button>
                       )}
                       {a.status === 'no-show' && (
-                        <div className="text-xs text-red-600 font-medium">✗ No-Show</div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeAttendance(a.id, 'attended');
+                          }}
+                          className="text-xs text-red-600 font-medium hover:bg-red-50 px-2 py-1 rounded transition-colors cursor-pointer border border-transparent hover:border-red-200"
+                          title="Click to change to attended"
+                        >
+                          ✗ No-Show
+                        </button>
                       )}
                       {a.status === 'confirmed' && (
                         <div className="flex items-center gap-2">
@@ -841,8 +915,8 @@ export default function Schedule() {
                               e.stopPropagation();
                               handleMarkNoShow(a.id);
                             }}
-                            className="p-1 hover:bg-red-100 rounded text-red-600"
-                            title="Mark as no-show"
+                            className="p-1 hover:bg-red-100 rounded text-red-600 border border-red-300 hover:border-red-400 transition-all duration-200 font-bold"
+                            title="⚠️ Mark as no-show - Requires confirmation"
                           >
                             ✗
                           </button>
@@ -949,7 +1023,70 @@ export default function Schedule() {
 
       {/* Calendar View */}
       {layout === 'grid' && (
-      <div className="grid gap-4">
+      <div className="grid gap-4" ref={calendarRef}>
+          {/* Calendar Controls */}
+          <div className="bg-white rounded-xl shadow-soft p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-serif text-xl text-slate-800">Calendar View</h3>
+                <p className="text-sm text-slate-600 mt-1">Manage your calendar display and settings</p>
+              </div>
+              <div className="flex items-center gap-4">
+                {/* Multi-Employee Toggle */}
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={multiEmployee}
+                      onChange={(e) => setMultiEmployee(e.target.checked)}
+                      className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
+                    />
+                    <span className="text-slate-700">Multi-Employee</span>
+                  </label>
+                  {multiEmployee && (
+                    <button
+                      onClick={() => setShowStaffManager(true)}
+                      className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition-colors"
+                    >
+                      Manage Staff
+                    </button>
+                  )}
+                </div>
+                
+                {/* Layout Toggle */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setLayout('grid')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('grid') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('grid')}
+                  >
+                    Grid
+                  </button>
+                  <button
+                    onClick={() => setLayout('week')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('week') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('week')}
+                  >
+                    Week
+                  </button>
+                  <button
+                    onClick={() => setLayout('day')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('day') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('day')}
+                  >
+                    Day
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Month header */}
           <div className="flex items-center justify-between">
             <div className="font-serif text-2xl">{format(month, 'MMMM yyyy')}</div>
@@ -1119,77 +1256,131 @@ export default function Schedule() {
       </div>
       )}
 
-      {/* Stacked (Daily List) View */}
-      {layout === 'stacked' && (
-        <div className="grid gap-3">
-          {/* Month header */}
-          <div className="flex items-center justify-between">
-            <div className="font-serif text-2xl">{format(month, 'MMMM yyyy')}</div>
-            <div className="flex items-center gap-2">
-              <button className="border rounded-md px-3 py-1 hover:bg-cream" onClick={() => setMonth(addMonths(month, -1))}>Prev</button>
-              <button className="border rounded-md px-3 py-1 hover:bg-cream" onClick={() => setMonth(new Date())}>Today</button>
-              <button className="border rounded-md px-3 py-1 hover:bg-cream" onClick={() => setMonth(addMonths(month, 1))}>Next</button>
+      {/* Scroll to Calendar Button */}
+      {showScrollToCalendar && (
+        <button
+          onClick={scrollToCalendar}
+          className="fixed bottom-6 right-6 bg-terracotta text-white px-4 py-3 rounded-full shadow-lg hover:bg-terracotta/90 transition-all duration-200 z-50 flex items-center gap-2"
+          title="Scroll to Calendar"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span className="text-sm font-medium">
+            {layout === 'grid' ? 'Calendar' : layout === 'week' ? 'Week View' : 'Day View'}
+          </span>
+        </button>
+      )}
+
+      {/* Week View */}
+      {layout === 'week' && (
+        <div className="space-y-4" ref={calendarRef}>
+          {/* Calendar Controls */}
+          <div className="bg-white rounded-xl shadow-soft p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-serif text-xl text-slate-800">Week View</h3>
+                <p className="text-sm text-slate-600 mt-1">Modern weekly schedule with color-coded categories</p>
+              </div>
+              <div className="flex items-center gap-4">
+                {/* Multi-Employee Toggle */}
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={multiEmployee}
+                      onChange={(e) => setMultiEmployee(e.target.checked)}
+                      className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
+                    />
+                    <span className="text-slate-700">Multi-Employee</span>
+                  </label>
+                  {multiEmployee && (
+                    <button
+                      onClick={() => setShowStaffManager(true)}
+                      className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition-colors"
+                    >
+                      Manage Staff
+                    </button>
+                  )}
+                </div>
+                
+                {/* Layout Toggle */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setLayout('grid')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('grid') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('grid')}
+                  >
+                    Grid
+                  </button>
+                  <button
+                    onClick={() => setLayout('week')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('week') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('week')}
+                  >
+                    Week
+                  </button>
+                  <button
+                    onClick={() => setLayout('day')}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      getButtonState('day') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                    aria-pressed={getButtonState('day')}
+                  >
+                    Day
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          {days.map((d, idx) => {
-            const todaysAppts = appts.filter((a) => isSameDay(safeParseDate(a.start), d) && a.status !== 'cancelled');
-            return (
-              <div key={idx} className="bg-white rounded-xl shadow-soft p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-medium text-slate-800">{format(d, 'EEE, MMM d')}</div>
-                  <button
-                    className="text-sm text-terracotta hover:text-terracotta/80"
-                    onClick={() => setOpenAdd({ open: true, date: d })}
-                  >
-                    + Add
-                  </button>
-                </div>
-                {todaysAppts.length === 0 ? (
-                  <div className="text-slate-500 text-sm">No appointments</div>
-                ) : (
-                  <ul className="divide-y divide-slate-200">
-                    {todaysAppts.map((a) => (
-                      <li
-                        key={a.id}
-                        className="py-2 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-slate-800 truncate">
-                            {format(safeParseDate(a.start), 'h:mm a')} - {format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                          </div>
-                          <span className="text-xs text-slate-600 truncate text-left">
-                            {services[a.serviceId]?.name || 'Service'}
-                          </span>
-                          {a.customerName && (
-                            <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            className="px-2 py-1 text-xs border rounded-md hover:bg-slate-50"
-                            onClick={() => setSelectedAppointment(a)}
-                          >
-                            View
-                          </button>
-                          <button
-                            className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded-md hover:bg-red-50"
-                            onClick={async () => {
-                              if (confirm('Cancel this appointment?')) {
-                                await updateDoc(doc(db, 'appointments', a.id), { status: 'cancelled' });
-                              }
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+          {/* Week navigation */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <button 
+                className="border border-slate-300 rounded-lg px-4 py-2 hover:bg-slate-50 transition-colors text-sm font-medium" 
+                onClick={() => setMonth(addWeeks(month, -1))}
+              >
+                ← Previous Week
+              </button>
+              <button 
+                className="border border-slate-300 rounded-lg px-4 py-2 hover:bg-slate-50 transition-colors text-sm font-medium" 
+                onClick={() => setMonth(new Date())}
+              >
+                This Week
+              </button>
+              <button 
+                className="border border-slate-300 rounded-lg px-4 py-2 hover:bg-slate-50 transition-colors text-sm font-medium" 
+                onClick={() => setMonth(addWeeks(month, 1))}
+              >
+                Next Week →
+              </button>
+            </div>
+            <button
+              className="bg-terracotta text-white px-4 py-2 rounded-lg hover:bg-terracotta/90 transition-colors text-sm font-medium"
+              onClick={() => setOpenAdd({ open: true, date: month })}
+            >
+              + Add Appointment
+            </button>
+          </div>
+
+          {/* Week Calendar View */}
+          <CalendarWeekView
+            weekStartDate={startOfWeek(month, { weekStartsOn: 0 })}
+            appointments={appts}
+            services={services}
+            onAppointmentClick={(appointment) => setSelectedAppointment(appointment)}
+            onTimeSlotClick={(date, time) => {
+              // Set the time on the date
+              const appointmentDate = new Date(date);
+              appointmentDate.setHours(time.getHours(), time.getMinutes(), 0, 0);
+              setOpenAdd({ open: true, date: appointmentDate });
+            }}
+          />
         </div>
       )}
 
@@ -1290,7 +1481,70 @@ export default function Schedule() {
 
         {/* Day View */}
         {layout === 'day' && (
-          <div className="space-y-4">
+          <div className="space-y-4" ref={calendarRef}>
+            {/* Calendar Controls */}
+            <div className="bg-white rounded-xl shadow-soft p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-serif text-xl text-slate-800">Day View</h3>
+                  <p className="text-sm text-slate-600 mt-1">Detailed daily schedule view</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  {/* Multi-Employee Toggle */}
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={multiEmployee}
+                        onChange={(e) => setMultiEmployee(e.target.checked)}
+                        className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
+                      />
+                      <span className="text-slate-700">Multi-Employee</span>
+                    </label>
+                    {multiEmployee && (
+                      <button
+                        onClick={() => setShowStaffManager(true)}
+                        className="px-2 py-1 text-xs bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition-colors"
+                      >
+                        Manage Staff
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Layout Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setLayout('grid')}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        getButtonState('grid') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                      aria-pressed={getButtonState('grid')}
+                    >
+                      Grid
+                    </button>
+                    <button
+                      onClick={() => setLayout('week')}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        getButtonState('week') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                      aria-pressed={getButtonState('week')}
+                    >
+                      Week
+                    </button>
+                    <button
+                      onClick={() => setLayout('day')}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        getButtonState('day') ? 'bg-terracotta text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                      aria-pressed={getButtonState('day')}
+                    >
+                      Day
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Day navigation */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1411,6 +1665,16 @@ export default function Schedule() {
         appointment={attendanceModal.appointment}
         service={attendanceModal.service}
         onConfirmed={handleAttendanceConfirmed}
+      />
+
+      {/* No-Show Confirmation Modal */}
+      <NoShowConfirmationModal
+        open={noShowModal.open}
+        onClose={() => setNoShowModal({ open: false, appointment: null, service: null })}
+        appointment={noShowModal.appointment}
+        service={noShowModal.service}
+        onConfirm={handleNoShowConfirmed}
+        loading={markingAttendanceIds.size > 0}
       />
     </div>
   );

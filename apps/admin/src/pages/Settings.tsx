@@ -22,8 +22,9 @@ import VerificationSettings from '../components/VerificationSettings';
 import AdminEmailSetup from '../components/AdminEmailSetup';
 import BusinessHoursManager from '../components/BusinessHoursManager';
 import AITrainingPanel from '../components/AITrainingPanel';
+import CostMonitoringSettings from '../components/CostMonitoringSettings';
 
-type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining';
+type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring';
 
 export default function Settings() {
   const { db, app } = useFirebase();
@@ -39,7 +40,7 @@ export default function Settings() {
   useEffect(() => {
     const savedTab = localStorage.getItem('settingsActiveTab');
     if (savedTab) {
-      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining'];
+      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining', 'costmonitoring'];
       if (validTabs.includes(savedTab as Tab)) {
         setActiveTab(savedTab as Tab);
       }
@@ -116,6 +117,7 @@ export default function Settings() {
     { id: 'accessibility', label: 'Accessibility', icon: '♿' },
     { id: 'adminemail', label: 'Admin Notifications', icon: '📧' },
     { id: 'aitraining', label: 'AI Messaging', icon: '🤖' },
+    { id: 'costmonitoring', label: 'Cost Monitoring', icon: '💰' },
     { id: 'datamanagement', label: 'Data Management', icon: '🗄️' }
   ];
 
@@ -233,6 +235,10 @@ export default function Settings() {
 
         {activeTab === 'aitraining' && (
           <AITrainingPanel />
+        )}
+
+        {activeTab === 'costmonitoring' && (
+          <CostMonitoringSettings />
         )}
 
         {activeTab === 'datamanagement' && (

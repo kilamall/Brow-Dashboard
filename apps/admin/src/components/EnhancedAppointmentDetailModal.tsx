@@ -31,6 +31,57 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [savingPrice, setSavingPrice] = useState(false);
   const functions = getFunctions();
 
+  const handleChangeAttendanceFromModal = async (appointmentId: string, newAttendance: 'attended' | 'no-show') => {
+    const currentStatus = appointment.attendance || 'pending';
+    const customerName = appointment.customerName || 'Customer';
+    
+    // Prompt for override reason
+    const reason = prompt(
+      `Change attendance from "${currentStatus}" to "${newAttendance}"?\n\n` +
+      `Customer: ${customerName}\n` +
+      `Please provide a reason for this change:\n` +
+      `(e.g., "Customer arrived late", "Marked by mistake", etc.)`
+    );
+    
+    if (!reason || reason.trim() === '') {
+      alert('Override reason is required to change attendance status.');
+      return;
+    }
+    
+    if (!confirm(
+      `Change attendance for ${customerName}?\n\n` +
+      `From: ${currentStatus}\n` +
+      `To: ${newAttendance}\n` +
+      `Reason: ${reason}\n\n` +
+      `${currentStatus === 'no-show' && newAttendance === 'attended' ? 'Note: This will decrement their no-show count.' : ''}`
+    )) {
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      const markAttendance = httpsCallable(functions, 'markAttendance');
+      
+      const result = await markAttendance({
+        appointmentId,
+        attendance: newAttendance,
+        overrideReason: reason.trim()
+      });
+      
+      console.log('✅ Attendance changed:', result.data);
+      alert(`✅ ${customerName} marked as ${newAttendance}. Email notification sent.`);
+      
+      // Close modal and refresh data
+      onClose();
+    } catch (error: any) {
+      console.error('❌ Error changing attendance:', error);
+      alert(`Failed to change attendance: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Initialize price and tip values when appointment changes
   useEffect(() => {
     if (appointment) {
@@ -131,6 +182,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     try {
       await updateDoc(doc(db, 'appointments', appointment.id), {
         status: 'cancelled',
+        cancelledBy: 'admin',
         updatedAt: new Date().toISOString()
       });
       
@@ -232,6 +284,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     try {
       await updateDoc(doc(db, 'appointments', appointment.id), {
         status: 'cancelled',
+        cancelledBy: 'admin',
         updatedAt: new Date().toISOString()
       });
       console.log('Appointment denied successfully');
@@ -364,14 +417,39 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
               {/* Status & Time */}
               <div className="bg-slate-50 rounded-xl p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <span className={`px-4 py-2 rounded-full text-sm font-semibold border ${getStatusColor(appointment.status)}`}>
-                    {appointment.status === 'confirmed' ? '✅ Confirmed' : 
-                     appointment.status === 'pending' ? '⏳ Pending' : 
-                     appointment.status === 'completed' ? '✅ Completed' :
-                     appointment.status === 'no-show' ? '❌ No Show' :
-                     appointment.status === 'cancelled' ? '❌ Cancelled' : 
-                     `❌ ${appointment.status}`}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    {appointment.status === 'completed' ? (
+                      <button
+                        onClick={() => handleChangeAttendanceFromModal(appointment.id, 'no-show')}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-100 text-green-800 rounded-full text-sm font-semibold border border-green-200 hover:bg-green-200 transition-colors cursor-pointer"
+                        title="Click to change to no-show"
+                      >
+                        ✅ Completed
+                      </button>
+                    ) : appointment.status === 'no-show' ? (
+                      <button
+                        onClick={() => handleChangeAttendanceFromModal(appointment.id, 'attended')}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-100 text-red-800 rounded-full text-sm font-semibold border border-red-200 hover:bg-red-200 transition-colors cursor-pointer"
+                        title="Click to change to attended"
+                      >
+                        ❌ No Show
+                      </button>
+                    ) : (
+                      <span className={`px-4 py-2 rounded-full text-sm font-semibold border ${getStatusColor(appointment.status)}`}>
+                        {appointment.status === 'confirmed' ? '✅ Confirmed' : 
+                         appointment.status === 'pending' ? '⏳ Pending' : 
+                         appointment.status === 'cancelled' ? '❌ Cancelled' : 
+                         `❌ ${appointment.status}`}
+                      </span>
+                    )}
+                    
+                    {/* Show override indicator if it was changed */}
+                    {appointment.previousAttendance && (
+                      <div className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-200">
+                        <span className="font-medium">Changed:</span> {appointment.attendanceOverrideReason}
+                      </div>
+                    )}
+                  </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-slate-800">
                       {format(parseISO(appointment.start), 'h:mm a')}

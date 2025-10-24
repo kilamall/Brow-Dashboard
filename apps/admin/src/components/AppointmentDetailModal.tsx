@@ -42,6 +42,7 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
     try {
       await updateDoc(doc(db, 'appointments', appointment.id), { 
         status: 'cancelled',
+        cancelledBy: 'admin',
         updatedAt: new Date().toISOString()
       });
       

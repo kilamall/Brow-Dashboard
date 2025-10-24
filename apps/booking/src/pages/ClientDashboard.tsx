@@ -269,7 +269,11 @@ export default function ClientDashboard() {
 
     try {
       const appointmentRef = doc(db, 'appointments', appointmentId);
-      await updateDoc(appointmentRef, { status: 'cancelled' });
+      await updateDoc(appointmentRef, { 
+        status: 'cancelled',
+        cancelledBy: 'customer',
+        updatedAt: new Date().toISOString()
+      });
     } catch (error) {
       console.error('Error cancelling appointment:', error);
       alert('Failed to cancel appointment. Please try again.');
@@ -472,9 +476,9 @@ export default function ClientDashboard() {
                     
                     console.log('✅ Customer profile created/updated:', result.data);
                     // The real-time listener will automatically detect the customer document
-                  } catch (error) {
+                  } catch (error: any) {
                     console.error('❌ Failed to create customer profile:', error);
-                    alert(`Failed to create customer profile: ${error.message || 'Unknown error'}`);
+                    alert(`Failed to create customer profile: ${error?.message || 'Unknown error'}`);
                   }
                 }}
                 className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"

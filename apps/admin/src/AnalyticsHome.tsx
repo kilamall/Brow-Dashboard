@@ -22,7 +22,9 @@ export default function AnalyticsHome() {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [colorAccessibility, setColorAccessibility] = useState(false);
   const [growthMode, setGrowthMode] = useState(true); // Default to Growth Mode
-  const [kpiOrder, setKpiOrder] = useState<string[]>([]); // Store the order of KPIs
+  const [growthModeKpiOrder, setGrowthModeKpiOrder] = useState<string[]>([]); // Store the order of Growth Mode KPIs
+  const [detailedModeKpiOrder, setDetailedModeKpiOrder] = useState<string[]>([]); // Store the order of Detailed Mode KPIs
+  const [kpiOrdersLoaded, setKpiOrdersLoaded] = useState(false); // Track if KPI orders have been loaded
   const [sectionOrder, setSectionOrder] = useState<string[]>([]); // Store the order of sections
 
   // Get memoized Firebase instance
@@ -51,16 +53,36 @@ export default function AnalyticsHome() {
     if (saved !== null) setGrowthMode(JSON.parse(saved));
   }, []);
 
-  // Load KPI order from localStorage
+  // Load KPI orders from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('kpiOrder');
-    if (saved) {
+    const savedGrowth = localStorage.getItem('growthModeKpiOrder');
+    const savedDetailed = localStorage.getItem('detailedModeKpiOrder');
+    
+    console.log('Loading Growth Mode KPI order from localStorage:', savedGrowth);
+    console.log('Loading Detailed Mode KPI order from localStorage:', savedDetailed);
+    
+    if (savedGrowth) {
       try {
-        setKpiOrder(JSON.parse(saved));
+        const parsed = JSON.parse(savedGrowth);
+        console.log('Parsed Growth Mode KPI order:', parsed);
+        setGrowthModeKpiOrder(parsed);
       } catch (e) {
-        console.error('Failed to parse KPI order:', e);
+        console.error('Failed to parse Growth Mode KPI order:', e);
       }
     }
+    
+    if (savedDetailed) {
+      try {
+        const parsed = JSON.parse(savedDetailed);
+        console.log('Parsed Detailed Mode KPI order:', parsed);
+        setDetailedModeKpiOrder(parsed);
+      } catch (e) {
+        console.error('Failed to parse Detailed Mode KPI order:', e);
+      }
+    }
+    
+    // Mark as loaded after attempting to load both
+    setKpiOrdersLoaded(true);
   }, []);
 
   // Load color accessibility setting from localStorage
@@ -87,10 +109,28 @@ export default function AnalyticsHome() {
     }
   }, []);
 
-  // Save KPI order to localStorage
+  // Debug KPI order changes
+  useEffect(() => {
+    console.log('Growth Mode KPI order changed:', growthModeKpiOrder);
+  }, [growthModeKpiOrder]);
+  
+  useEffect(() => {
+    console.log('Detailed Mode KPI order changed:', detailedModeKpiOrder);
+  }, [detailedModeKpiOrder]);
+
+  // Save KPI order to localStorage based on current mode
   const saveKpiOrder = (order: string[]) => {
-    setKpiOrder(order);
-    localStorage.setItem('kpiOrder', JSON.stringify(order));
+    console.log('Saving KPI order for mode:', growthMode ? 'Growth' : 'Detailed', order);
+    
+    if (growthMode) {
+      setGrowthModeKpiOrder(order);
+      localStorage.setItem('growthModeKpiOrder', JSON.stringify(order));
+      console.log('Growth Mode KPI order saved to localStorage');
+    } else {
+      setDetailedModeKpiOrder(order);
+      localStorage.setItem('detailedModeKpiOrder', JSON.stringify(order));
+      console.log('Detailed Mode KPI order saved to localStorage');
+    }
   };
 
   // Save section order to localStorage
@@ -216,6 +256,253 @@ export default function AnalyticsHome() {
   }, [appts, services, targets, period, fromISO, toISO]);
 
 
+  // Create the items arrays outside of JSX for cleaner code
+  const growthModeItems = [
+    // Growth Mode Cards
+    { id: 'services-completed', title: "Services Completed", value: `${growthMetrics.servicesCompleted}`, subtitle: "This period" },
+    { id: 'building-momentum', title: "Building Momentum", value: "🌱 Growth Phase", subtitle: `${growthMetrics.servicesToBreakEven} more to monthly break-even` },
+    { id: 'value-per-service', title: "Value per Service", value: fmtCurrency(avgCustomerValue), subtitle: `${uniqueCustomers} clients served` },
+    {
+      id: 'progress-to-goal',
+      title: "Progress to Goal",
+      value: `${Math.round((uniqueCustomers / growthMetrics.monthlyBreakEven) * 100)}%`,
+      subtitle: `${uniqueCustomers}/${growthMetrics.monthlyBreakEven} monthly target`,
+      children: (
+        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+          <div className={`h-full ${colorAccessibility ? 'bg-gray-600' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (uniqueCustomers / growthMetrics.monthlyBreakEven) * 100)}%` }} />
+        </div>
+      )
+    },
+    { id: 'revenue-generated', title: "Revenue Generated", value: fmtCurrency(revenue), subtitle: formatRange(fromISO, toISO) },
+    { id: 'growth-investment', title: "Growth Investment", value: fmtCurrency(Math.abs(netProfit)), subtitle: "Building your business" },
+    { id: 'break-even-timeline', title: "Break-Even Timeline", value: growthMetrics.weeksToBreakEven > 0 ? `${growthMetrics.weeksToBreakEven} weeks` : "🎉 Achieved!", subtitle: "At current pace" },
+    { id: 'switch-to-detailed', title: "Switch to Detailed", value: "📊 View Details", subtitle: "Click for financial breakdown", className: "cursor-pointer hover:shadow-lg transition-all duration-200 border-2 border-dashed border-terracotta/30 hover:border-terracotta/60", onClick: () => setShowBreakdown(!showBreakdown) },
+    
+    // Appointment Cards
+    {
+      id: 'upcoming-appointments',
+      title: "Upcoming Appointments",
+      value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date()).length,
+      subtitle: "Scheduled appointments",
+      children: (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {allAppts
+            .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date())
+            .slice(0, 10)
+            .map((a) => (
+              <div 
+                key={a.id} 
+                onClick={() => setSelectedAppointment(a)}
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">
+                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                  </div>
+                  <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                  {a.customerName && (
+                    <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                  )}
+                  {a.status === 'pending' && (
+                    <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-terracotta">
+                  {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                </div>
+              </div>
+            ))}
+        </div>
+      )
+    },
+    {
+      id: 'past-appointments',
+      title: "Recent Past Appointments",
+      value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date()).length,
+      subtitle: "Completed appointments",
+      children: (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {allAppts
+            .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date())
+            .reverse()
+            .slice(0, 10)
+            .map((a) => (
+              <div 
+                key={a.id} 
+                onClick={() => setSelectedAppointment(a)}
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">
+                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                  </div>
+                  <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                  {a.customerName && (
+                    <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                  )}
+                  {a.status === 'pending' && (
+                    <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-terracotta">
+                  {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                </div>
+              </div>
+            ))}
+        </div>
+      )
+    },
+    {
+      id: 'top-services',
+      title: "Top Services This Month",
+      value: topServices.length,
+      subtitle: "Most booked services",
+      children: (
+        <ul className="divide-y">
+          {topServices.map((s, i) => (
+            <li key={i} className="flex items-center justify-between py-2">
+              <div>
+                <div className="font-medium">{s.name}</div>
+                <div className="text-xs text-slate-500">{s.count} bookings</div>
+              </div>
+              <div className="font-semibold">{fmtCurrency(s.value)}</div>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  ];
+
+  const detailedModeItems = [
+    // Detailed Mode Cards
+    { id: 'revenue', title: "Revenue", value: fmtCurrency(revenue), subtitle: formatRange(fromISO, toISO) },
+    {
+      id: 'target-vs-actual',
+      title: "Target vs Actual",
+      value: `${progressPct}%`,
+      subtitle: targets ? `Target ${fmtCurrency(targetValue)}` : 'Set targets in Settings',
+      children: (
+        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+          <div className={`h-full ${colorAccessibility ? 'bg-gray-600' : 'bg-terracotta'}`} style={{ width: `${progressPct}%` }} />
+        </div>
+      )
+    },
+    { id: 'avg-customer-value', title: "Avg customer value", value: fmtCurrency(avgCustomerValue), subtitle: `${uniqueCustomers} unique customers` },
+    { id: 'cancelled-value', title: "Cancelled value", value: fmtCurrency(cancelledValue), subtitle: "Excluded from revenue" },
+    { id: 'expected-cogs', title: "Expected COGS", value: fmtCurrency(expectedCogs), subtitle: `${targets?.defaultCogsRate ?? 0}% of revenue` },
+    { id: 'net-profit', title: "Net Profit", value: fmtCurrency(netProfit), subtitle: `${margin.toFixed(1)}% margin` },
+    { id: 'break-even-status', title: "Break-Even Status", value: breakEvenStatus.isProfitable ? "✓ Profitable" : "⚠ Needs Work", subtitle: breakEvenStatus.isProfitable ? `${breakEvenStatus.above} above B/E` : `${breakEvenStatus.needed} needed` },
+    { id: 'gross-profit', title: "Gross Profit", value: fmtCurrency(grossProfit), subtitle: "100.0% gross margin" },
+    { id: 'detailed-breakdown', title: "Detailed Breakdown", value: "📊 Show Details", subtitle: "Click to expand", className: "cursor-pointer hover:shadow-lg transition-all duration-200 border-2 border-dashed border-terracotta/30 hover:border-terracotta/60", onClick: () => setShowBreakdown(!showBreakdown) },
+    
+    // Appointment Cards (same as growth mode)
+    {
+      id: 'upcoming-appointments',
+      title: "Upcoming Appointments",
+      value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date()).length,
+      subtitle: "Scheduled appointments",
+      children: (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {allAppts
+            .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date())
+            .slice(0, 10)
+            .map((a) => (
+              <div 
+                key={a.id} 
+                onClick={() => setSelectedAppointment(a)}
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">
+                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                  </div>
+                  <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                  {a.customerName && (
+                    <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                  )}
+                  {a.status === 'pending' && (
+                    <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-terracotta">
+                  {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                </div>
+              </div>
+            ))}
+        </div>
+      )
+    },
+    {
+      id: 'past-appointments',
+      title: "Recent Past Appointments",
+      value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date()).length,
+      subtitle: "Completed appointments",
+      children: (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {allAppts
+            .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date())
+            .reverse()
+            .slice(0, 10)
+            .map((a) => (
+              <div 
+                key={a.id} 
+                onClick={() => setSelectedAppointment(a)}
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">
+                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                  </div>
+                  <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                  {a.customerName && (
+                    <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
+                  )}
+                  {a.status === 'pending' && (
+                    <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-terracotta">
+                  {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                </div>
+              </div>
+            ))}
+        </div>
+      )
+    },
+    {
+      id: 'top-services',
+      title: "Top Services This Month",
+      value: topServices.length,
+      subtitle: "Most booked services",
+      children: (
+        <ul className="divide-y">
+          {topServices.map((s, i) => (
+            <li key={i} className="flex items-center justify-between py-2">
+              <div>
+                <div className="font-medium">{s.name}</div>
+                <div className="text-xs text-slate-500">{s.count} bookings</div>
+              </div>
+              <div className="font-semibold">{fmtCurrency(s.value)}</div>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  ];
+
+  // Sort the items based on the current mode's order
+  const sortedItems = (growthMode ? growthModeItems : detailedModeItems).sort((a, b) => {
+    const currentOrder = growthMode ? growthModeKpiOrder : detailedModeKpiOrder;
+    const aIndex = currentOrder.indexOf(a.id);
+    const bIndex = currentOrder.indexOf(b.id);
+    console.log(`Sorting ${growthMode ? 'Growth' : 'Detailed'} Mode: ${a.id} (index: ${aIndex}) vs ${b.id} (index: ${bIndex})`);
+    console.log('Current order array:', currentOrder);
+    if (aIndex === -1 && bIndex === -1) return 0;
+    if (aIndex === -1) return 1;
+    if (bIndex === -1) return -1;
+    return aIndex - bIndex;
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
     <div className="grid gap-6">
@@ -260,247 +547,19 @@ export default function AnalyticsHome() {
       </div>
 
       {/* Unified Dashboard - All Cards Draggable Together */}
-      <DraggableKPIGrid
-        items={growthMode ? [
-          // Growth Mode Cards
-          { id: 'services-completed', title: "Services Completed", value: `${growthMetrics.servicesCompleted}`, subtitle: "This period" },
-          { id: 'building-momentum', title: "Building Momentum", value: "🌱 Growth Phase", subtitle: `${growthMetrics.servicesToBreakEven} more to monthly break-even` },
-          { id: 'value-per-service', title: "Value per Service", value: fmtCurrency(avgCustomerValue), subtitle: `${uniqueCustomers} clients served` },
-          {
-            id: 'progress-to-goal',
-            title: "Progress to Goal",
-            value: `${Math.round((uniqueCustomers / growthMetrics.monthlyBreakEven) * 100)}%`,
-            subtitle: `${uniqueCustomers}/${growthMetrics.monthlyBreakEven} monthly target`,
-            children: (
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <div className={`h-full ${colorAccessibility ? 'bg-gray-600' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (uniqueCustomers / growthMetrics.monthlyBreakEven) * 100)}%` }} />
-              </div>
-            )
-          },
-          { id: 'revenue-generated', title: "Revenue Generated", value: fmtCurrency(revenue), subtitle: formatRange(fromISO, toISO) },
-          { id: 'growth-investment', title: "Growth Investment", value: fmtCurrency(Math.abs(netProfit)), subtitle: "Building your business" },
-          { id: 'break-even-timeline', title: "Break-Even Timeline", value: growthMetrics.weeksToBreakEven > 0 ? `${growthMetrics.weeksToBreakEven} weeks` : "🎉 Achieved!", subtitle: "At current pace" },
-          { id: 'switch-to-detailed', title: "Switch to Detailed", value: "📊 View Details", subtitle: "Click for financial breakdown", className: "cursor-pointer hover:shadow-lg transition-all duration-200 border-2 border-dashed border-terracotta/30 hover:border-terracotta/60", onClick: () => setShowBreakdown(!showBreakdown) },
-          
-          // Appointment Cards
-          {
-            id: 'upcoming-appointments',
-            title: "Upcoming Appointments",
-            value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date()).length,
-            subtitle: "Scheduled appointments",
-            children: (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {allAppts
-                  .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date())
-                  .slice(0, 10)
-                  .map((a) => (
-                    <div 
-                      key={a.id} 
-                      onClick={() => setSelectedAppointment(a)}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">
-                          {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </div>
-                        <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
-                        {a.customerName && (
-                          <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                        )}
-                        {a.status === 'pending' && (
-                          <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold text-terracotta">
-                        {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )
-          },
-          {
-            id: 'past-appointments',
-            title: "Recent Past Appointments",
-            value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date()).length,
-            subtitle: "Completed appointments",
-            children: (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {allAppts
-                  .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date())
-                  .reverse()
-                  .slice(0, 10)
-                  .map((a) => (
-                    <div 
-                      key={a.id} 
-                      onClick={() => setSelectedAppointment(a)}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">
-                          {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </div>
-                        <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
-                        {a.customerName && (
-                          <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                        )}
-                        {a.status === 'pending' && (
-                          <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold text-terracotta">
-                        {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )
-          },
-          {
-            id: 'top-services',
-            title: "Top Services This Month",
-            value: topServices.length,
-            subtitle: "Most booked services",
-            children: (
-              <ul className="divide-y">
-                {topServices.map((s, i) => (
-                  <li key={i} className="flex items-center justify-between py-2">
-                    <div>
-                      <div className="font-medium">{s.name}</div>
-                      <div className="text-xs text-slate-500">{s.count} bookings</div>
-                    </div>
-                    <div className="font-semibold">{fmtCurrency(s.value)}</div>
-                  </li>
-                ))}
-              </ul>
-            )
-          }
-        ] : [
-          // Detailed Mode Cards
-          { id: 'revenue', title: "Revenue", value: fmtCurrency(revenue), subtitle: formatRange(fromISO, toISO) },
-          {
-            id: 'target-vs-actual',
-            title: "Target vs Actual",
-            value: `${progressPct}%`,
-            subtitle: targets ? `Target ${fmtCurrency(targetValue)}` : 'Set targets in Settings',
-            children: (
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <div className={`h-full ${colorAccessibility ? 'bg-gray-600' : 'bg-terracotta'}`} style={{ width: `${progressPct}%` }} />
-              </div>
-            )
-          },
-          { id: 'avg-customer-value', title: "Avg customer value", value: fmtCurrency(avgCustomerValue), subtitle: `${uniqueCustomers} unique customers` },
-          { id: 'cancelled-value', title: "Cancelled value", value: fmtCurrency(cancelledValue), subtitle: "Excluded from revenue" },
-          { id: 'expected-cogs', title: "Expected COGS", value: fmtCurrency(expectedCogs), subtitle: `${targets?.defaultCogsRate ?? 0}% of revenue` },
-          { id: 'net-profit', title: "Net Profit", value: fmtCurrency(netProfit), subtitle: `${margin.toFixed(1)}% margin` },
-          { id: 'break-even-status', title: "Break-Even Status", value: breakEvenStatus.isProfitable ? "✓ Profitable" : "⚠ Needs Work", subtitle: breakEvenStatus.isProfitable ? `${breakEvenStatus.above} above B/E` : `${breakEvenStatus.needed} needed` },
-          { id: 'gross-profit', title: "Gross Profit", value: fmtCurrency(grossProfit), subtitle: "100.0% gross margin" },
-          { id: 'detailed-breakdown', title: "Detailed Breakdown", value: "📊 Show Details", subtitle: "Click to expand", className: "cursor-pointer hover:shadow-lg transition-all duration-200 border-2 border-dashed border-terracotta/30 hover:border-terracotta/60", onClick: () => setShowBreakdown(!showBreakdown) },
-          
-          // Appointment Cards
-          {
-            id: 'upcoming-appointments',
-            title: "Upcoming Appointments",
-            value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date()).length,
-            subtitle: "Scheduled appointments",
-            children: (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {allAppts
-                  .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) > new Date())
-                  .slice(0, 10)
-                  .map((a) => (
-                    <div 
-                      key={a.id} 
-                      onClick={() => setSelectedAppointment(a)}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">
-                          {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </div>
-                        <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
-                        {a.customerName && (
-                          <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                        )}
-                        {a.status === 'pending' && (
-                          <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold text-terracotta">
-                        {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )
-          },
-          {
-            id: 'past-appointments',
-            title: "Recent Past Appointments",
-            value: allAppts.filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date()).length,
-            subtitle: "Completed appointments",
-            children: (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {allAppts
-                  .filter(a => (a.status === 'confirmed' || a.status === 'pending') && parseISO(a.start) <= new Date())
-                  .reverse()
-                  .slice(0, 10)
-                  .map((a) => (
-                    <div 
-                      key={a.id} 
-                      onClick={() => setSelectedAppointment(a)}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">
-                          {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </div>
-                        <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
-                        {a.customerName && (
-                          <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
-                        )}
-                        {a.status === 'pending' && (
-                          <div className="text-xs text-orange-600 font-medium">Pending Confirmation</div>
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold text-terracotta">
-                        {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )
-          },
-          {
-            id: 'top-services',
-            title: "Top Services This Month",
-            value: topServices.length,
-            subtitle: "Most booked services",
-            children: (
-              <ul className="divide-y">
-                {topServices.map((s, i) => (
-                  <li key={i} className="flex items-center justify-between py-2">
-                    <div>
-                      <div className="font-medium">{s.name}</div>
-                      <div className="text-xs text-slate-500">{s.count} bookings</div>
-                    </div>
-                    <div className="font-semibold">{fmtCurrency(s.value)}</div>
-                  </li>
-                ))}
-              </ul>
-            )
-          }
-        ].sort((a, b) => {
-          const aIndex = kpiOrder.indexOf(a.id);
-          const bIndex = kpiOrder.indexOf(b.id);
-          if (aIndex === -1 && bIndex === -1) return 0;
-          if (aIndex === -1) return 1;
-          if (bIndex === -1) return -1;
-          return aIndex - bIndex;
-        })}
-        onReorder={(items) => saveKpiOrder(items.map(item => item.id))}
-        colorAccessibility={colorAccessibility}
-      />
+      {kpiOrdersLoaded && (
+        <DraggableKPIGrid
+          key={`kpi-grid-${growthMode ? 'growth' : 'detailed'}`}
+          items={sortedItems}
+          onReorder={(items) => {
+            console.log('onReorder called with items:', items);
+            const newOrder = items.map(item => item.id);
+            console.log('New order:', newOrder);
+            saveKpiOrder(newOrder);
+          }}
+          colorAccessibility={colorAccessibility}
+        />
+      )}
 
       {/* Detailed Analytics Breakdown */}
       {showBreakdown && (

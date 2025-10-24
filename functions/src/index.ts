@@ -47,6 +47,7 @@ export * from './post-service-receipt.js';
 export * from './auto-attend-scheduler.js';
 export * from './close-shop.js';
 export * from './cleanup-edit-requests.js';
+export * from './cost-monitoring.js';
 
 // SECURITY FIX: Disable test functions in production
 // These functions are now secured with authentication but should not be used in production
