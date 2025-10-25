@@ -12,9 +12,11 @@ interface Props {
   service?: Service;
   onClose: () => void;
   onEdit?: () => void;
+  relatedAppointments?: Appointment[]; // Related appointments for same customer on same day
+  onSelectAppointment?: (appointment: Appointment) => void; // Function to select a different appointment
 }
 
-export default function EnhancedAppointmentDetailModal({ appointment, service, onClose, onEdit }: Props) {
+export default function EnhancedAppointmentDetailModal({ appointment, service, onClose, onEdit, relatedAppointments = [], onSelectAppointment }: Props) {
   const { db, auth } = useFirebase();
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -470,20 +472,53 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                   <span className="text-xl">💆‍♀️</span>
                   Service
                 </h3>
-                <div className="flex items-center gap-2">
-                  <div className="font-medium text-slate-800">{service?.name || 'Unknown Service'}</div>
-                  {service?.description && (
-                    <button
-                      onClick={() => {
-                        alert(service.description);
-                      }}
-                      className="text-xs text-terracotta hover:text-terracotta/80 underline"
-                      title="View service description"
-                    >
-                      Read More
-                    </button>
-                  )}
-                </div>
+                
+                {(() => {
+                  // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                  const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+                  const hasMultipleServices = serviceIds.length > 1;
+                  
+                  // Only show single service name if there's only one service
+                  if (!hasMultipleServices) {
+                    return (
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium text-slate-800">{service?.name || 'Unknown Service'}</div>
+                        {service?.description && (
+                          <button
+                            onClick={() => {
+                              alert(service.description);
+                            }}
+                            className="text-xs text-terracotta hover:text-terracotta/80 underline"
+                            title="View service description"
+                          >
+                            Read More
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+                  
+                  // For multiple services, show the list directly
+                  return (
+                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-sm font-medium text-blue-800 mb-2">Multiple Services ({serviceIds.length}):</div>
+                      <div className="space-y-1">
+                        {serviceIds.map((serviceId: string, index: number) => {
+                          const service = services[serviceId];
+                          return service ? (
+                            <div key={serviceId} className="text-sm text-blue-700 flex items-center gap-2">
+                              <span className="w-4 h-4 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium">
+                                {index + 1}
+                              </span>
+                              <span>{service.name}</span>
+                              <span className="text-blue-600">(${service.price})</span>
+                            </div>
+                          ) : null;
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 
                 {/* Clickable Price Section */}
                 <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
@@ -600,6 +635,69 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                         View Full Profile →
                       </button>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Related Appointments for Same Customer on Same Day */}
+              {relatedAppointments.length > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-6">
+                  <h3 className="font-semibold text-lg text-slate-800 mb-3 flex items-center gap-2">
+                    <span className="text-xl">📅</span>
+                    Related Appointments Today
+                  </h3>
+                  <div className="text-sm text-slate-600 mb-3">
+                    {appointment.customerName} has {relatedAppointments.length + 1} appointment{relatedAppointments.length > 0 ? 's' : ''} scheduled for today
+                  </div>
+                  <div className="space-y-2">
+                    {relatedAppointments.map((relatedAppt) => {
+                      const relatedService = services[relatedAppt.serviceId];
+                      const isCurrentAppointment = relatedAppt.id === appointment.id;
+                      
+                      return (
+                        <div 
+                          key={relatedAppt.id}
+                          className={`p-3 rounded-lg border ${
+                            isCurrentAppointment 
+                              ? 'bg-terracotta/10 border-terracotta/30' 
+                              : 'bg-white border-green-200 hover:bg-green-100 cursor-pointer'
+                          }`}
+                          onClick={() => {
+                            if (!isCurrentAppointment && onSelectAppointment) {
+                              // Navigate to the related appointment
+                              onSelectAppointment(relatedAppt);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="font-medium text-slate-800">
+                                {format(parseISO(relatedAppt.start), 'h:mm a')} - {format(new Date(parseISO(relatedAppt.start).getTime() + relatedAppt.duration * 60000), 'h:mm a')}
+                              </div>
+                              <div className="text-sm text-slate-600">
+                                {relatedService?.name || 'Service'}
+                              </div>
+                              {(() => {
+                                const relatedServiceIds = (relatedAppt as any).serviceIds || (relatedAppt as any).selectedServices || [];
+                                return relatedServiceIds.length > 1 && (
+                                  <div className="text-xs text-blue-600 font-medium">
+                                    +{relatedServiceIds.length} services
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-semibold text-terracotta">
+                                ${(relatedAppt.totalPrice ?? relatedAppt.bookedPrice ?? 0).toFixed(2)}
+                              </div>
+                              {isCurrentAppointment && (
+                                <div className="text-xs text-terracotta font-medium">Current</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

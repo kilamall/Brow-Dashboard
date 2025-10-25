@@ -146,6 +146,8 @@ export interface Appointment {
   id: ID;
   customerId: ID;
   serviceId: ID;
+  serviceIds?: ID[]; // Array of service IDs for multi-service appointments (primary field)
+  selectedServices?: ID[]; // Legacy field for backward compatibility
   start: string; // ISO
   duration: number; // minutes
   status: 'confirmed'|'pending'|'cancelled'|'completed'|'no-show';

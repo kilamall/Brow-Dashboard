@@ -1148,26 +1148,88 @@ export default function Schedule() {
                   <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-terracotta text-white">{todaysAppts.length}</span>
                 )}
               </div>
-              {/* small list preview */}
+              {/* Enhanced appointment preview with better visibility */}
               <div className="px-2 pb-2 space-y-1">
-                {todaysAppts.slice(0, 3).map((a) => (
-                  <div 
-                    key={a.id} 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedAppointment(a);
-                    }}
-                    className="text-[11px] truncate border rounded px-1 py-0.5 cursor-pointer hover:bg-slate-100 transition-colors"
-                  >
-                    {format(safeParseDate(a.start), 'h:mma')}-{format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mma')} · 
-                    <span className="text-slate-600">
-                      {services[a.serviceId]?.name || 'Service'}
-                    </span>
-                  </div>
-                ))}
-                {todaysAppts.length > 3 && (
-                  <div className="text-[10px] text-slate-500">+{todaysAppts.length - 3} more…</div>
-                )}
+                {(() => {
+                  // Group appointments by customer for better visibility
+                  const appointmentsByCustomer = todaysAppts.reduce((acc, appointment) => {
+                    const customerKey = appointment.customerId || appointment.customerEmail || 'unknown';
+                    if (!acc[customerKey]) {
+                      acc[customerKey] = [];
+                    }
+                    acc[customerKey].push(appointment);
+                    return acc;
+                  }, {} as Record<string, Appointment[]>);
+
+                  const customerGroups = Object.entries(appointmentsByCustomer);
+                  const displayGroups = customerGroups.slice(0, 2); // Show up to 2 customer groups
+                  const remainingGroups = customerGroups.length - displayGroups.length;
+
+                  return (
+                    <>
+                      {displayGroups.map(([customerKey, customerAppts]) => (
+                        <div key={customerKey} className="space-y-1">
+                          {customerAppts.slice(0, 2).map((a) => {
+                            // Check if this appointment has multiple services
+                            // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                            const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
+                            const hasMultipleServices = serviceIds.length > 1;
+                            const serviceNames = hasMultipleServices 
+                              ? serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || ''
+                              : services[a.serviceId]?.name || 'Service';
+                            
+                            return (
+                              <div 
+                                key={a.id} 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAppointment(a);
+                                }}
+                                className={`text-[10px] truncate border rounded px-1 py-0.5 cursor-pointer hover:bg-slate-100 transition-colors ${
+                                  hasMultipleServices ? 'bg-blue-50 border-blue-200' : ''
+                                }`}
+                                title={hasMultipleServices ? `Multiple services: ${serviceNames}` : serviceNames}
+                              >
+                                <div className="flex items-center gap-1">
+                                  <span className="text-slate-500">
+                                    {format(safeParseDate(a.start), 'h:mma')}-{format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mma')}
+                                  </span>
+                                  {hasMultipleServices && (
+                                    <span className="text-blue-600 font-medium">+</span>
+                                  )}
+                                </div>
+                                <div className="text-slate-600 truncate">
+                                  {hasMultipleServices ? (
+                                    <span className="text-blue-700 font-medium">
+                                      {serviceNames.length > 20 ? serviceNames.substring(0, 20) + '...' : serviceNames}
+                                    </span>
+                                  ) : (
+                                    serviceNames
+                                  )}
+                                </div>
+                                {a.customerName && (
+                                  <div className="text-slate-500 text-[9px] truncate">
+                                    {a.customerName}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {customerAppts.length > 2 && (
+                            <div className="text-[9px] text-slate-500 ml-2">
+                              +{customerAppts.length - 2} more for {customerAppts[0].customerName || 'customer'}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {remainingGroups > 0 && (
+                        <div className="text-[9px] text-slate-500">
+                          +{remainingGroups} more customer{todaysAppts.length > 1 ? 's' : ''}…
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
               </div>
             </CalendarDayHighlighting>
@@ -1209,44 +1271,90 @@ export default function Schedule() {
               <>
                 <div className="text-xs font-medium mb-2">{format(hoverDate, 'PP')}</div>
                 <ul className="max-h-48 overflow-auto space-y-2">
-                  {todaysAppts.map((a) => (
-                    <li 
-                      key={a.id} 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedAppointment(a);
-                        setHoverDate(null);
-                        setHoverPosition(null);
-                      }}
-                      className="text-xs flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-md hover:bg-slate-100 group cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">
-                          {format(safeParseDate(a.start), 'h:mm a')} - {format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mm a')}
-                        </div>
-                        <span className="text-slate-600 truncate text-left">
-                          {services[a.serviceId]?.name || 'Service'}
-                        </span>
-                        {a.customerName && (
-                          <div className="text-slate-500 truncate text-[10px]">{a.customerName}</div>
+                  {(() => {
+                    // Group appointments by customer for better organization
+                    const appointmentsByCustomer = todaysAppts.reduce((acc, appointment) => {
+                      const customerKey = appointment.customerId || appointment.customerEmail || 'unknown';
+                      if (!acc[customerKey]) {
+                        acc[customerKey] = [];
+                      }
+                      acc[customerKey].push(appointment);
+                      return acc;
+                    }, {} as Record<string, Appointment[]>);
+
+                    return Object.entries(appointmentsByCustomer).map(([customerKey, customerAppts]) => (
+                      <div key={customerKey} className="space-y-1">
+                        {customerAppts.length > 1 && (
+                          <div className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-1 rounded">
+                            {customerAppts[0].customerName || 'Customer'} ({customerAppts.length} appointments)
+                          </div>
                         )}
+                        {customerAppts.map((a) => {
+                          // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                          const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
+                          const hasMultipleServices = serviceIds.length > 1;
+                          const serviceNames = hasMultipleServices 
+                            ? serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || ''
+                            : services[a.serviceId]?.name || 'Service';
+                          
+                          return (
+                            <li 
+                              key={a.id} 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedAppointment(a);
+                                setHoverDate(null);
+                                setHoverPosition(null);
+                              }}
+                              className={`text-xs flex items-center justify-between gap-2 p-2 rounded-md hover:bg-slate-100 group cursor-pointer ${
+                                hasMultipleServices ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50'
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">
+                                  {format(safeParseDate(a.start), 'h:mm a')} - {format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                                </div>
+                                <div className="text-slate-600 truncate text-left">
+                                  {hasMultipleServices ? (
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-blue-700 font-medium">+</span>
+                                      <span className="text-blue-700">
+                                        {serviceNames.length > 30 ? serviceNames.substring(0, 30) + '...' : serviceNames}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    serviceNames
+                                  )}
+                                </div>
+                                {a.customerName && customerAppts.length === 1 && (
+                                  <div className="text-slate-500 truncate text-[10px]">{a.customerName}</div>
+                                )}
+                                {hasMultipleServices && (
+                                  <div className="text-[10px] text-blue-600 font-medium">
+                                    {serviceIds.length} services
+                                  </div>
+                                )}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm('Cancel this appointment?')) {
+                                    updateDoc(doc(db, 'appointments', a.id), { status: 'cancelled' });
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 p-1 flex-shrink-0"
+                                title="Cancel appointment"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </li>
+                          );
+                        })}
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('Cancel this appointment?')) {
-                            updateDoc(doc(db, 'appointments', a.id), { status: 'cancelled' });
-                          }
-                        }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 p-1 flex-shrink-0"
-                        title="Cancel appointment"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </li>
-                  ))}
+                    ));
+                  })()}
                 </ul>
               </>
             );
@@ -1608,6 +1716,18 @@ export default function Schedule() {
             setEditingAppointment(selectedAppointment);
             setSelectedAppointment(null);
           }}
+          onSelectAppointment={(appointment) => setSelectedAppointment(appointment)}
+          relatedAppointments={(() => {
+            if (!selectedAppointment.customerId) return [];
+            
+            const appointmentDate = safeParseDate(selectedAppointment.start);
+            return appts.filter(a => 
+              a.id !== selectedAppointment.id && 
+              a.customerId === selectedAppointment.customerId &&
+              isSameDay(safeParseDate(a.start), appointmentDate) &&
+              a.status !== 'cancelled'
+            );
+          })()}
         />
       )}
 
