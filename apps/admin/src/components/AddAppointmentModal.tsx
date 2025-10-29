@@ -6,9 +6,11 @@ import {
   E_OVERLAP,
   findCustomerByEmail,
   watchBusinessHours,
-  watchServices
+  watchServices,
+  watchDayClosures,
+  watchSpecialHours
 } from '@buenobrows/shared/firestoreActions';
-import type { Appointment, BusinessHours, Customer, Service } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { collection, getDocs, limit, query, where, type Firestore } from 'firebase/firestore';
@@ -34,8 +36,18 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   // Data
   const [services, setServices] = useState<Service[]>([]);
   const [bh, setBh] = useState<BusinessHours | null>(null);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
   useEffect(() => watchServices(db, { activeOnly: true }, setServices), [db]);
   useEffect(() => watchBusinessHours(db, setBh), [db]);
+  useEffect(() => watchDayClosures(db, setClosures), [db]);
+  useEffect(() => watchSpecialHours(db, setSpecialHours), [db]);
+
+  // Debug logging to verify closures and special hours are being loaded
+  useEffect(() => {
+    console.log('[AddAppointmentModal] Closures:', closures);
+    console.log('[AddAppointmentModal] Special hours:', specialHours);
+  }, [closures, specialHours]);
 
   // Form - Initialize with prefilled data if provided
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
@@ -205,7 +217,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   }, [open, selectedDate, db]);
 
   const currentDateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate]);
-  const slots = useMemo(() => (bh ? availableSlotsForDay(currentDateObj, totalDuration, bh, dayAppts) : []), [bh, currentDateObj, totalDuration, dayAppts]);
+  const slots = useMemo(() => (bh ? availableSlotsForDay(currentDateObj, totalDuration, bh, dayAppts, closures, specialHours) : []), [bh, currentDateObj, totalDuration, dayAppts, closures, specialHours]);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -259,7 +271,11 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         start: start.toISOString(),
         duration: totalDuration,
         status: 'confirmed',
-        bookedPrice: totalPrice,
+        bookedPrice: totalPrice, // Legacy field - total price for all services
+        servicePrices: selectedServices.reduce((acc, service) => {
+          acc[service.id] = service.price; // Store individual service prices
+          return acc;
+        }, {} as Record<string, number>),
         totalPrice: totalPrice, // Initially same as bookedPrice
         tip: 0, // Default tip amount
         isPriceEdited: false, // Not edited initially
@@ -289,7 +305,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       onCreated?.(id);
       onClose();
     } catch (e: any) {
-      if (e?.message === E_OVERLAP) setErr('This time is already booked. Pick another slot.');
+      if (e?.message === E_OVERLAP) setErr('This time slot is already booked. Please wait a moment before selecting another time, or try a different slot.');
       else setErr(e?.message || 'Failed to create');
     } finally {
       setSaving(false);

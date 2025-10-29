@@ -23,6 +23,7 @@ import AdminEmailSetup from '../components/AdminEmailSetup';
 import BusinessHoursManager from '../components/BusinessHoursManager';
 import AITrainingPanel from '../components/AITrainingPanel';
 import CostMonitoringSettings from '../components/CostMonitoringSettings';
+import MediaGalleryManager from '../components/MediaGalleryManager';
 
 type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring';
 
@@ -170,7 +171,7 @@ export default function Settings() {
         {activeTab === 'media' && (
           <section className="bg-white rounded-xl shadow-soft p-6">
             <h2 className="font-serif text-xl mb-2">Media Gallery</h2>
-            <p className="text-sm text-slate-600 mb-6">Upload and manage your hero image and shop gallery photos</p>
+            <p className="text-sm text-slate-600 mb-6">Upload and manage photos for your About Me slideshow, hero images, and gallery sections</p>
             {homeContent ? <MediaGalleryManager initial={homeContent} /> : <div className="text-slate-500 text-sm">Loading…</div>}
           </section>
         )}
@@ -459,7 +460,7 @@ function BusinessInfoForm({ initial }: { initial: BusinessInfo }) {
 }
 
 // -------------------- Media Gallery Manager --------------------
-function MediaGalleryManager({ initial }: { initial: HomePageContent }) {
+function MediaGalleryManagerOld({ initial }: { initial: HomePageContent }) {
   const { db } = useFirebase();
   const [content, setContent] = useState<HomePageContent>(initial);
   const [saving, setSaving] = useState(false);

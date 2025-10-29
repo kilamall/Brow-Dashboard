@@ -5,7 +5,7 @@ import {
   watchSpecialHours,
   createDayClosure,
   deleteDayClosure,
-  setSpecialHours,
+  setSpecialHours as saveSpecialHours,
   deleteSpecialHours,
   watchBusinessHours,
   setBusinessHours
@@ -13,6 +13,7 @@ import {
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import type { DayClosure, SpecialHours, BusinessHours } from '@buenobrows/shared/types';
 import { format, addDays, startOfDay, parseISO } from 'date-fns';
+import { formatDateYYYYMMDD } from '@buenobrows/shared/slotUtils';
 
 export default function BusinessHoursManager() {
   const { db } = useFirebase();
@@ -54,9 +55,9 @@ export default function BusinessHoursManager() {
   };
 
   const getStatusForDate = (date: Date): 'closed' | 'special' | 'normal' => {
-    const dateStr = format(date, 'yyyy-MM-dd');
-    if (closures.some(c => c.date === dateStr)) return 'closed';
-    if (specialHours.some(s => s.date === dateStr)) return 'special';
+    const dateStr = formatDateYYYYMMDD(date);
+    if (Array.isArray(closures) && closures.some(c => c.date === dateStr)) return 'closed';
+    if (Array.isArray(specialHours) && specialHours.some(s => s.date === dateStr)) return 'special';
     return 'normal';
   };
 
@@ -76,7 +77,7 @@ export default function BusinessHoursManager() {
 
     try {
       setLoading(true);
-      const dateStr = format(date, 'yyyy-MM-dd');
+      const dateStr = formatDateYYYYMMDD(date);
 
       // Create day closure
       await createDayClosure(db, {
@@ -99,7 +100,7 @@ export default function BusinessHoursManager() {
     if (!db) return;
     
     const confirmed = window.confirm(
-      `Reopen the shop on ${format(date, 'yyyy-MM-dd')}?\n\n` +
+      `Reopen the shop on ${formatDateYYYYMMDD(date)}?\n\n` +
       'This will restore normal business hours for this day.'
     );
 
@@ -107,9 +108,9 @@ export default function BusinessHoursManager() {
 
     try {
       setLoading(true);
-      const dateStr = format(date, 'yyyy-MM-dd');
+      const dateStr = formatDateYYYYMMDD(date);
       
-      const closure = closures.find(c => c.date === dateStr);
+      const closure = Array.isArray(closures) ? closures.find(c => c.date === dateStr) : undefined;
       if (closure) {
         await deleteDayClosure(db, closure.id);
         showMessage(`Shop reopened for ${format(date, 'MMMM d')}`, 'success');
@@ -127,15 +128,34 @@ export default function BusinessHoursManager() {
 
     try {
       setLoading(true);
-      const dateStr = format(date, 'yyyy-MM-dd');
-
-      await setSpecialHours(db, {
+      const dateStr = formatDateYYYYMMDD(date);
+      
+      console.log('[BusinessHoursManager] Setting special hours for date:', dateStr);
+      console.log('[BusinessHoursManager] Ranges:', ranges);
+      console.log('[BusinessHoursManager] Input data:', {
         date: dateStr,
         ranges,
         reason: 'Special hours',
         modifiedBy: 'admin',
         modifiedAt: new Date().toISOString(),
       });
+
+      const result = await saveSpecialHours(db, {
+        date: dateStr,
+        ranges,
+        reason: 'Special hours',
+        modifiedBy: 'admin',
+        modifiedAt: new Date().toISOString(),
+      });
+
+      console.log('[BusinessHoursManager] Special hours saved with ID:', result);
+      console.log('[BusinessHoursManager] After save, checking special hours again...');
+      
+      // Wait a moment for the data to propagate
+      setTimeout(() => {
+        const checkAgain = getSpecialHoursForDate(date);
+        console.log('[BusinessHoursManager] Re-check after save:', checkAgain);
+      }, 1000);
 
       showMessage(`Special hours set for ${format(date, 'MMMM d')}`, 'success');
       setSelectedDate('');
@@ -159,9 +179,9 @@ export default function BusinessHoursManager() {
 
     try {
       setLoading(true);
-      const dateStr = format(date, 'yyyy-MM-dd');
+      const dateStr = formatDateYYYYMMDD(date);
       
-      const special = specialHours.find(s => s.date === dateStr);
+      const special = Array.isArray(specialHours) ? specialHours.find(s => s.date === dateStr) : undefined;
       if (special) {
         await deleteSpecialHours(db, special.id);
         showMessage(`Special hours removed for ${format(date, 'MMMM d')}`, 'success');
@@ -175,8 +195,12 @@ export default function BusinessHoursManager() {
   };
 
   const getSpecialHoursForDate = (date: Date): SpecialHours | undefined => {
-    const dateStr = format(date, 'yyyy-MM-dd');
-    return specialHours.find(s => s.date === dateStr);
+    const dateStr = formatDateYYYYMMDD(date);
+    console.log('[BusinessHoursManager] Looking for special hours for date:', dateStr);
+    console.log('[BusinessHoursManager] Available special hours:', specialHours);
+    const found = Array.isArray(specialHours) ? specialHours.find(s => s.date === dateStr) : undefined;
+    console.log('[BusinessHoursManager] Found special hours:', found);
+    return found;
   };
 
   return (
@@ -262,7 +286,7 @@ export default function BusinessHoursManager() {
           <div className="grid gap-3">
             {viewDays.map((date) => {
               const status = getStatusForDate(date);
-              const dateStr = format(date, 'yyyy-MM-dd');
+              const dateStr = formatDateYYYYMMDD(date);
               const special = getSpecialHoursForDate(date);
               const isSelected = selectedDate === dateStr;
               const isToday = format(new Date(), 'yyyy-MM-dd') === dateStr;
@@ -584,6 +608,18 @@ function SpecialHoursEditor({
     existingHours?.ranges || [['09:00', '17:00']]
   );
   const [saving, setSaving] = useState(false);
+
+  // FIXED: Add useEffect to update ranges when existingHours changes
+  useEffect(() => {
+    console.log('[SpecialHoursEditor] existingHours changed:', existingHours);
+    if (existingHours?.ranges) {
+      console.log('[SpecialHoursEditor] Setting ranges to:', existingHours.ranges);
+      setRanges(existingHours.ranges);
+    } else {
+      console.log('[SpecialHoursEditor] No existing hours, using default');
+      setRanges([['09:00', '17:00']]);
+    }
+  }, [existingHours]);
 
   const addRange = () => {
     setRanges([...ranges, ['09:00', '17:00']]);

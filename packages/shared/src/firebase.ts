@@ -3,7 +3,7 @@ import { getFirestore, connectFirestoreEmulator, type Firestore } from 'firebase
 import { getAuth, connectAuthEmulator, type Auth } from 'firebase/auth';
 import { getFunctions, connectFunctionsEmulator, type Functions } from 'firebase/functions';
 import { getMessaging, isSupported, type Messaging } from 'firebase/messaging';
-import { getAnalytics, type Analytics } from 'firebase/analytics';
+import { getAnalytics, isSupported as isAnalyticsSupported, type Analytics } from 'firebase/analytics';
 
 function assertEnv(name: string) {
   const v = import.meta.env[name as keyof ImportMetaEnv];
@@ -78,12 +78,21 @@ export function initFirebase(): {
   // Initialize Analytics (browser only, not in emulators)
   let analytics: Analytics | undefined;
   if (typeof window !== 'undefined' && !import.meta.env.DEV) {
-    try {
-      analytics = getAnalytics(app);
-      console.log('[Firebase] Analytics initialized');
-    } catch (error) {
-      console.warn('[Firebase] Analytics initialization failed:', error);
-    }
+    // Use Firebase's recommended approach to check if Analytics is supported
+    isAnalyticsSupported().then((supported) => {
+      if (supported) {
+        try {
+          analytics = getAnalytics(app);
+          console.log('[Firebase] Analytics initialized');
+        } catch (error) {
+          console.warn('[Firebase] Analytics initialization failed:', error);
+        }
+      } else {
+        console.log('[Firebase] Analytics not supported in this environment');
+      }
+    }).catch((error) => {
+      console.warn('[Firebase] Analytics support check failed:', error);
+    });
   }
 
   // Connect to local emulators in dev when flag is set

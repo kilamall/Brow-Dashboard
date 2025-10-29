@@ -1,4 +1,5 @@
-import type { BusinessHours } from './types';
+import type { BusinessHours, DayClosure, SpecialHours } from './types';
+import { getEffectiveHoursForDate } from './slotUtils';
 
 /**
  * Check if the business is open on a specific date
@@ -57,6 +58,35 @@ export function isValidBookingDate(date: Date, businessHours: BusinessHours | nu
   
   // Check if business is open on this date
   return isBusinessOpenOnDate(date, businessHours);
+}
+
+/**
+ * Check if a date is valid for booking considering special hours and closures
+ */
+export function isValidBookingDateWithSpecialHours(
+  date: Date, 
+  businessHours: BusinessHours | null, 
+  closures: DayClosure[] = [], 
+  specialHours: SpecialHours[] = []
+): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Reset to start of day
+  
+  const targetDate = new Date(date);
+  targetDate.setHours(0, 0, 0, 0); // Reset to start of day
+  
+  const daysDifference = Math.floor((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  
+  // Check if date is within booking range
+  if (daysDifference < getMinimumAdvanceDays() || daysDifference > getMaximumAdvanceDays()) {
+    return false;
+  }
+  
+  // Check if business is open on this date (considering special hours and closures)
+  if (!businessHours) return false;
+  
+  const effectiveHours = getEffectiveHoursForDate(date, businessHours, closures, specialHours);
+  return effectiveHours !== null && effectiveHours.length > 0;
 }
 
 /**

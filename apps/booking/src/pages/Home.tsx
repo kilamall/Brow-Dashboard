@@ -6,15 +6,185 @@ import type { BusinessInfo, HomePageContent } from '@buenobrows/shared/types';
 import HeroPhoto from '../components/HeroPhoto';
 import SEO from '../components/SEO';
 import MyBookingsCard from '../components/MyBookingsCard';
+import CircularPhotoSlideshow from '../components/CircularPhotoSlideshow';
+import { doc, getDoc, collection, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
+
+interface Review {
+  id: string;
+  customerName: string;
+  customerEmail: string;
+  rating: number;
+  comment: string;
+  serviceName?: string;
+  createdAt: any;
+  isApproved?: boolean;
+  isFeatured?: boolean;
+}
 
 export default function Home() {
   const { db } = useFirebase();
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo | null>(null);
   const [content, setContent] = useState<HomePageContent | null>(null);
   const [showStickyButton, setShowStickyButton] = useState(false);
+  const [aboutPhotos, setAboutPhotos] = useState<any[]>([]);
+  const [galleryPhotos, setGalleryPhotos] = useState<any[]>([]);
+  const [featuredReviews, setFeaturedReviews] = useState<Review[]>([]);
+
+  // Load photos from media gallery
+  useEffect(() => {
+    const loadGalleryPhotos = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'homePageContent');
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const galleryPhotos = data.galleryPhotos || [];
+          
+          // Handle both old string format and new object format
+          const processedPhotos = galleryPhotos.map((photo: any, index: number) => {
+            // If it's a string (old format), treat as gallery photo
+            if (typeof photo === 'string') {
+              return {
+                id: `legacy_photo_${index}`,
+                url: photo,
+                alt: `Gallery Photo ${index + 1}`,
+                category: 'gallery'
+              };
+            }
+            // If it's an object, use as-is
+            return photo;
+          });
+          
+          setGalleryPhotos(processedPhotos);
+        }
+      } catch (error) {
+        console.error('Error loading gallery photos:', error);
+      }
+    };
+
+    const loadSlideshowPhotos = async () => {
+      try {
+        // Load slideshow photos from photos collection
+        const photosQuery = query(
+          collection(db, 'photos'),
+          where('category', '==', 'about')
+        );
+        const photosSnapshot = await getDocs(photosQuery);
+        
+        const aboutPhotos = photosSnapshot.docs.map(doc => ({
+          id: doc.id,
+          src: doc.data().url,
+          alt: doc.data().alt || 'About Photo',
+          caption: doc.data().caption || doc.data().alt || 'About Photo'
+        }));
+        
+        // Sort by uploadedAt manually since we can't use orderBy without index
+        aboutPhotos.sort((a, b) => {
+          const aTime = photosSnapshot.docs.find(doc => doc.id === a.id)?.data().uploadedAt;
+          const bTime = photosSnapshot.docs.find(doc => doc.id === b.id)?.data().uploadedAt;
+          if (!aTime || !bTime) return 0;
+          return bTime.toMillis() - aTime.toMillis(); // Descending order
+        });
+        
+        // If no photos found, use fallback photos
+        if (aboutPhotos.length === 0) {
+          setAboutPhotos([
+            {
+              id: '1',
+              src: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=400&h=400&fit=crop&crop=face',
+              alt: 'Regina - Licensed Esthetician',
+              caption: 'Regina, Licensed Esthetician'
+            },
+            {
+              id: '2',
+              src: 'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?w=400&h=400&fit=crop&crop=face',
+              alt: 'Professional Beauty Services',
+              caption: 'Professional Beauty Services'
+            },
+            {
+              id: '3',
+              src: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400&h=400&fit=crop&crop=face',
+              alt: 'Client Care and Attention',
+              caption: 'Personalized Client Care'
+            },
+            {
+              id: '4',
+              src: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?w=400&h=400&fit=crop&crop=face',
+              alt: 'Beauty Studio Environment',
+              caption: 'Our Beautiful Studio'
+            }
+          ]);
+        } else {
+          setAboutPhotos(aboutPhotos);
+        }
+      } catch (error) {
+        console.error('Error loading slideshow photos:', error);
+        // Use fallback photos on error
+        setAboutPhotos([
+          {
+            id: '1',
+            src: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=400&h=400&fit=crop&crop=face',
+            alt: 'Regina - Licensed Esthetician',
+            caption: 'Regina, Licensed Esthetician'
+          }
+        ]);
+      }
+    };
+
+    loadGalleryPhotos();
+    loadSlideshowPhotos();
+  }, [db]);
 
   useEffect(() => watchBusinessInfo(db, setBusinessInfo), [db]);
-  useEffect(() => watchHomePageContent(db, setContent), [db]);
+  useEffect(() => {
+    const unsubscribe = watchHomePageContent(db, (content) => {
+      setContent(content);
+    });
+    return unsubscribe;
+  }, [db]);
+
+  // Fetch featured reviews for homepage
+  useEffect(() => {
+    const q = query(
+      collection(db, 'reviews'),
+      where('isApproved', '==', true),
+      where('isFeatured', '==', true),
+      orderBy('createdAt', 'desc'),
+      limit(3)
+    );
+
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const reviewsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Review));
+        
+        setFeaturedReviews(reviewsData);
+      },
+      (error) => {
+        console.error('Error fetching featured reviews:', error);
+        // Fallback to any approved reviews if no featured ones
+        const fallbackQuery = query(
+          collection(db, 'reviews'),
+          where('isApproved', '==', true),
+          orderBy('createdAt', 'desc'),
+          limit(3)
+        );
+        
+        onSnapshot(fallbackQuery, (snapshot) => {
+          const fallbackReviews = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Review));
+          setFeaturedReviews(fallbackReviews);
+        });
+      }
+    );
+
+    return () => unsubscribe();
+  }, [db]);
 
   // Show sticky button on scroll for mobile UX
   useEffect(() => {
@@ -27,6 +197,14 @@ export default function Home() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Helper function to render stars
+  const renderStars = (rating: number) => {
+    return Array.from({ length: 5 }, (_, i) => (
+      <svg key={i} className={`w-5 h-5 fill-current ${i < rating ? 'text-gold' : 'text-gray-300'}`} viewBox="0 0 20 20">
+        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+      </svg>
+    ));
+  };
 
   if (!businessInfo || !content) {
     return <div className="text-center py-12 text-slate-500">Loading...</div>;
@@ -139,20 +317,34 @@ export default function Home() {
 
       {/* About Section */}
       {content.aboutText && (
-        <section className="bg-white rounded-xl shadow-soft p-6 md:p-8 text-center">
-          <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">Our Story</h2>
-          <p className="text-slate-600 max-w-3xl mx-auto text-base md:text-lg leading-relaxed">{content.aboutText}</p>
-          {/* CTA after About */}
-          <div className="mt-6 md:mt-8">
-            <Link 
-              to="/services" 
-              className="inline-flex items-center gap-2 text-terracotta hover:text-terracotta/80 font-semibold text-base md:text-lg group"
-            >
-              Explore Our Services 
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-              </svg>
-            </Link>
+        <section className="bg-white rounded-xl shadow-soft p-6 md:p-8">
+          <div className="grid md:grid-cols-2 gap-8 items-center">
+            {/* Photo Slideshow */}
+            <div className="flex justify-center">
+              <CircularPhotoSlideshow 
+                photos={aboutPhotos}
+                size="md"
+                autoPlay={true}
+                interval={5000}
+              />
+            </div>
+            
+            {/* Text Content */}
+            <div className="text-center md:text-left">
+              <h2 className="font-serif text-2xl md:text-3xl text-terracotta mb-4">Our Story</h2>
+              <p className="text-slate-600 text-base md:text-lg leading-relaxed mb-6">{content.aboutText}</p>
+              
+              {/* CTA after About */}
+              <Link 
+                to="/services" 
+                className="inline-flex items-center gap-2 text-terracotta hover:text-terracotta/80 font-semibold text-base md:text-lg group"
+              >
+                Explore Our Services 
+                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </Link>
+            </div>
           </div>
         </section>
       )}
@@ -352,21 +544,31 @@ export default function Home() {
           <p className="text-center text-slate-600 mb-8 text-base md:text-lg">Take a peek inside our beautiful studio</p>
           
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-            {content.galleryPhotos.map((photo, index) => (
-              <div 
-                key={index}
-                className="group relative aspect-square rounded-xl overflow-hidden shadow-soft hover:shadow-lg transition-all duration-300 cursor-pointer select-none"
-              >
-                <img 
-                  src={photo} 
-                  alt={`Shop photo ${index + 1}`} 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 pointer-events-none"
-                  draggable="false"
-                />
-                {/* Subtle overlay on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-              </div>
-            ))}
+            {content.galleryPhotos.map((photo: any, index: number) => {
+              // Handle both string format (old) and object format (new)
+              const photoUrl = typeof photo === 'string' ? photo : photo.url;
+              const photoAlt = typeof photo === 'string' ? `Shop photo ${index + 1}` : photo.alt || `Shop photo ${index + 1}`;
+              
+              return (
+                <div 
+                  key={index}
+                  className="group relative aspect-square rounded-xl overflow-hidden shadow-soft hover:shadow-lg transition-all duration-300 cursor-pointer select-none"
+                >
+                  <img 
+                    src={photoUrl} 
+                    alt={photoAlt} 
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 pointer-events-none"
+                    draggable="false"
+                    onError={(e) => {
+                      console.error('Image failed to load:', photoUrl);
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  {/* Subtle overlay on hover */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                </div>
+              );
+            })}
           </div>
 
           {/* Decorative elements */}
@@ -394,24 +596,46 @@ export default function Home() {
         </section>
       )}
 
+      {/* No Gallery Photos Message */}
+      {(!content.galleryPhotos || content.galleryPhotos.length === 0) && (
+        <section className="text-center py-12">
+          <h2 className="font-serif text-2xl md:text-3xl text-center mb-3 text-terracotta">Our Space</h2>
+          <p className="text-center text-slate-600 mb-8 text-base md:text-lg">Take a peek inside our beautiful studio</p>
+          <div className="bg-slate-100 rounded-xl p-8 text-slate-500">
+            <p>Gallery photos will appear here once uploaded through the admin panel.</p>
+          </div>
+        </section>
+      )}
 
       {/* Reviews Section */}
       <section id="reviews">
         <h2 className="font-serif text-2xl md:text-3xl text-center mb-6 md:mb-8 text-terracotta">What Clients Say</h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-xl shadow-soft p-5 md:p-6">
-              <div className="flex mb-3">
-                {[...Array(5)].map((_, i) => (
-                  <svg key={i} className="w-5 h-5 text-gold fill-current" viewBox="0 0 20 20">
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                  </svg>
-                ))}
+          {featuredReviews.length > 0 ? (
+            featuredReviews.map((review) => (
+              <div key={review.id} className="bg-white rounded-xl shadow-soft p-5 md:p-6">
+                <div className="flex mb-3">
+                  {renderStars(review.rating)}
+                </div>
+                <p className="text-slate-700 mb-3 text-base leading-relaxed">"{review.comment}"</p>
+                <div className="text-sm text-slate-500">— {review.customerName || 'Anonymous'}</div>
+                {review.serviceName && (
+                  <div className="text-xs text-slate-400 mt-1">{review.serviceName}</div>
+                )}
               </div>
-              <p className="text-slate-700 mb-3 text-base leading-relaxed">"Beautiful, natural results. Booking was easy and I felt cared for."</p>
-              <div className="text-sm text-slate-500">— Happy Client</div>
-            </div>
-          ))}
+            ))
+          ) : (
+            // Fallback to placeholder reviews if no real reviews yet
+            [1, 2, 3].map((i) => (
+              <div key={i} className="bg-white rounded-xl shadow-soft p-5 md:p-6">
+                <div className="flex mb-3">
+                  {renderStars(5)}
+                </div>
+                <p className="text-slate-700 mb-3 text-base leading-relaxed">"Beautiful, natural results. Booking was easy and I felt cared for."</p>
+                <div className="text-sm text-slate-500">— Happy Client</div>
+              </div>
+            ))
+          )}
         </div>
         <div className="text-center mt-6 md:mt-8 space-y-4">
           <Link to="/reviews" className="inline-flex items-center gap-2 text-terracotta hover:underline text-base font-medium">

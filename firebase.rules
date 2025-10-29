@@ -10,6 +10,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /photos/{id} {
+      allow read: if true; // Public read for gallery display
+      allow write: if isAdmin(); // Only admins can manage photos
+    }
+
+    match /homePageContent/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /services/{id} {
       allow read: if true;
       allow write, delete, create: if isAdmin();
@@ -94,7 +104,10 @@ service cloud.firestore {
 
     match /reviews/{id} {
       allow read: if true;
-      allow create: if request.auth != null;
+      // Only allow authenticated customers to create reviews
+      // They must have a customer record with matching email/phone
+      allow create: if request.auth != null && 
+        exists(/databases/$(database)/documents/customers/$(request.auth.uid));
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -265,6 +278,26 @@ service cloud.firestore {
     match /specialHours/{id} {
       allow read: if true; // Public can read to check special hours
       allow create, update, delete: if isAdmin();
+    }
+
+    // Monetization Infrastructure Collections
+    match /monetizedProducts/{productId} {
+      allow read: if true; // Public read for product recommendations
+      allow write: if isAdmin(); // Only admins can manage products
+    }
+
+    match /conversionTracking/{trackingId} {
+      allow read: if isAdmin(); // Only admins can view conversion data
+      allow create: if request.auth != null; // Authenticated users can create tracking records
+      allow update: if isAdmin(); // Only admins can update tracking records
+      allow delete: if isAdmin(); // Only admins can delete tracking records
+    }
+
+    match /emailRequests/{requestId} {
+      allow read: if isAdmin(); // Only admins can view email requests
+      allow create: if request.auth != null; // Authenticated users can create email requests
+      allow update: if isAdmin(); // Only admins can update email requests
+      allow delete: if isAdmin(); // Only admins can delete email requests
     }
   }
 }

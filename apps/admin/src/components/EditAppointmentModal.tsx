@@ -22,7 +22,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
-  const [status, setStatus] = useState<'confirmed' | 'pending' | 'cancelled'>('confirmed');
+  const [status, setStatus] = useState<'confirmed' | 'pending' | 'cancelled' | 'completed' | 'no-show'>('confirmed');
   const [notes, setNotes] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [tipAmount, setTipAmount] = useState('');
@@ -123,7 +123,11 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
         customerPhone: selectedCustomer?.phone || appointment.customerPhone,
         start: newStart.toISOString(),
         duration: totalDuration,
-        bookedPrice: totalPrice,
+        bookedPrice: totalPrice, // Legacy field - total price for all services
+        servicePrices: selectedServices.reduce((acc, service) => {
+          acc[service.id] = service.price; // Store individual service prices
+          return acc;
+        }, {} as Record<string, number>),
         tip: tipValue,
         totalPrice: finalTotal,
         isPriceEdited: true,

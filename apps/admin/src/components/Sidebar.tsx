@@ -18,7 +18,8 @@ const navGroups = [
     label: 'Business',
     items: [
       { to: '/customers', icon: '👥', label: 'Customers' },
-      { to: '/services', icon: '✨', label: 'Services' }
+      { to: '/services', icon: '✨', label: 'Services' },
+      { to: '/monetized-products', icon: '🛍️', label: 'Monetized Products' }
     ]
   },
   {
@@ -33,7 +34,9 @@ const navGroups = [
     label: 'Analytics',
     items: [
       { to: '/cost-monitoring', icon: '💰', label: 'Cost Monitoring' },
-      { to: '/reviews', icon: '⭐', label: 'Reviews' }
+      { to: '/reviews', icon: '⭐', label: 'Reviews' },
+      { to: '/skin-analyses', icon: '✨', label: 'Skin Analyses' },
+      { to: '/monetization-analytics', icon: '📊', label: 'Monetization Analytics' }
     ]
   },
   {

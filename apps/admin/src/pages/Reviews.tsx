@@ -12,13 +12,14 @@ interface Review {
   serviceName?: string;
   createdAt: any;
   isApproved?: boolean;
+  isFeatured?: boolean;
 }
 
 export default function Reviews() {
   const { db } = useFirebase();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved'>('all');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'featured'>('all');
   const [selectedReview, setSelectedReview] = useState<Review | null>(null);
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export default function Reviews() {
   const filteredReviews = reviews.filter(review => {
     if (filter === 'pending') return review.isApproved === false;
     if (filter === 'approved') return review.isApproved === true;
+    if (filter === 'featured') return review.isApproved === true && review.isFeatured === true;
     return true;
   });
 
@@ -74,6 +76,17 @@ export default function Reviews() {
     }
   };
 
+  const handleToggleFeatured = async (reviewId: string, currentFeaturedStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'reviews', reviewId), {
+        isFeatured: !currentFeaturedStatus
+      });
+    } catch (error) {
+      console.error('Error toggling featured status:', error);
+      alert('Error updating featured status');
+    }
+  };
+
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
       <span
@@ -86,7 +99,9 @@ export default function Reviews() {
   };
 
   const getStatusBadge = (review: Review) => {
-    if (review.isApproved === true) {
+    if (review.isApproved === true && review.isFeatured === true) {
+      return <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded-full">Featured</span>;
+    } else if (review.isApproved === true) {
       return <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Approved</span>;
     } else if (review.isApproved === false) {
       return <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">Pending</span>;
@@ -129,6 +144,10 @@ export default function Reviews() {
             <div className="text-2xl font-bold text-green-600">{reviews.filter(r => r.isApproved === true).length}</div>
             <div className="text-slate-600">Approved</div>
           </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-purple-600">{reviews.filter(r => r.isApproved === true && r.isFeatured === true).length}</div>
+            <div className="text-slate-600">Featured</div>
+          </div>
         </div>
       </div>
 
@@ -164,6 +183,16 @@ export default function Reviews() {
         >
           Approved ({reviews.filter(r => r.isApproved === true).length})
         </button>
+        <button
+          onClick={() => setFilter('featured')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${
+            filter === 'featured' 
+              ? 'bg-terracotta text-white' 
+              : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+          }`}
+        >
+          Featured ({reviews.filter(r => r.isApproved === true && r.isFeatured === true).length})
+        </button>
       </div>
 
       {/* Reviews List */}
@@ -172,10 +201,12 @@ export default function Reviews() {
           <div className="text-6xl mb-4">📝</div>
           <h3 className="text-lg font-medium text-slate-700 mb-2">
             {filter === 'pending' ? 'No pending reviews' : 
-             filter === 'approved' ? 'No approved reviews' : 'No reviews yet'}
+             filter === 'approved' ? 'No approved reviews' : 
+             filter === 'featured' ? 'No featured reviews' : 'No reviews yet'}
           </h3>
           <p className="text-slate-500">
-            {filter === 'pending' ? 'All reviews have been processed' : 'Customer reviews will appear here'}
+            {filter === 'pending' ? 'All reviews have been processed' : 
+             filter === 'featured' ? 'No reviews are currently featured on the homepage' : 'Customer reviews will appear here'}
           </p>
         </div>
       ) : (
@@ -219,6 +250,18 @@ export default function Reviews() {
                         className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
                       >
                         Approve
+                      </button>
+                    )}
+                    {review.isApproved === true && (
+                      <button
+                        onClick={() => handleToggleFeatured(review.id, review.isFeatured || false)}
+                        className={`px-3 py-1 text-sm rounded transition-colors ${
+                          review.isFeatured 
+                            ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                            : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                        }`}
+                      >
+                        {review.isFeatured ? 'Unfeature' : 'Feature'}
                       </button>
                     )}
                     <button
@@ -296,6 +339,21 @@ export default function Reviews() {
                     className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
                   >
                     Approve Review
+                  </button>
+                )}
+                {selectedReview.isApproved === true && (
+                  <button
+                    onClick={() => {
+                      handleToggleFeatured(selectedReview.id, selectedReview.isFeatured || false);
+                      setSelectedReview(null);
+                    }}
+                    className={`px-4 py-2 rounded transition-colors ${
+                      selectedReview.isFeatured 
+                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                    }`}
+                  >
+                    {selectedReview.isFeatured ? 'Unfeature Review' : 'Feature Review'}
                   </button>
                 )}
                 <button

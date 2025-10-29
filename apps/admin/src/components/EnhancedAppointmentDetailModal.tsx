@@ -29,6 +29,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [services, setServices] = useState<Record<string, Service>>({});
   const [isEditingPrice, setIsEditingPrice] = useState(false);
   const [editedPrice, setEditedPrice] = useState('');
+  const [editedServicePrices, setEditedServicePrices] = useState<Record<string, string>>({});
   const [tipAmount, setTipAmount] = useState('');
   const [savingPrice, setSavingPrice] = useState(false);
   const functions = getFunctions();
@@ -89,12 +90,32 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     if (appointment) {
       console.log('🔍 Appointment price data:', {
         bookedPrice: appointment.bookedPrice,
+        servicePrices: appointment.servicePrices,
         totalPrice: appointment.totalPrice,
         tip: appointment.tip,
         serviceId: appointment.serviceId,
         servicePrice: services[appointment.serviceId]?.price
       });
-      setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+      
+      // Check if this is a multi-service appointment with individual prices
+      const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+      const hasMultipleServices = serviceIds.length > 1;
+      const hasIndividualPrices = appointment.servicePrices && Object.keys(appointment.servicePrices).length > 0;
+      
+      if (hasMultipleServices && hasIndividualPrices) {
+        // Initialize individual service prices
+        const servicePrices: Record<string, string> = {};
+        serviceIds.forEach((serviceId: string) => {
+          servicePrices[serviceId] = (appointment.servicePrices?.[serviceId] || services[serviceId]?.price || 0).toString();
+        });
+        setEditedServicePrices(servicePrices);
+        setEditedPrice(''); // Clear single price field
+      } else {
+        // Legacy single price mode
+        setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+        setEditedServicePrices({}); // Clear individual prices
+      }
+      
       setTipAmount((appointment.tip ?? 0).toString());
     }
   }, [appointment, services]);
@@ -136,36 +157,98 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
 
   const handleCancelPriceEdit = () => {
     setIsEditingPrice(false);
-    setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+    
+    // Check if this is a multi-service appointment with individual prices
+    const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+    const hasMultipleServices = serviceIds.length > 1;
+    const hasIndividualPrices = appointment.servicePrices && Object.keys(appointment.servicePrices).length > 0;
+    
+    if (hasMultipleServices && hasIndividualPrices) {
+      // Reset individual service prices
+      const servicePrices: Record<string, string> = {};
+      serviceIds.forEach((serviceId: string) => {
+        servicePrices[serviceId] = (appointment.servicePrices?.[serviceId] || services[serviceId]?.price || 0).toString();
+      });
+      setEditedServicePrices(servicePrices);
+      setEditedPrice(''); // Clear single price field
+    } else {
+      // Legacy single price mode
+      setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+      setEditedServicePrices({}); // Clear individual prices
+    }
+    
     setTipAmount((appointment.tip ?? 0).toString());
   };
 
   const handleSavePrice = async () => {
     if (!appointment) return;
     
-    const newPrice = parseFloat(editedPrice);
-    const newTip = parseFloat(tipAmount) || 0;
-    const newTotal = newPrice + newTip;
+    // Check if this is a multi-service appointment
+    const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+    const hasMultipleServices = serviceIds.length > 1;
     
-    if (isNaN(newPrice) || newPrice < 0) {
-      alert('Please enter a valid price');
-      return;
-    }
+    let updateData: any = {
+      isPriceEdited: true,
+      updatedAt: new Date().toISOString()
+    };
     
-    if (newTip < 0) {
-      alert('Tip amount cannot be negative');
-      return;
+    if (hasMultipleServices) {
+      // Multi-service mode: validate and save individual service prices
+      const servicePrices: Record<string, number> = {};
+      let totalServicePrice = 0;
+      
+      for (const serviceId of serviceIds) {
+        const priceStr = editedServicePrices[serviceId];
+        if (!priceStr || priceStr.trim() === '') {
+          alert(`Please enter a price for ${services[serviceId]?.name || 'Service'}`);
+          return;
+        }
+        
+        const price = parseFloat(priceStr);
+        if (isNaN(price) || price < 0) {
+          alert(`Please enter a valid price for ${services[serviceId]?.name || 'Service'}`);
+          return;
+        }
+        
+        servicePrices[serviceId] = price;
+        totalServicePrice += price;
+      }
+      
+      const newTip = parseFloat(tipAmount) || 0;
+      if (newTip < 0) {
+        alert('Tip amount cannot be negative');
+        return;
+      }
+      
+      updateData.servicePrices = servicePrices;
+      updateData.tip = newTip;
+      updateData.totalPrice = totalServicePrice + newTip;
+      // Keep bookedPrice for backward compatibility (sum of service prices)
+      updateData.bookedPrice = totalServicePrice;
+    } else {
+      // Single service mode: legacy behavior
+      const newPrice = parseFloat(editedPrice);
+      const newTip = parseFloat(tipAmount) || 0;
+      const newTotal = newPrice + newTip;
+      
+      if (isNaN(newPrice) || newPrice < 0) {
+        alert('Please enter a valid price');
+        return;
+      }
+      
+      if (newTip < 0) {
+        alert('Tip amount cannot be negative');
+        return;
+      }
+      
+      updateData.bookedPrice = newPrice;
+      updateData.tip = newTip;
+      updateData.totalPrice = newTotal;
     }
     
     setSavingPrice(true);
     try {
-      await updateDoc(doc(db, 'appointments', appointment.id), {
-        bookedPrice: newPrice,
-        tip: newTip,
-        totalPrice: newTotal,
-        isPriceEdited: true,
-        updatedAt: new Date().toISOString()
-      });
+      await updateDoc(doc(db, 'appointments', appointment.id), updateData);
       
       setIsEditingPrice(false);
       alert('Price updated successfully!');
@@ -545,25 +628,91 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                 {/* Price Editing Modal */}
                 {isEditingPrice && (
                   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
                       <h3 className="text-lg font-semibold text-slate-800 mb-4">Edit Appointment Price</h3>
                       
                       <div className="space-y-4">
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">Service Price</label>
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-500">$</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={editedPrice}
-                              onChange={(e) => setEditedPrice(e.target.value)}
-                              className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
-                              placeholder="0.00"
-                            />
-                          </div>
-                        </div>
+                        {(() => {
+                          // Check if this is a multi-service appointment
+                          const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+                          const hasMultipleServices = serviceIds.length > 1;
+                          
+                          if (hasMultipleServices) {
+                            // Multi-service mode: show individual service price inputs
+                            return (
+                              <>
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                  <div className="text-sm font-medium text-blue-800 mb-2">Individual Service Prices</div>
+                                  <div className="text-xs text-blue-600">
+                                    Set individual prices for each service to track cost/profit per service
+                                  </div>
+                                </div>
+                                
+                                {serviceIds.map((serviceId: string, index: number) => {
+                                  const service = services[serviceId];
+                                  return service ? (
+                                    <div key={serviceId} className="border border-slate-200 rounded-lg p-3">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-6 h-6 bg-terracotta text-white rounded-full flex items-center justify-center text-xs font-medium">
+                                            {index + 1}
+                                          </span>
+                                          <span className="font-medium text-slate-800">{service.name}</span>
+                                        </div>
+                                        <div className="text-xs text-slate-500">
+                                          Default: ${service.price.toFixed(2)}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-slate-500">$</span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={editedServicePrices[serviceId] || ''}
+                                          onChange={(e) => setEditedServicePrices(prev => ({
+                                            ...prev,
+                                            [serviceId]: e.target.value
+                                          }))}
+                                          className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                                          placeholder="0.00"
+                                        />
+                                      </div>
+                                    </div>
+                                  ) : null;
+                                })}
+                                
+                                <div className="bg-slate-50 rounded p-3 border">
+                                  <div className="text-sm text-slate-600 mb-1">Services Subtotal</div>
+                                  <div className="text-lg font-semibold text-slate-800">
+                                    ${Object.values(editedServicePrices).reduce((sum, priceStr) => {
+                                      return sum + (parseFloat(priceStr) || 0);
+                                    }, 0).toFixed(2)}
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          } else {
+                            // Single service mode: legacy behavior
+                            return (
+                              <div>
+                                <label className="block text-sm text-slate-600 mb-1">Service Price</label>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-slate-500">$</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editedPrice}
+                                    onChange={(e) => setEditedPrice(e.target.value)}
+                                    className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          }
+                        })()}
                         
                         <div>
                           <label className="block text-sm text-slate-600 mb-1">Tip Amount</label>
@@ -584,7 +733,19 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                         <div className="bg-slate-50 rounded p-3 border">
                           <div className="text-sm text-slate-600 mb-1">Total</div>
                           <div className="text-xl font-bold text-terracotta">
-                            ${(parseFloat(editedPrice) + (parseFloat(tipAmount) || 0)).toFixed(2)}
+                            ${(() => {
+                              const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+                              const hasMultipleServices = serviceIds.length > 1;
+                              
+                              if (hasMultipleServices) {
+                                const serviceTotal = Object.values(editedServicePrices).reduce((sum, priceStr) => {
+                                  return sum + (parseFloat(priceStr) || 0);
+                                }, 0);
+                                return (serviceTotal + (parseFloat(tipAmount) || 0)).toFixed(2);
+                              } else {
+                                return (parseFloat(editedPrice) + (parseFloat(tipAmount) || 0)).toFixed(2);
+                              }
+                            })()}
                           </div>
                         </div>
                         

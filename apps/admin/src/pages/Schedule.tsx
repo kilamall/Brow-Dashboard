@@ -3,8 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy, updateDoc, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { createStaff, updateStaff, deleteStaff, watchStaff } from '@buenobrows/shared/firestoreActions';
-import type { Appointment, Service, Staff, AppointmentEditRequest } from '@buenobrows/shared/types';
+import { createStaff, updateStaff, deleteStaff, watchStaff, watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
+import type { Appointment, Service, Staff, AppointmentEditRequest, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
 import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
 import EditAppointmentModal from '@/components/EditAppointmentModal';
@@ -234,6 +234,11 @@ export default function Schedule() {
   const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
   const [showScrollToCalendar, setShowScrollToCalendar] = useState(false);
   const calendarRef = useRef<HTMLDivElement>(null);
+
+  // Business hours data for week view
+  const [businessHours, setBusinessHours] = useState<BusinessHours | null>(null);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
 
   // Scroll to calendar function
   const scrollToCalendar = () => {
@@ -561,6 +566,21 @@ export default function Schedule() {
       snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
       setEditRequests(rows);
     });
+  }, [db]);
+
+  // Load business hours data for week view
+  useEffect(() => {
+    if (!db) return;
+    
+    const unsubBusinessHours = watchBusinessHours(db, setBusinessHours);
+    const unsubClosures = watchDayClosures(db, setClosures);
+    const unsubSpecial = watchSpecialHours(db, setSpecialHours);
+    
+    return () => {
+      unsubBusinessHours();
+      unsubClosures();
+      unsubSpecial();
+    };
   }, [db]);
 
   const fmtCurrency = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -1481,6 +1501,9 @@ export default function Schedule() {
             weekStartDate={startOfWeek(month, { weekStartsOn: 0 })}
             appointments={appts}
             services={services}
+            businessHours={businessHours}
+            closures={closures}
+            specialHours={specialHours}
             onAppointmentClick={(appointment) => setSelectedAppointment(appointment)}
             onTimeSlotClick={(date, time) => {
               // Set the time on the date
@@ -1688,6 +1711,9 @@ export default function Schedule() {
               date={selectedDay}
               appointments={appts}
               services={services}
+              businessHours={businessHours}
+              closures={closures}
+              specialHours={specialHours}
               onAppointmentClick={(appointment) => setSelectedAppointment(appointment)}
               onTimeSlotClick={(time) => {
                 // Open add appointment modal with the selected time

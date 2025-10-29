@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { sendMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
+import { sendMagicLink, completeMagicLinkSignIn, isMagicLink } from '@buenobrows/shared/authHelpers';
 import {
   createSlotHoldClient,
   releaseHoldClient,
@@ -7,15 +7,13 @@ import {
 } from '@buenobrows/shared/functionsClient';
 import type { Service } from '@buenobrows/shared/types';
 
-type Status = 'idle' | 'holding' | 'verifying' | 'error';
+type Status = 'idle' | 'delaying' | 'holding' | 'verifying' | 'error';
 type Slot = { id: string; startISO: string; endISO: string; resourceId?: string };
 
 interface Hold {
   id: string;
-  slotId: string;
-  serviceId: string;
-  sessionId: string;
-  expiresAt: number; // ms epoch
+  expiresAt: string; // ISO string
+  status: string;
 }
 
 interface Props {
@@ -42,8 +40,13 @@ export default function BookingActionBar({
   const [hold, setHold] = useState<Hold | null>(null);
   const [email, setEmail] = useState(userEmail ?? '');
   const [isLinkFlow, setIsLinkFlow] = useState(false);
+  const [delayRemaining, setDelayRemaining] = useState(0);
   const timerRef = useRef<number | null>(null);
+  const delayTimerRef = useRef<number | null>(null);
   const [, rerender] = useState(0);
+  
+  // Delay configuration (3 seconds before creating hold)
+  const HOLD_DELAY_MS = 3000;
 
   // Format helpers
   const prettyTime = useMemo(() => {
@@ -56,7 +59,7 @@ export default function BookingActionBar({
 
   const remaining = useMemo(() => {
     if (!hold) return 0;
-    return Math.max(0, hold.expiresAt - Date.now());
+    return Math.max(0, new Date(hold.expiresAt).getTime() - Date.now());
   }, [hold]);
 
   const remainingText = useMemo(() => {
@@ -70,31 +73,55 @@ export default function BookingActionBar({
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
-      setStatus('holding'); setErr('');
-      try {
-        const h = await createSlotHold({
-          slotId: slot.id,
-          serviceId: service.id,
-          sessionId,
-          // optional: hint duration = end-start
-          durationMinutes: Math.max(1, Math.round((new Date(slot.endISO).getTime() - new Date(slot.startISO).getTime()) / 60000))
-        });
-        if (!cancelled) setHold(h as Hold);
-      } catch (e: any) {
-        if (!cancelled) {
-          setErr(e?.message ?? 'Could not hold this time. Please pick another.');
-          setStatus('error');
+    // Start delay countdown
+    setStatus('delaying');
+    setErr('');
+    setDelayRemaining(HOLD_DELAY_MS);
+
+    // Clear any existing delay timer
+    if (delayTimerRef.current) {
+      clearInterval(delayTimerRef.current);
+    }
+
+    // Start delay countdown
+    delayTimerRef.current = window.setInterval(() => {
+      setDelayRemaining(prev => {
+        if (prev <= 1000) {
+          // Delay finished, create hold
+          if (!cancelled) {
+            (async () => {
+              try {
+                setStatus('holding');
+                const h = await createSlotHoldClient({
+                  serviceId: service.id,
+                  startISO: slot.startISO,
+                  endISO: slot.endISO,
+                  sessionId,
+                });
+                if (!cancelled) setHold(h as Hold);
+                if (!cancelled) setStatus('idle');
+              } catch (e: any) {
+                if (!cancelled) {
+                  setErr(e?.message ?? 'Could not hold this time. Please wait a moment before selecting another time, or try a different slot.');
+                  setStatus('error');
+                }
+              }
+            })();
+          }
+          return 0;
         }
-        return;
-      }
-      if (!cancelled) setStatus('idle');
-    })();
+        return prev - 1000;
+      });
+    }, 1000);
 
     // cleanup: release hold if user changes slot or leaves component
     return () => {
       cancelled = true;
-      if (hold) void releaseHold(hold.id).catch(() => {});
+      if (delayTimerRef.current) {
+        clearInterval(delayTimerRef.current);
+        delayTimerRef.current = null;
+      }
+      if (hold) void releaseHoldClient(hold.id).catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot.id]);
@@ -119,7 +146,8 @@ export default function BookingActionBar({
   }, []);
 
   // Expired hold guard
-  const holdExpired = hold ? Date.now() >= hold.expiresAt : false;
+  const holdExpired = hold ? Date.now() >= new Date(hold.expiresAt).getTime() : false;
+
 
   async function handleVerifyAndBookNow() {
     if (!hold || holdExpired) return;
@@ -157,12 +185,32 @@ export default function BookingActionBar({
     await onBookGuest(hold.id);
   }
 
+  if (status === 'delaying') {
+    // Show delay countdown
+    const delaySeconds = Math.ceil(delayRemaining / 1000);
+    return (
+      <div className={className}>
+        <div className="mt-4 rounded-2xl border border-blue-300 bg-blue-50 p-4">
+          <div className="text-center">
+            <div className="text-sm text-blue-700">Preparing to hold your slot</div>
+            <div className="font-serif text-lg">
+              {service.name} • {prettyTime}
+            </div>
+            <div className="text-xs text-blue-600">
+              Hold will start in {delaySeconds} second{delaySeconds !== 1 ? 's' : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!hold) {
-    // Subtle placeholder so layout doesn’t jump
+    // Subtle placeholder so layout doesn't jump
     return (
       <div className={className}>
         <div className="mt-4 rounded-2xl border border-terracotta/30 bg-white/70 p-4 text-sm text-slate-600">
-          Holding your slot…
+          {status === 'holding' ? 'Creating hold…' : 'Preparing…'}
         </div>
       </div>
     );

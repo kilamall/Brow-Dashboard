@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 
 export default function DataManagement() {
+  const { db } = useFirebase();
   const [collectionCounts, setCollectionCounts] = useState<any>(null);
   const [showPurgeModal, setShowPurgeModal] = useState(false);
   const [purgeLoading, setPurgeLoading] = useState(false);
@@ -10,12 +13,28 @@ export default function DataManagement() {
   const [clearing, setClearing] = useState(false);
   const [cleanupStats, setCleanupStats] = useState<any>(null);
   const [runningCleanup, setRunningCleanup] = useState(false);
+  const [homepageContent, setHomepageContent] = useState<any>(null);
+  const [undoBackup, setUndoBackup] = useState<any>(null);
+  const [undoTimestamp, setUndoTimestamp] = useState<Date | null>(null);
 
   // Load initial data
   useEffect(() => {
     loadCancelledCount();
     loadCleanupStats();
   }, []);
+
+  // Update countdown timer and clear expired backups
+  useEffect(() => {
+    if (!undoBackup || !undoTimestamp) return;
+
+    const interval = setInterval(() => {
+      if (!isBackupValid()) {
+        clearBackup();
+      }
+    }, 1000); // Check every second
+
+    return () => clearInterval(interval);
+  }, [undoBackup, undoTimestamp]);
 
   const loadCancelledCount = async () => {
     try {
@@ -251,6 +270,241 @@ export default function DataManagement() {
     return tomorrow.toLocaleString();
   };
 
+  // Backup Management Functions
+  const createBackup = (content: any) => {
+    const backup = {
+      ...content,
+      backedUpAt: new Date().toISOString()
+    };
+    setUndoBackup(backup);
+    setUndoTimestamp(new Date());
+    console.log('📦 Created backup for undo:', backup);
+  };
+
+  const isBackupValid = () => {
+    if (!undoTimestamp) return false;
+    const now = new Date();
+    const backupAge = now.getTime() - undoTimestamp.getTime();
+    const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+    return backupAge < fiveMinutes;
+  };
+
+  const clearBackup = () => {
+    setUndoBackup(null);
+    setUndoTimestamp(null);
+  };
+
+  const undoLastClear = async () => {
+    if (!undoBackup || !isBackupValid()) {
+      alert('❌ No valid backup available to undo.\n\nBackups expire after 5 minutes.');
+      return;
+    }
+
+    try {
+      // Restore the backup content
+      await setDoc(doc(db, 'settings', 'homePageContent'), undoBackup, { merge: true });
+      
+      // Update local state
+      setHomepageContent(undoBackup);
+      
+      // Clear the backup since it's been used
+      clearBackup();
+      
+      alert('✅ Content restored successfully!\n\nYour previous homepage content has been restored.');
+      console.log('🔄 Restored content from backup:', undoBackup);
+    } catch (error) {
+      console.error('Error undoing clear:', error);
+      alert('Error restoring content: ' + error);
+    }
+  };
+
+  // Homepage Content Management Functions
+  const loadHomepageContent = async () => {
+    try {
+      const docRef = doc(db, 'settings', 'homePageContent');
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setHomepageContent(data);
+        return data;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error loading homepage content:', error);
+      return null;
+    }
+  };
+
+  const checkHomepageContent = async () => {
+    try {
+      const data = await loadHomepageContent();
+      
+      if (data) {
+        console.log('📄 Current homepage content:', JSON.stringify(data, null, 2));
+        
+        // Check if galleryPhotos is in wrong format (objects instead of strings)
+        if (data.galleryPhotos && data.galleryPhotos.length > 0 && typeof data.galleryPhotos[0] === 'object') {
+          alert('⚠️ Data format issue detected!\n\ngalleryPhotos contains objects instead of strings.\n\nClick "Fix Data Format" to resolve this.');
+        } else {
+          alert('✅ Homepage content looks good!\n\nCheck the console for full data structure.');
+        }
+      } else {
+        alert('❌ No homepage content found.');
+      }
+    } catch (error) {
+      console.error('Error checking homepage content:', error);
+      alert('Error checking homepage content: ' + error);
+    }
+  };
+
+  const fixDataFormat = async () => {
+    try {
+      const data = await loadHomepageContent();
+      
+      if (!data) {
+        alert('No homepage content found to fix.');
+        return;
+      }
+
+      const galleryPhotos = data.galleryPhotos || [];
+      
+      // Convert objects to URL strings
+      const fixedGalleryPhotos = galleryPhotos.map((photo: any) => {
+        if (typeof photo === 'object' && photo.url) {
+          return photo.url;
+        }
+        return photo;
+      });
+
+      // Update the document with fixed data
+      await setDoc(doc(db, 'settings', 'homePageContent'), {
+        ...data,
+        galleryPhotos: fixedGalleryPhotos
+      }, { merge: true });
+
+      alert('✅ Data format fixed!\n\nConverted galleryPhotos from objects to URL strings.');
+      await loadHomepageContent();
+    } catch (error) {
+      console.error('Error fixing data format:', error);
+      alert('Error fixing data format: ' + error);
+    }
+  };
+
+  const clearHomepageContent = async () => {
+    if (!confirm('Are you sure you want to clear all homepage content? This will remove all photo assignments.')) return;
+    
+    try {
+      console.log('🧹 Clearing homepage content...');
+      
+      // First, get the current document to see what's in it
+      const docRef = doc(db, 'settings', 'homePageContent');
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        console.log('Current data before clearing:', data);
+        
+        // Create backup before clearing
+        createBackup(data);
+        
+        // Clear only the photo-related fields, keep other content
+        const clearedData = {
+          ...data,
+          galleryPhotos: [],
+          heroImageUrl: null,
+          hero2ImageUrl: null,
+          skinAnalysisImageUrl: null
+        };
+        
+        await setDoc(doc(db, 'settings', 'homePageContent'), clearedData, { merge: true });
+        console.log('✅ Cleared photo assignments from homepage content');
+        alert('✅ Homepage content cleared!\n\nAll photo assignments have been removed.\n\n💡 You can undo this action within 5 minutes using the Undo button.');
+      } else {
+        alert('No homepage content found to clear.');
+      }
+      
+      await loadHomepageContent();
+    } catch (error) {
+      console.error('Error clearing homepage content:', error);
+      alert('Error clearing homepage content: ' + error);
+    }
+  };
+
+  const clearAllHomepageData = async () => {
+    if (!confirm('⚠️ This will DELETE ALL homepage data and start completely fresh. Are you sure?')) return;
+    
+    try {
+      console.log('🧹 Clearing ALL homepage data...');
+      
+      // Create backup before clearing everything
+      if (homepageContent) {
+        createBackup(homepageContent);
+      }
+      
+      // Delete the entire document
+      await deleteDoc(doc(db, 'settings', 'homePageContent'));
+      console.log('✅ Deleted settings/homePageContent document');
+      
+      // Also delete the old collection if it exists
+      try {
+        const oldCollectionRef = collection(db, 'homePageContent');
+        const oldDocs = await getDocs(oldCollectionRef);
+        
+        if (!oldDocs.empty) {
+          console.log('Found old homePageContent collection, clearing...');
+          // Note: We can't delete the collection directly, but we can clear its documents
+          // This is just for logging purposes
+        }
+      } catch (error) {
+        console.log('No old collection found or error accessing it:', error);
+      }
+      
+      alert('✅ ALL homepage data cleared!\n\nThe system will start fresh with default content.\n\n💡 You can undo this action within 5 minutes using the Undo button.');
+      setHomepageContent(null);
+    } catch (error) {
+      console.error('Error clearing all homepage data:', error);
+      alert('Error clearing all homepage data: ' + error);
+    }
+  };
+
+  const refreshHomepageContent = async () => {
+    try {
+      // Load photos from photos collection
+      const photosQuery = collection(db, 'photos');
+      const photosSnapshot = await getDocs(photosQuery);
+      
+      const photos = photosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      const aboutPhotos = photos.filter((p: any) => p.homepageElements?.aboutSlideshow);
+      const galleryPhotos = photos.filter((p: any) => p.homepageElements?.gallery);
+      const heroPhotos = photos.filter((p: any) => p.homepageElements?.heroImage);
+      
+      const dataToSave: any = {
+        galleryPhotos: galleryPhotos.map((p: any) => p.url)
+      };
+      
+      // Only include hero images if they exist
+      if (heroPhotos.length > 0) {
+        dataToSave.heroImageUrl = heroPhotos[0].url;
+      }
+      
+      // Save to Firestore (only include fields that have values)
+      await setDoc(doc(db, 'settings', 'homePageContent'), dataToSave, { merge: true });
+      
+      console.log('✅ Refreshed homepage content with current photo assignments');
+      alert('✅ Homepage content refreshed!\n\nUpdated with current photo assignments from the photos collection.');
+      
+      await loadHomepageContent();
+    } catch (error) {
+      console.error('Error refreshing homepage content:', error);
+      alert('Error refreshing homepage content: ' + error);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Smart Cleanup Center */}
@@ -337,6 +591,127 @@ export default function DataManagement() {
             <span className="text-xs opacity-90">Advanced</span>
           </button>
         </div>
+      </div>
+
+      {/* Homepage Content Management */}
+      <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl shadow-lg p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-purple-800">Homepage Content Management</h3>
+            <p className="text-sm text-purple-600">Manage homepage photo assignments and content data</p>
+          </div>
+          <button onClick={loadHomepageContent} className="text-sm text-purple-600 hover:text-purple-700">
+            Refresh Content
+          </button>
+        </div>
+        
+        {/* Homepage Content Actions */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <button 
+            className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            onClick={checkHomepageContent}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <span className="font-medium text-sm">Check Content</span>
+            <span className="text-xs opacity-90">Inspect data</span>
+          </button>
+          
+          <button 
+            className="bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            onClick={fixDataFormat}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0l1.83 7.506a1.5 1.5 0 01-1.442 1.882H9.937a1.5 1.5 0 01-1.442-1.882l1.83-7.506zM15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span className="font-medium text-sm">Fix Format</span>
+            <span className="text-xs opacity-90">Repair data</span>
+          </button>
+          
+          <button 
+            className="bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            onClick={clearHomepageContent}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span className="font-medium text-sm">Clear Photos</span>
+            <span className="text-xs opacity-90">Remove assignments</span>
+          </button>
+          
+          <button 
+            className="bg-gradient-to-br from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            onClick={refreshHomepageContent}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span className="font-medium text-sm">Refresh</span>
+            <span className="text-xs opacity-90">Sync photos</span>
+          </button>
+          
+          <button 
+            className="bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            onClick={clearAllHomepageData}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <span className="font-medium text-sm">Clear ALL</span>
+            <span className="text-xs opacity-90">Reset everything</span>
+          </button>
+          
+          <button 
+            className={`rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg ${
+              undoBackup && isBackupValid() 
+                ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white' 
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
+            onClick={undoLastClear}
+            disabled={!undoBackup || !isBackupValid()}
+            title={undoBackup && isBackupValid() 
+              ? `Undo last clear (expires in ${Math.max(0, Math.ceil((5 * 60 * 1000 - (new Date().getTime() - (undoTimestamp?.getTime() || 0))) / 1000))}s)`
+              : 'No undo available'
+            }
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            <span className="font-medium text-sm">Undo</span>
+            <span className="text-xs opacity-90">
+              {undoBackup && isBackupValid() 
+                ? `${Math.max(0, Math.ceil((5 * 60 * 1000 - (new Date().getTime() - (undoTimestamp?.getTime() || 0))) / 1000))}s left`
+                : 'Not available'
+              }
+            </span>
+          </button>
+        </div>
+        
+        {/* Homepage Content Status */}
+        {homepageContent && (
+          <div className="mt-4 p-4 bg-white rounded-lg border border-purple-200">
+            <h4 className="font-semibold text-purple-800 mb-2">Current Homepage Content Status</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-purple-600">Gallery Photos:</span>
+                <span className="ml-2 font-medium">{homepageContent.galleryPhotos?.length || 0}</span>
+              </div>
+              <div>
+                <span className="text-purple-600">Hero Image:</span>
+                <span className="ml-2 font-medium">{homepageContent.heroImageUrl ? '✅' : '❌'}</span>
+              </div>
+              <div>
+                <span className="text-purple-600">Hero 2 Image:</span>
+                <span className="ml-2 font-medium">{homepageContent.hero2ImageUrl ? '✅' : '❌'}</span>
+              </div>
+              <div>
+                <span className="text-purple-600">Skin Analysis Image:</span>
+                <span className="ml-2 font-medium">{homepageContent.skinAnalysisImageUrl ? '✅' : '❌'}</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Live Database Status */}

@@ -3,11 +3,13 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { defineSecret } from 'firebase-functions/params';
+
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GENERIC_OUT_OF_SCOPE_RESPONSE = "Thanks for reaching out! For that question, please call us directly or visit our website. Is there anything about our beauty services or appointments I can help with?";
 
 interface CustomerMessage {
@@ -146,7 +148,8 @@ async function callGeminiWithTraining(
   trainedPrompt: string,
   customerContext: any
 ): Promise<string> {
-  if (!GEMINI_API_KEY) {
+  const apiKey = geminiApiKey.value();
+  if (!apiKey) {
     console.log('⚠️ Gemini API key not configured');
     return 'Thanks for your message! We\'ll get back to you shortly.';
   }
@@ -159,7 +162,7 @@ async function callGeminiWithTraining(
     const fullPrompt = `${trainedPrompt}\n\n## Current Message:\n${contextInfo}\nCustomer asks: "${message}"\n\nYour response (match admin's style):`;
     
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -196,7 +199,7 @@ async function callGeminiWithTraining(
  * Main AI response handler with training and scope detection
  */
 export const generateAIResponse = onCall(
-  { region: 'us-central1', cors: true, memory: '512MiB', timeoutSeconds: 60 },
+  { region: 'us-central1', cors: true, memory: '512MiB', timeoutSeconds: 60, secrets: [geminiApiKey] },
   async (req) => {
     const { customerId, customerName, customerPhone, message, appointmentId } = req.data as CustomerMessage;
     

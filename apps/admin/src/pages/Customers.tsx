@@ -5,9 +5,10 @@ import {
   updateCustomer,
   deleteCustomer
 } from '@buenobrows/shared/firestoreActions';
-import { createCustomerUniqueClient } from '@buenobrows/shared/functionsClient';
+import { createCustomerUniqueClient, runCanonicalFieldsMigrationClient, mergeCustomersClient } from '@buenobrows/shared/functionsClient';
 import type { Customer } from '@buenobrows/shared/types';
 import CustomerProfile from '../components/CustomerProfile';
+import MergeCustomersModal from '../components/MergeCustomersModal';
 import { doc, getDoc } from 'firebase/firestore';
 
 
@@ -19,6 +20,8 @@ export default function Customers(){
   const [editing, setEditing] = useState<Customer | null>(null);
   const [viewing, setViewing] = useState<Customer | null>(null);
   const [collapsedSegments, setCollapsedSegments] = useState<Set<string>>(new Set());
+  const [migrating, setMigrating] = useState(false);
+  const [showMergeModal, setShowMergeModal] = useState(false);
   
   useEffect(()=> {
     return watchCustomers(db, q, setRows);
@@ -30,6 +33,26 @@ export default function Customers(){
     const originalQ = q;
     setQ(q + ' ');
     setTimeout(() => setQ(originalQ), 100);
+  };
+
+  // Run canonical fields migration
+  const runMigration = async () => {
+    if (!confirm('This will add canonical email/phone fields to all existing customers. Continue?')) {
+      return;
+    }
+    
+    setMigrating(true);
+    try {
+      const result = await runCanonicalFieldsMigrationClient();
+      const data = result.data as any;
+      alert(`Migration completed! Processed ${data.processedCount} customers. Found ${data.duplicateCount} potential duplicates.`);
+      refreshCustomers();
+    } catch (error: any) {
+      console.error('Migration failed:', error);
+      alert(`Migration failed: ${error.message}`);
+    } finally {
+      setMigrating(false);
+    }
   };
   
   // Sort customers based on selected option
@@ -158,6 +181,7 @@ export default function Customers(){
   };
   
   return (
+    <>
     <div className="bg-white rounded-xl shadow-soft p-6">
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -176,6 +200,19 @@ export default function Customers(){
             value={q} 
             onChange={e=>setQ(e.target.value)} 
           />
+          <button 
+            onClick={runMigration}
+            disabled={migrating}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors text-sm font-medium"
+          >
+            {migrating ? 'Migrating...' : 'Run Migration'}
+          </button>
+          <button 
+            onClick={() => setShowMergeModal(true)}
+            className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+          >
+            Merge Customers
+          </button>
           <button 
             className="bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors flex items-center gap-2"
             onClick={()=>setEditing({id:'', name:'', email:'', phone:'', status:'pending', totalVisits:0})}
@@ -397,9 +434,17 @@ export default function Customers(){
       {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} />}
       {viewing && <CustomerProfile customer={viewing} onClose={()=>setViewing(null)} db={db} />}
     </div>
+
+    {/* Merge Customers Modal */}
+    <MergeCustomersModal
+      isOpen={showMergeModal}
+      onClose={() => setShowMergeModal(false)}
+      customers={rows}
+      onMergeComplete={refreshCustomers}
+    />
+    </>
   );
 }
-
 
 function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void; db: any }){
   const [c, setC] = useState<Customer>(initial);
@@ -418,21 +463,49 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
         onClose();
       } else {
         // Use uniqueness-enforced customer creation
-        const result = await createCustomerUniqueClient({
-          name: c.name,
-          email: c.email,
-          phone: c.phone,
-          profilePictureUrl: c.profilePictureUrl,
-          notes: c.notes
-        });
-        
-        if (result.alreadyExists) {
-          // Show error message and link to existing customer
-          alert(`Customer already exists! Found customer: ${result.customer.name}. Please search for this customer instead.`);
-          return;
+        try {
+          const result = await createCustomerUniqueClient({
+            name: c.name,
+            email: c.email,
+            phone: c.phone,
+            profilePictureUrl: c.profilePictureUrl,
+            notes: c.notes
+          });
+          
+          if (result.data?.alreadyExists) {
+            // Auto-populate form with existing customer data
+            const existingCustomer = result.data.customer;
+            console.log('Customer already exists, auto-populating form:', existingCustomer);
+            
+            // Update the form with existing customer data
+            setC({
+              id: existingCustomer.id,
+              name: existingCustomer.name || c.name,
+              email: existingCustomer.email || c.email,
+              phone: existingCustomer.phone || c.phone,
+              profilePictureUrl: existingCustomer.profilePictureUrl || c.profilePictureUrl,
+              notes: existingCustomer.notes || c.notes,
+              status: existingCustomer.status || 'active'
+            });
+            
+            // Show success message
+            alert(`Customer already exists! Form updated with existing customer data: ${existingCustomer.name}`);
+            return;
+          }
+          
+          onClose();
+        } catch (error: any) {
+          console.error('Customer creation error:', error);
+          
+          // Check if it's a duplicate error
+          if (error.code === 'already-exists' || error.message?.includes('already exists')) {
+            alert('Customer already exists! Please search for this customer instead.');
+            return;
+          }
+          
+          // Re-throw other errors to be handled by outer catch
+          throw error;
         }
-        
-        onClose();
       }
     } catch (error) {
       console.error('Failed to save customer:', error);

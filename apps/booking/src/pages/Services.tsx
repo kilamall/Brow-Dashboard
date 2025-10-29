@@ -127,9 +127,9 @@ export default function ServicesPage() {
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
         {filtered.map((s) => (
-          <article key={s.id} className="bg-white rounded-xl shadow-soft overflow-hidden hover:shadow-lg transition-all duration-300 hover:scale-[1.02]">
+          <article key={s.id} className="bg-white rounded-xl shadow-soft overflow-hidden hover:shadow-lg transition-all duration-300 hover:scale-[1.02] flex flex-col h-[500px]">
             {/* Service Image */}
-            <div className="relative h-48 bg-gradient-to-br from-terracotta/20 to-terracotta/5 overflow-hidden">
+            <div className="relative h-48 bg-gradient-to-br from-terracotta/20 to-terracotta/5 overflow-hidden flex-shrink-0">
               {(s as any).imageUrl ? (
                 <img 
                   src={(s as any).imageUrl} 
@@ -202,7 +202,7 @@ export default function ServicesPage() {
             </div>
             
             {/* Content */}
-            <div className="p-6 flex flex-col h-full">
+            <div className="p-6 flex flex-col h-full min-h-0">
               <header className="mb-4">
                 <h3 className="font-semibold text-xl text-slate-800 mb-2">{s.name}</h3>
                 <div className="flex items-center gap-4 text-sm text-slate-600">
@@ -223,36 +223,38 @@ export default function ServicesPage() {
               </header>
               
               {/* Description */}
-              <div className="flex-1 mb-6">
-                <p className="text-slate-600 leading-relaxed text-sm">
-                  {truncateDescription(s.description || 'Beautiful brows, tailored to you.', 100)}
+              <div className="flex-1 mb-4 overflow-hidden">
+                <p className="text-slate-600 leading-relaxed text-sm line-clamp-3">
+                  {s.description || 'Beautiful brows, tailored to you. Professional service with personalized care and attention to detail.'}
                 </p>
-                
-                {/* Show "Read more" link if description is long */}
-                {s.description && s.description.length > 100 && (
-                  <button
-                    onClick={() => handleServiceClick(s)}
-                    className="text-terracotta text-sm font-medium hover:text-terracotta/80 transition-colors mt-2 flex items-center gap-1"
-                  >
-                    Read full description
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                )}
               </div>
               
-              {/* Action Button */}
-              <Link 
-                to="/book" 
-                state={{ selectedServiceId: s.id }}
-                className="inline-flex items-center justify-center gap-2 bg-terracotta text-white rounded-lg px-6 py-3 font-medium hover:bg-terracotta/90 transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                Book This Service
-              </Link>
+              {/* Action Buttons - Fixed at bottom */}
+              <div className="mt-auto">
+                <div className="flex flex-col gap-3">
+                  <Link 
+                    to="/book" 
+                    state={{ selectedServiceId: s.id }}
+                    className="inline-flex items-center justify-center gap-2 bg-terracotta text-white rounded-lg px-6 py-3 font-semibold hover:bg-terracotta/90 transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Book Now
+                  </Link>
+                  
+                  {/* Learn More button for all services */}
+                  <button
+                    onClick={() => handleServiceClick(s)}
+                    className="inline-flex items-center justify-center gap-2 border border-terracotta text-terracotta rounded-lg px-6 py-2 font-medium hover:bg-terracotta/5 transition-all duration-200"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Learn More
+                  </button>
+                </div>
+              </div>
             </div>
           </article>
         ))}
@@ -342,10 +344,14 @@ export default function ServicesPage() {
                 <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <Link 
                     to="/book" 
-                    className="flex-1 bg-terracotta text-white rounded-lg px-6 py-3 text-center font-medium hover:bg-terracotta/90 transition-colors"
+                    state={{ selectedServiceId: selectedService.id }}
+                    className="flex-1 bg-terracotta text-white rounded-lg px-6 py-3 text-center font-semibold hover:bg-terracotta/90 transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
                     onClick={closeModal}
                   >
-                    Book This Service
+                    <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Book Now
                   </Link>
                   <button
                     onClick={closeModal}

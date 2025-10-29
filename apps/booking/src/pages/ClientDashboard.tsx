@@ -16,7 +16,20 @@ const safeFormatDate = (dateString: any, formatString: string, fallback: string 
       console.warn(`⚠️ ${context || 'Date'}: No date value provided`);
       return fallback;
     }
-    const date = new Date(dateString);
+    
+    let date: Date;
+    
+    // Handle Firestore Timestamp objects - check for seconds property
+    if (dateString && typeof dateString === 'object' && typeof dateString.seconds === 'number') {
+      // This is a Firestore Timestamp
+      date = new Date(dateString.seconds * 1000 + (dateString.nanoseconds || 0) / 1000000);
+    } else if (dateString && typeof dateString === 'object' && dateString.toDate && typeof dateString.toDate === 'function') {
+      // Fallback for other timestamp objects with toDate method
+      date = dateString.toDate();
+    } else {
+      date = new Date(dateString);
+    }
+    
     if (isNaN(date.getTime())) {
       console.error(`❌ ${context || 'Date'}: Invalid date value:`, {
         rawValue: dateString,

@@ -4,7 +4,7 @@ import type { Appointment, Service, BusinessHours } from '@buenobrows/shared/typ
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import { watchAvailabilityByDay, fetchAvailabilityForDay } from '@buenobrows/shared/availabilityHelpers';
-import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
+import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { getNextValidBookingDateAfter, formatNextAvailableDate, isValidBookingDate } from '@buenobrows/shared/businessHoursUtils';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 
@@ -15,7 +15,20 @@ const safeFormatDate = (dateString: any, formatString: string, fallback: string 
       console.warn(`⚠️ ${context || 'Date'}: No date value provided`);
       return fallback;
     }
-    const date = new Date(dateString);
+    
+    let date: Date;
+    
+    // Handle Firestore Timestamp objects - check for seconds property
+    if (dateString && typeof dateString === 'object' && typeof dateString.seconds === 'number') {
+      // This is a Firestore Timestamp
+      date = new Date(dateString.seconds * 1000 + (dateString.nanoseconds || 0) / 1000000);
+    } else if (dateString && typeof dateString === 'object' && dateString.toDate && typeof dateString.toDate === 'function') {
+      // Fallback for other timestamp objects with toDate method
+      date = dateString.toDate();
+    } else {
+      date = new Date(dateString);
+    }
+    
     if (isNaN(date.getTime())) {
       console.error(`❌ ${context || 'Date'}: Invalid date value:`, {
         rawValue: dateString,
@@ -118,7 +131,7 @@ export default function EditRequestModal({
           const daySlots = await fetchAvailabilityForDay(db, checkDate);
           
           // Check if there are any available slots for this duration
-          const availableSlots = availableSlotsFromAvailability(checkDate, totalDuration, businessHours, daySlots);
+          const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots);
           
           if (availableSlots.length > 0) {
             console.log('✅ Found next available date:', checkDate.toISOString());
@@ -157,7 +170,7 @@ export default function EditRequestModal({
         const daySlots = await fetchAvailabilityForDay(db, checkDate);
         
         // Check if there are any available slots for this duration
-        const availableSlots = availableSlotsFromAvailability(checkDate, totalDuration, businessHours, daySlots);
+        const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots);
         
         if (availableSlots.length > 0) {
           console.log('✅ Found next available day with slots:', checkDate.toISOString());
@@ -210,7 +223,7 @@ export default function EditRequestModal({
       setLoadingAvailability(false);
       
       // If no slots available, find next available day
-      const availableSlots = availableSlotsFromAvailability(dayDate, totalDuration, businessHours, slots);
+      const availableSlots = availableSlotsForDay(dayDate, totalDuration, businessHours, slots);
       if (availableSlots.length === 0) {
         findNextAvailableDayWithSlots(dayDate);
       } else {
@@ -244,7 +257,7 @@ export default function EditRequestModal({
     });
     
     try {
-      const slots = availableSlotsFromAvailability(dayDate, totalDuration, businessHours, bookedSlots);
+      const slots = availableSlotsForDay(dayDate, totalDuration, businessHours, bookedSlots);
       console.log('✅ EditRequestModal - Generated slots:', slots.length, 'slots');
       console.log('📊 EditRequestModal - Booked slots:', bookedSlots.map(s => ({ start: s.start, end: s.end, status: s.status })));
       return slots;

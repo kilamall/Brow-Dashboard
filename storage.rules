@@ -50,6 +50,23 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
+    // Temporary skin analysis images (fallback for debugging)
+    // SECURITY: Limited to small files, short-lived, with cleanup
+    match /skin-analysis/{imageId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null 
+                   && request.resource.size < 10 * 1024 * 1024 // Max 10MB
+                   && request.resource.contentType.matches('image/.*') // Images only
+                   && request.time < timestamp.date(2025, 12, 31); // Expires end of year
+    }
+    
+    // Product analysis images - authenticated users ONLY
+    match /product-analysis/{userId}/{imageId} {
+      allow read: if request.auth != null && 
+                     (request.auth.uid == userId || isAdmin());
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
     // Deny all other paths by default
     match /{allPaths=**} {
       allow read, write: if false;

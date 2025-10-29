@@ -939,11 +939,18 @@ export async function setSpecialHours(
   // Check if special hours already exist for this date
   const existing = await getSpecialHoursForDate(db, input.date);
   
+  // Convert ranges array to Firestore-compatible format
+  const rangesForFirestore = input.ranges.map((range, index) => ({
+    start: range[0],
+    end: range[1],
+    index: index
+  }));
+
   if (existing) {
     // Update existing
     const ref = doc(db, 'specialHours', existing.id);
     await updateDoc(ref, {
-      ranges: input.ranges,
+      ranges: rangesForFirestore,
       reason: input.reason,
       modifiedBy: input.modifiedBy,
       modifiedAt: input.modifiedAt,
@@ -954,7 +961,11 @@ export async function setSpecialHours(
     // Create new
     const ref = doc(collection(db, 'specialHours'));
     await setDoc(ref, {
-      ...input,
+      date: input.date,
+      ranges: rangesForFirestore,
+      reason: input.reason,
+      modifiedBy: input.modifiedBy,
+      modifiedAt: input.modifiedAt,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -982,7 +993,18 @@ export async function getSpecialHoursForDate(db: Firestore, date: string): Promi
   const snap = await getDocs(q);
   if (snap.empty) return null;
   const doc = snap.docs[0];
-  return { id: doc.id, ...(doc.data() as any) };
+  const data = doc.data() as any;
+  
+  // Convert Firestore ranges format back to [string, string][] format
+  const ranges: [string, string][] = data.ranges
+    ?.sort((a: any, b: any) => a.index - b.index)
+    ?.map((range: any) => [range.start, range.end]) || [];
+  
+  return { 
+    id: doc.id, 
+    ...data,
+    ranges: ranges
+  };
 }
 
 /**
@@ -995,7 +1017,20 @@ export function watchSpecialHours(
   const q = query(collection(db, 'specialHours'), orderBy('date', 'asc'));
   return onSnapshot(q, (snap) => {
     const specialHours: SpecialHours[] = [];
-    snap.forEach((d) => specialHours.push({ id: d.id, ...(d.data() as any) }));
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      // Convert Firestore ranges format back to [string, string][] format
+      const ranges: [string, string][] = data.ranges
+        ?.sort((a: any, b: any) => a.index - b.index)
+        ?.map((range: any) => [range.start, range.end]) || [];
+      
+      specialHours.push({ 
+        id: d.id, 
+        ...data,
+        ranges: ranges
+      });
+    });
+    console.log('[watchSpecialHours] Received special hours:', specialHours);
     cb(specialHours);
   });
 }

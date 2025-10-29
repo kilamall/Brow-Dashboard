@@ -152,9 +152,10 @@ export interface Appointment {
   duration: number; // minutes
   status: 'confirmed'|'pending'|'cancelled'|'completed'|'no-show';
   notes?: string;
-  bookedPrice?: number;
+  bookedPrice?: number; // Legacy field - total price for all services
+  servicePrices?: Record<string, number>; // Individual prices per service ID for multi-service appointments
   tip?: number; // Tip amount added by admin
-  totalPrice?: number; // Calculated total (bookedPrice + tip)
+  totalPrice?: number; // Calculated total (sum of servicePrices + tip, or bookedPrice + tip for legacy)
   isPriceEdited?: boolean; // Flag to indicate if price was manually edited
   priceEditedAt?: string; // When the price was last edited
   priceEditedBy?: string; // Who edited the price
@@ -332,6 +333,19 @@ analysis: {
   detailedReport?: string; // Comprehensive report text
 };
 status: 'pending' | 'completed' | 'error';
+linkedProductAnalysisId?: string;
+recommendedProducts?: string[]; // IDs from monetizedProducts
+monetizationData?: {
+  conversionTracking?: {
+    recommendationsSent: number;
+    clicks: number;
+    purchases: number;
+    revenue: number;
+    lastRecommendationSent?: Date;
+  };
+  aiFeedingScore?: number; // 0-100
+  crossReferenceSuccess?: boolean;
+};
 createdAt: any;
 updatedAt?: any;
 }
@@ -394,4 +408,50 @@ needsRenewal?: boolean; // Flag when consent form is updated
 appointmentId?: ID; // If consent was given during booking
 createdAt: any;
 updatedAt?: any;
+}
+
+// Monetization Infrastructure Types
+export interface MonetizedProduct {
+  id: string;
+  name: string;
+  brand: string;
+  category: string; // cleanser, serum, moisturizer, sunscreen, etc.
+  price: number;
+  commission: number; // percentage or fixed amount
+  affiliateLink: string;
+  imageUrl?: string;
+  description?: string;
+  targetSkinTypes: string[]; // dry, oily, combination, sensitive
+  targetConcerns: string[]; // acne, aging, hyperpigmentation, etc.
+  activeIngredients?: string[];
+  compatibilityScore: number; // 1-10 rating
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ConversionTracking {
+  id: string;
+  customerId: string;
+  analysisId: string;
+  productId: string;
+  recommendationSent: Date;
+  linkClicked?: Date;
+  purchaseCompleted?: Date;
+  revenue: number;
+  commission: number;
+  status: 'sent' | 'clicked' | 'purchased' | 'expired';
+  metadata?: {
+    clickSource?: string;
+    deviceType?: string;
+    referralData?: any;
+  };
+}
+
+export interface ProductRecommendation {
+  productId: string;
+  product: MonetizedProduct;
+  compatibilityScore: number;
+  reason: string;
+  category: string;
 }

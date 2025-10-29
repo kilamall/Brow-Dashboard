@@ -1,4 +1,5 @@
-import type { BusinessHours } from './types';
+import type { BusinessHours, DayClosure, SpecialHours } from './types';
+import { getEffectiveHoursForDate } from './slotUtils';
 
 /**
  * Format business hours for display in a user-friendly way
@@ -124,5 +125,37 @@ export function isBusinessCurrentlyOpen(businessHours: BusinessHours | null): bo
 
   // Check if current time falls within any of the ranges
   return ranges.some(([start, end]) => currentTime >= start && currentTime <= end);
+}
+
+/**
+ * Format business hours for display considering special hours and closures
+ */
+export function formatBusinessHoursForDateWithSpecialHours(
+  date: Date, 
+  businessHours: BusinessHours | null,
+  closures: DayClosure[] = [],
+  specialHours: SpecialHours[] = []
+): string {
+  if (!businessHours) {
+    return 'Business hours not available';
+  }
+
+  // Get effective hours (considering special hours and closures)
+  const effectiveHours = getEffectiveHoursForDate(date, businessHours, closures, specialHours);
+  
+  if (!effectiveHours || effectiveHours.length === 0) {
+    return 'Closed';
+  }
+
+  // Format the hours for display
+  const formattedHours = effectiveHours
+    .map(([start, end]) => {
+      const startTime = formatTime(start);
+      const endTime = formatTime(end);
+      return `${startTime} - ${endTime}`;
+    })
+    .join(', ');
+
+  return formattedHours;
 }
 

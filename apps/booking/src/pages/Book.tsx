@@ -3,18 +3,20 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import SEO from '../components/SEO';
-import type { Appointment, BusinessHours, Service, ConsentFormTemplate } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Service, ConsentFormTemplate, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 import {
   watchServices,
   watchBusinessHours,
+  watchDayClosures,
+  watchSpecialHours,
   findCustomerByEmail,
   createCustomer,
 } from '@buenobrows/shared/firestoreActions';
-import { availableSlotsFromAvailability } from '@buenobrows/shared/slotUtils';
+import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { watchAvailabilityByDay } from '@buenobrows/shared/availabilityHelpers';
-import { isValidBookingDate, getNextValidBookingDate, getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
-import { formatBusinessHoursForDate, isBusinessCurrentlyOpen } from '@buenobrows/shared/businessHoursFormatter';
+import { isValidBookingDate, isValidBookingDateWithSpecialHours, getNextValidBookingDate, getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
+import { formatBusinessHoursForDate, formatBusinessHoursForDateWithSpecialHours, isBusinessCurrentlyOpen } from '@buenobrows/shared/businessHoursFormatter';
 
 import {
   createSlotHoldClient,
@@ -76,6 +78,8 @@ export default function Book() {
   const [servicesError, setServicesError] = useState<string | null>(null);
   const [bh, setBh] = useState<BusinessHours | null>(null);
   const [bhError, setBhError] = useState<string | null>(null);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
   
   // Verification settings
   const [verificationSettings, setVerificationSettings] = useState<{
@@ -122,6 +126,23 @@ export default function Book() {
       setBhError('Unable to load booking schedule. Please refresh the page.');
     }
   }, [db]);
+
+  // Load closures and special hours
+  useEffect(() => {
+    if (!db) return;
+    const unsubClosures = watchDayClosures(db, setClosures);
+    const unsubSpecialHours = watchSpecialHours(db, setSpecialHours);
+    return () => {
+      unsubClosures();
+      unsubSpecialHours();
+    };
+  }, [db]);
+
+  // Debug logging for closures and special hours
+  useEffect(() => {
+    console.log('[Book] Closures loaded:', closures);
+    console.log('[Book] Special hours loaded:', specialHours);
+  }, [closures, specialHours]);
 
   // Load verification settings
   useEffect(() => {
@@ -292,19 +313,24 @@ export default function Book() {
         return [];
       }
       
-      const availableSlots = availableSlotsFromAvailability(dayDate, totalDuration, bh, bookedSlots);
-      console.log(`Calculated ${availableSlots.length} available slots (${bookedSlots.length} booked slots)`);
-      console.log('Booked slots:', bookedSlots.map(s => ({ start: s.start, end: s.end, status: s.status })));
-      console.log('Available slots:', availableSlots);
-      console.log('Day date:', dayDate.toISOString());
-      console.log('Total duration:', totalDuration);
+      console.log('[Book] Calculating slots for date:', dayDate.toISOString());
+      console.log('[Book] Business hours:', bh);
+      console.log('[Book] Closures:', closures);
+      console.log('[Book] Special hours:', specialHours);
+      console.log('[Book] Booked slots:', bookedSlots.length);
+      
+      const availableSlots = availableSlotsForDay(dayDate, totalDuration, bh, bookedSlots, closures, specialHours);
+      console.log(`[Book] Calculated ${availableSlots.length} available slots (${bookedSlots.length} booked slots)`);
+      console.log('[Book] Available slots:', availableSlots);
+      console.log('[Book] Day date:', dayDate.toISOString());
+      console.log('[Book] Total duration:', totalDuration);
       
       return availableSlots.map((startISO) => ({
         startISO,
         resourceId: null,
       }));
     },
-    [bh, selectedServices, totalDuration, bookedSlots, dayDate]
+    [bh, selectedServices, totalDuration, bookedSlots, dayDate, closures, specialHours]
   );
 
   // ---------- Hold state (server-backed) ----------
@@ -544,11 +570,11 @@ export default function Book() {
       // Don't treat this as a fatal error
       if (e?.message?.includes('409') || e?.code === 409 || e?.message === 'E_OVERLAP') {
         console.log('❌ Time slot conflict - slot is already held or booked');
-        setError('This time is no longer available. Please select another time.');
+        setError('This time slot is no longer available. Please wait a moment before selecting another time, or try a different slot.');
         setChosen(null);
       } else if (e?.message?.includes('Too many requests')) {
         console.log('🚫 Rate limited - too many hold creation attempts');
-        setError('Please wait a moment before trying again.');
+        setError('Please wait a moment before selecting another time. You\'re creating holds too quickly.');
         setChosen(null);
       } else {
         setError(e?.message || 'Failed to hold slot. Please try again.');
@@ -687,6 +713,7 @@ export default function Book() {
 
   // ---------- Guest form ----------
   const [guestOpen, setGuestOpen] = useState(false);
+  const [userManuallyClosed, setUserManuallyClosed] = useState(false);
   const [gName, setGName] = useState(locationState?.prefillCustomer?.name || '');
   const [gEmail, setGEmail] = useState(locationState?.prefillCustomer?.email || '');
   const [gPhone, setGPhone] = useState(locationState?.prefillCustomer?.phone || '');
@@ -759,11 +786,12 @@ export default function Book() {
         setPhoneVerified(true);
       }
       // Auto-open form for authenticated users when they have a hold
-      if (hold && !guestOpen) {
+      // But only if the user hasn't manually closed it
+      if (hold && !guestOpen && !userManuallyClosed) {
         setGuestOpen(true);
       }
     }
-  }, [user, gName, gEmail, gPhone, hold, guestOpen]);
+  }, [user, gName, gEmail, gPhone, hold, guestOpen, userManuallyClosed]);
 
   // Check for existing customer when email is entered (debounced)
   useEffect(() => {
@@ -1190,7 +1218,7 @@ export default function Book() {
       nav(`/confirmation?id=${encodeURIComponent(out.appointmentId)}`);
     } catch (e: any) {
       console.error('finalizeBooking error:', e);
-      setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to finalize booking.');
+      setError(e?.message === 'E_OVERLAP' ? 'This time slot is no longer available. Please wait a moment before selecting another time, or try a different slot.' : e?.message || 'Failed to finalize booking.');
       // try to free the hold
       try {
         if (hold) await releaseHoldClient(hold.id);
@@ -1276,7 +1304,7 @@ export default function Book() {
       await proceedWithBooking(custId);
     } catch (e: any) {
       console.error('finalizeBooking error:', e);
-      setError(e?.message === 'E_OVERLAP' ? 'This time is no longer available.' : e?.message || 'Failed to finalize booking.');
+      setError(e?.message === 'E_OVERLAP' ? 'This time slot is no longer available. Please wait a moment before selecting another time, or try a different slot.' : e?.message || 'Failed to finalize booking.');
       // try to free the hold
       try {
         if (hold) await releaseHoldClient(hold.id);
@@ -1563,11 +1591,11 @@ export default function Book() {
                 })}
               </div>
               <div className="text-slate-600">
-                {isValidBookingDate(dayDate, bh) ? (
+                {isValidBookingDateWithSpecialHours(dayDate, bh, closures, specialHours) ? (
                   <>
                     <span className="inline-flex items-center gap-1">
                       <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Open: {formatBusinessHoursForDate(dayDate, bh)}
+                      Open: {formatBusinessHoursForDateWithSpecialHours(dayDate, bh, closures, specialHours)}
                     </span>
                     {dayDate.toDateString() === new Date().toDateString() && isBusinessCurrentlyOpen(bh) && (
                       <span className="ml-2 text-green-600 font-medium">• Currently Open</span>
@@ -1760,7 +1788,7 @@ export default function Book() {
                 <p className="text-sm">
                   {!bh ? 'Loading availability...' : 
                    selectedServices.length === 0 ? 'Please select at least one service first' :
-                   !isValidBookingDate(dayDate, bh) ? (
+                   !isValidBookingDateWithSpecialHours(dayDate, bh, closures, specialHours) ? (
                      <>
                        <span className="text-red-600">Sorry, we are closed on this date.</span>
                        {(() => {
@@ -1898,7 +1926,7 @@ export default function Book() {
                     <button
                       className="rounded-xl border border-terracotta/60 px-4 py-2 text-terracotta disabled:opacity-60 hover:bg-terracotta/10"
                       onClick={() => setGuestOpen((x) => !x)}
-                      disabled={!hold || holdExpired}
+                      disabled={!hold}
                     >
                       Book as guest
                     </button>
@@ -1906,8 +1934,20 @@ export default function Book() {
                 ) : (
                   <button
                     className="rounded-xl bg-terracotta px-4 py-2 text-white disabled:opacity-60 hover:bg-terracotta/90"
-                    onClick={() => setGuestOpen((x) => !x)}
-                    disabled={!hold || holdExpired}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('🔍 Hide details button clicked:', { guestOpen, hold: !!hold, holdExpired });
+                      if (guestOpen) {
+                        setUserManuallyClosed(true);
+                        setGuestOpen(false);
+                      } else {
+                        setUserManuallyClosed(false);
+                        setGuestOpen(true);
+                      }
+                    }}
+                    disabled={!hold}
+                    style={{ pointerEvents: 'auto', zIndex: 10 }}
                   >
                     {guestOpen ? 'Hide details' : 'Review & Book'}
                   </button>

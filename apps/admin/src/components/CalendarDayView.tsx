@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { format, startOfDay, addHours, isSameHour, isWithinInterval } from 'date-fns';
-import type { Appointment, Service, ServiceCategory } from '@buenobrows/shared/types';
+import type { Appointment, Service, ServiceCategory, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchServiceCategories } from '@buenobrows/shared/firestoreActions';
 
@@ -8,11 +8,14 @@ interface Props {
   date: Date;
   appointments: Appointment[];
   services: Record<string, Service>;
+  businessHours: BusinessHours | null;
+  closures: DayClosure[];
+  specialHours: SpecialHours[];
   onAppointmentClick: (appointment: Appointment) => void;
   onTimeSlotClick: (time: Date) => void;
 }
 
-export default function CalendarDayView({ date, appointments, services, onAppointmentClick, onTimeSlotClick }: Props) {
+export default function CalendarDayView({ date, appointments, services, businessHours, closures, specialHours, onAppointmentClick, onTimeSlotClick }: Props) {
   const { db } = useFirebase();
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [dragStart, setDragStart] = useState<{ appointment: Appointment; offsetY: number } | null>(null);

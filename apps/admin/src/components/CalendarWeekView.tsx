@@ -204,7 +204,8 @@ export default function CalendarWeekView({
         </table>
 
         {/* Appointments Overlay - Positioned relative to table body */}
-        <div className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ top: '64px' }}>
+        {/* Note: The header is approximately 64px tall. If appointments appear offset, adjust this value. */}
+        <div className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ top: '63.5px' }}>
           {weekDays.map((day, dayIndex) => {
             const dayAppointments = getAppointmentsForDay(day);
             

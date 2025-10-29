@@ -122,6 +122,24 @@ export async function createCustomerUniqueClient(data: {
   return await createCustomerUnique(data);
 }
 
+// Run canonical fields migration (admin only)
+export async function runCanonicalFieldsMigrationClient() {
+  const { app } = initFirebase();
+  const { getFunctions, httpsCallable } = await import('firebase/functions');
+  const functions = getFunctions(app, 'us-central1');
+  const runMigration = httpsCallable(functions, 'runCanonicalFieldsMigration');
+  return await runMigration();
+}
+
+// Merge customers (admin only)
+export async function mergeCustomersClient(survivorId: string, duplicateId: string) {
+  const { app } = initFirebase();
+  const { getFunctions, httpsCallable } = await import('firebase/functions');
+  const functions = getFunctions(app, 'us-central1');
+  const mergeCustomers = httpsCallable(functions, 'mergeCustomers');
+  return await mergeCustomers({ survivorId, duplicateId });
+}
+
 // Create custom consent form (admin only)
 export async function createCustomConsentFormClient(data: {
   name: string;

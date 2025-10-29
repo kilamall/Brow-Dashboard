@@ -16,6 +16,8 @@ import SkinAnalyses from './pages/SkinAnalyses';
 import ConsentForms from './pages/ConsentForms';
 import PastAppointments from './pages/PastAppointments';
 import CostMonitoring from './pages/CostMonitoring';
+import MonetizedProducts from './pages/MonetizedProducts';
+import MonetizationAnalytics from './pages/MonetizationAnalytics';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -47,6 +49,8 @@ export default function App() {
               <Route path="/consent-forms" element={<ConsentForms />} />
               <Route path="/past-appointments" element={<PastAppointments />} />
               <Route path="/cost-monitoring" element={<CostMonitoring />} />
+              <Route path="/monetized-products" element={<MonetizedProducts />} />
+              <Route path="/monetization-analytics" element={<MonetizationAnalytics />} />
               <Route path="/settings" element={<Settings />} />
 
               {/* Catch-all */}

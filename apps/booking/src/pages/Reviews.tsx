@@ -14,6 +14,7 @@ interface Review {
   serviceName?: string;
   createdAt: any;
   isApproved?: boolean;
+  isFeatured?: boolean;
 }
 
 export default function Reviews() {

@@ -3,7 +3,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-// import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
+import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -24,8 +24,8 @@ function normalizeEmail(email: string): string {
 export const createCustomerUnique = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
-    // SECURITY: Rate limit customer creation (10 per hour per IP/user) - temporarily disabled for testing
-    // await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
+    // SECURITY: Rate limit customer creation (10 per hour per IP/user)
+    await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
 
     const { name, email, phone, profilePictureUrl, notes, authUid } = req.data || {};
     

@@ -1,4 +1,4 @@
-import { getAnalytics, logEvent } from 'firebase/analytics';
+import { getAnalytics, logEvent, isSupported as isAnalyticsSupported } from 'firebase/analytics';
 
 /**
  * Error categories for tracking and custom messaging
@@ -70,31 +70,66 @@ export class AppError extends Error {
  */
 export function logErrorToFirebase(error: Error | AppError, additionalContext?: Record<string, any>) {
   try {
-    const analytics = getAnalytics();
-    
-    const errorData: Record<string, any> = {
-      error_name: error.name,
-      error_message: error.message,
-      error_stack: error.stack?.substring(0, 500), // Truncate stack trace
-      timestamp: new Date().toISOString(),
-      ...additionalContext
-    };
+    // Check if Analytics is supported before attempting to use it
+    if (typeof window !== 'undefined') {
+      isAnalyticsSupported().then((supported) => {
+        if (supported) {
+          try {
+            const analytics = getAnalytics();
+            
+            const errorData: Record<string, any> = {
+              error_name: error.name,
+              error_message: error.message,
+              error_stack: error.stack?.substring(0, 500), // Truncate stack trace
+              timestamp: new Date().toISOString(),
+              ...additionalContext
+            };
 
-    if (error instanceof AppError) {
-      errorData.category = error.category;
-      errorData.user_message = error.userMessage;
-      errorData.context = JSON.stringify(error.context || {});
-    }
+            if (error instanceof AppError) {
+              errorData.category = error.category;
+              errorData.user_message = error.userMessage;
+              errorData.context = JSON.stringify(error.context || {});
+            }
 
-    logEvent(analytics, 'app_error', errorData);
-    
-    // Also log to console in development
-    if (import.meta.env.DEV) {
-      console.error('AppError logged:', errorData);
+            logEvent(analytics, 'app_error', errorData);
+            
+            // Also log to console in development
+            if (import.meta.env.DEV) {
+              console.error('AppError logged to Analytics:', errorData);
+            }
+          } catch (analyticsError) {
+            console.warn('Failed to log to Analytics:', analyticsError);
+          }
+        } else {
+          // Log to console when Analytics is not supported
+          if (import.meta.env.DEV) {
+            console.error('AppError (Analytics not supported):', {
+              error_name: error.name,
+              error_message: error.message,
+              error_stack: error.stack?.substring(0, 500),
+              timestamp: new Date().toISOString(),
+              ...additionalContext
+            });
+          }
+        }
+      }).catch((supportCheckError) => {
+        console.warn('Analytics support check failed:', supportCheckError);
+      });
+    } else {
+      // Server-side or no window object
+      if (import.meta.env.DEV) {
+        console.error('AppError (no window):', {
+          error_name: error.name,
+          error_message: error.message,
+          error_stack: error.stack?.substring(0, 500),
+          timestamp: new Date().toISOString(),
+          ...additionalContext
+        });
+      }
     }
   } catch (loggingError) {
     // Don't let logging errors break the app
-    console.error('Failed to log error to Firebase:', loggingError);
+    console.error('Failed to log error:', loggingError);
   }
 }
 

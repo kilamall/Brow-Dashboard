@@ -5,7 +5,12 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
-try { initializeApp(); } catch {}
+// Initialize with explicit project ID
+try { 
+  initializeApp({ 
+    projectId: 'bueno-brows-7cce7' 
+  }); 
+} catch {}
 const db = getFirestore();
 
 // Normalize phone to E.164 format for consistent querying

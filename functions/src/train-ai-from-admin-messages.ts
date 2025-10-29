@@ -4,12 +4,12 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { defineSecret } from 'firebase-functions/params';
+
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
-
-// Get Gemini API key from Firebase config
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 interface TrainingMessage {
   customerMessage: string;
@@ -244,7 +244,7 @@ Remember: Stay in character, match the admin's style, and flag anything outside 
  * Main training function - callable by admin
  */
 export const trainAIFromAdminMessages = onCall(
-  { region: 'us-central1', cors: true, memory: '1GiB', timeoutSeconds: 540 },
+  { region: 'us-central1', cors: true, memory: '1GiB', timeoutSeconds: 540, secrets: [geminiApiKey] },
   async (req) => {
     // SECURITY: Require admin role
     if (!req.auth) {
