@@ -3,8 +3,14 @@ const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
+  // Use environment variables or service account key file
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY 
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)
+    : require('./path/to/serviceAccountKey.json'); // Update this path
+  
   admin.initializeApp({
-    projectId: 'bueno-brows-7cce7'
+    credential: admin.credential.cert(serviceAccount),
+    projectId: process.env.FIREBASE_PROJECT_ID || 'bueno-brows-7cce7'
   });
 }
 
