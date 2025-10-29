@@ -14,7 +14,7 @@ interface CustomerProfileProps {
 
 export default function CustomerProfile({ customer, onClose, db }: CustomerProfileProps) {
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'bookings' | 'payments' | 'communications' | 'analytics'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'bookings' | 'payments' | 'receipts' | 'communications' | 'analytics'>('overview');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -206,6 +206,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
     { id: 'overview', label: 'Overview', icon: '👤' },
     { id: 'bookings', label: 'Bookings', icon: '📅' },
     { id: 'payments', label: 'Payments', icon: '💰' },
+    { id: 'receipts', label: 'Receipts', icon: '📄' },
     { id: 'communications', label: 'Messages', icon: '💬' },
     { id: 'analytics', label: 'Analytics', icon: '📊' }
   ];
@@ -373,6 +374,23 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                           </span>
                         </div>
                       </div>
+                      {appointment.receiptUrl && (
+                        <div className="mt-2">
+                          <a 
+                            href={appointment.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-sm text-terracotta hover:text-terracotta/80 hover:underline"
+                          >
+                            📄 View Receipt
+                          </a>
+                          {appointment.receiptGeneratedAt && (
+                            <span className="ml-2 text-xs text-slate-500">
+                              Generated {new Date(appointment.receiptGeneratedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {appointment.notes && (
                         <div className="mt-2 text-sm text-slate-600">
                           <span className="font-medium">Notes:</span> {appointment.notes}
@@ -436,6 +454,95 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'receipts' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-slate-800">Receipts</h3>
+              <div className="text-sm text-slate-600 mb-4">
+                All receipts for completed appointments are automatically generated and stored here.
+              </div>
+              
+              {(() => {
+                const receiptsWithData = appointments
+                  .filter(apt => apt.status === 'completed' && apt.receiptUrl)
+                  .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+                
+                if (receiptsWithData.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-500">
+                      <div className="text-4xl mb-2">📄</div>
+                      <p className="text-sm">No receipts available yet</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Receipts are automatically generated when appointments are marked as attended
+                      </p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div className="space-y-3">
+                    {receiptsWithData.map((appointment) => {
+                      const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [appointment.serviceId];
+                      const serviceNames = serviceIds.map((serviceId: string) => {
+                        const service = services.find(s => s.id === serviceId);
+                        return service?.name || 'Unknown Service';
+                      }).join(', ');
+                      
+                      return (
+                        <div key={appointment.id} className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h4 className="font-medium text-slate-900">
+                                  Receipt #{appointment.receiptNumber || `RCP-${appointment.id.substring(0, 8).toUpperCase()}`}
+                                </h4>
+                                <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
+                                  Completed
+                                </span>
+                              </div>
+                              
+                              <div className="grid grid-cols-2 gap-4 text-sm text-slate-600">
+                                <div>
+                                  <span className="font-medium">Date:</span> {new Date(appointment.start).toLocaleDateString()}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Time:</span> {new Date(appointment.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Services:</span> {serviceNames}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Total:</span> ${appointment.totalPrice || appointment.bookedPrice || 0}
+                                </div>
+                              </div>
+                              
+                              {appointment.receiptGeneratedAt && (
+                                <div className="text-xs text-slate-500 mt-2">
+                                  Generated: {new Date(appointment.receiptGeneratedAt).toLocaleString()}
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="flex items-center gap-2 ml-4">
+                              <a
+                                href={appointment.receiptUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors text-sm"
+                              >
+                                <span>📄</span>
+                                View Receipt
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

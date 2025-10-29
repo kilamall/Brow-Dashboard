@@ -52,6 +52,7 @@ export * from './guest-verification.js';
 export * from './mark-attendance.js';
 export * from './post-service-receipt.js';
 export * from './auto-attend-scheduler.js';
+export * from './generate-receipt.js';
 export * from './close-shop.js';
 export * from './cleanup-edit-requests.js';
 export * from './cost-monitoring.js';

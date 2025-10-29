@@ -187,6 +187,11 @@ export interface Appointment {
   attendanceOverrideReason?: string;
   attendanceOverriddenAt?: string;
   attendanceOverriddenBy?: string;
+  
+  // Receipt fields
+  receiptUrl?: string;
+  receiptGeneratedAt?: string;
+  receiptNumber?: string; // For display purposes
 }
 
 export interface AppointmentEditRequest {

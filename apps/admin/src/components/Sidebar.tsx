@@ -68,6 +68,25 @@ export default function Sidebar() {
   const [closures, setClosures] = useState<DayClosure[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  // Load collapsed state from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('admin-sidebar-collapsed');
+    if (saved) {
+      try {
+        const collapsedArray = JSON.parse(saved);
+        setCollapsedGroups(new Set(collapsedArray));
+      } catch (error) {
+        console.error('Error loading collapsed state:', error);
+      }
+    }
+  }, []);
+
+  // Save collapsed state to localStorage
+  useEffect(() => {
+    localStorage.setItem('admin-sidebar-collapsed', JSON.stringify(Array.from(collapsedGroups)));
+  }, [collapsedGroups]);
 
   // Watch day closures
   useEffect(() => {
@@ -78,6 +97,18 @@ export default function Sidebar() {
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const isTodayClosed = closures.some(c => c.date === today);
+
+  const toggleGroup = (groupLabel: string) => {
+    setCollapsedGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupLabel)) {
+        newSet.delete(groupLabel);
+      } else {
+        newSet.add(groupLabel);
+      }
+      return newSet;
+    });
+  };
 
   const showMessage = (text: string, type: 'success' | 'error') => {
     setMessage({ text, type });
@@ -150,23 +181,70 @@ export default function Sidebar() {
       
       {/* Navigation Groups */}
       <nav className="space-y-6 flex-1">
-        {navGroups.map((group, groupIndex) => (
-          <div key={group.label}>
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-3">
-              {group.label}
-            </h3>
-            <div className="space-y-1">
-              {group.items.map((item) => (
-                <LinkItem
-                  key={item.to}
-                  to={item.to}
-                  icon={item.icon}
-                  label={item.label}
-                />
-              ))}
+        {navGroups.map((group, groupIndex) => {
+          const isCollapsed = collapsedGroups.has(group.label);
+          const isOverview = group.label === 'Overview';
+          
+          return (
+            <div key={group.label}>
+              {isOverview ? (
+                // Overview group is always expanded
+                <>
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-3">
+                    {group.label}
+                  </h3>
+                  <div className="space-y-1">
+                    {group.items.map((item) => (
+                      <LinkItem
+                        key={item.to}
+                        to={item.to}
+                        icon={item.icon}
+                        label={item.label}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                // Other groups are collapsible
+                <>
+                  <button
+                    onClick={() => toggleGroup(group.label)}
+                    className="flex items-center justify-between w-full px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 transition-colors"
+                  >
+                    <span>{group.label}</span>
+                    <svg
+                      className={`w-4 h-4 transition-transform duration-200 ${
+                        isCollapsed ? 'rotate-0' : 'rotate-90'
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="space-y-1">
+                      {group.items.map((item) => (
+                        <LinkItem
+                          key={item.to}
+                          to={item.to}
+                          icon={item.icon}
+                          label={item.label}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Shop Status Section */}

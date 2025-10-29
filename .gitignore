@@ -87,6 +87,13 @@ set-admin*.js
 create-admin*.js
 reset-*.js
 
+# Security - Files with hardcoded API keys
+*clear*.js
+*debug*.html
+*test*.js
+*configure*.js
+*cleanup*.js
+
 # dataconnect generated files
 .dataconnect
 dist/

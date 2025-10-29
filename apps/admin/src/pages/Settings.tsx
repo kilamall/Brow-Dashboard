@@ -24,8 +24,9 @@ import BusinessHoursManager from '../components/BusinessHoursManager';
 import AITrainingPanel from '../components/AITrainingPanel';
 import CostMonitoringSettings from '../components/CostMonitoringSettings';
 import MediaGalleryManager from '../components/MediaGalleryManager';
+import EmailTemplatesManager from '../components/EmailTemplatesManager';
 
-type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring';
+type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring' | 'emailtemplates';
 
 export default function Settings() {
   const { db, app } = useFirebase();
@@ -41,7 +42,7 @@ export default function Settings() {
   useEffect(() => {
     const savedTab = localStorage.getItem('settingsActiveTab');
     if (savedTab) {
-      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining', 'costmonitoring'];
+      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining', 'costmonitoring', 'emailtemplates'];
       if (validTabs.includes(savedTab as Tab)) {
         setActiveTab(savedTab as Tab);
       }
@@ -119,6 +120,7 @@ export default function Settings() {
     { id: 'adminemail', label: 'Admin Notifications', icon: '📧' },
     { id: 'aitraining', label: 'AI Messaging', icon: '🤖' },
     { id: 'costmonitoring', label: 'Cost Monitoring', icon: '💰' },
+    { id: 'emailtemplates', label: 'Email Templates', icon: '📝' },
     { id: 'datamanagement', label: 'Data Management', icon: '🗄️' }
   ];
 
@@ -240,6 +242,10 @@ export default function Settings() {
 
         {activeTab === 'costmonitoring' && (
           <CostMonitoringSettings />
+        )}
+
+        {activeTab === 'emailtemplates' && (
+          <EmailTemplatesManager />
         )}
 
         {activeTab === 'datamanagement' && (

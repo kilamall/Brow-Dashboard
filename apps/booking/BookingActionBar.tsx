@@ -148,6 +148,15 @@ export default function BookingActionBar({
   // Expired hold guard
   const holdExpired = hold ? Date.now() >= new Date(hold.expiresAt).getTime() : false;
 
+  // Cancel delay function
+  function cancelDelay() {
+    if (delayTimerRef.current) {
+      clearInterval(delayTimerRef.current);
+      delayTimerRef.current = null;
+    }
+    setStatus('idle');
+    setDelayRemaining(0);
+  }
 
   async function handleVerifyAndBookNow() {
     if (!hold || holdExpired) return;
@@ -191,14 +200,22 @@ export default function BookingActionBar({
     return (
       <div className={className}>
         <div className="mt-4 rounded-2xl border border-blue-300 bg-blue-50 p-4">
-          <div className="text-center">
-            <div className="text-sm text-blue-700">Preparing to hold your slot</div>
-            <div className="font-serif text-lg">
-              {service.name} • {prettyTime}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm text-blue-700">Preparing to hold your slot</div>
+              <div className="font-serif text-lg">
+                {service.name} • {prettyTime}
+              </div>
+              <div className="text-xs text-blue-600">
+                Hold will start in {delaySeconds} second{delaySeconds !== 1 ? 's' : ''}
+              </div>
             </div>
-            <div className="text-xs text-blue-600">
-              Hold will start in {delaySeconds} second{delaySeconds !== 1 ? 's' : ''}
-            </div>
+            <button
+              className="rounded-xl px-4 py-2 border border-blue-300 text-blue-700 hover:bg-blue-100"
+              onClick={cancelDelay}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       </div>
