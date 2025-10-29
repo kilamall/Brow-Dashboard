@@ -8,6 +8,7 @@ import SEO from '../components/SEO';
 import MyBookingsCard from '../components/MyBookingsCard';
 import CircularPhotoSlideshow from '../components/CircularPhotoSlideshow';
 import { doc, getDoc, collection, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
+import { watchPublicConfig } from '@buenobrows/shared/publicConfig';
 
 interface Review {
   id: string;
@@ -29,6 +30,7 @@ export default function Home() {
   const [aboutPhotos, setAboutPhotos] = useState<any[]>([]);
   const [galleryPhotos, setGalleryPhotos] = useState<any[]>([]);
   const [featuredReviews, setFeaturedReviews] = useState<Review[]>([]);
+  const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
 
   // Load photos from media gallery
   useEffect(() => {
@@ -140,6 +142,16 @@ export default function Home() {
   useEffect(() => {
     const unsubscribe = watchHomePageContent(db, (content) => {
       setContent(content);
+    });
+    return unsubscribe;
+  }, [db]);
+
+  // Load public config (Google Maps key) at runtime with env fallback
+  useEffect(() => {
+    const unsubscribe = watchPublicConfig(db, (cfg) => {
+      const fromConfig = cfg?.googleMapsKey?.trim();
+      const fromEnv = (import.meta as any)?.env?.VITE_GOOGLE_MAPS_API_KEY?.trim();
+      setMapsApiKey(fromConfig || fromEnv || null);
     });
     return unsubscribe;
   }, [db]);
@@ -436,7 +448,7 @@ export default function Home() {
           <div className="h-64 md:h-auto order-2 md:order-1">
             <iframe
               title="Business Location"
-              src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(`${businessInfo.address}, ${businessInfo.city}, ${businessInfo.state} ${businessInfo.zip}`)}`}
+              src={mapsApiKey ? `https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${encodeURIComponent(`${businessInfo.address}, ${businessInfo.city}, ${businessInfo.state} ${businessInfo.zip}`)}` : undefined}
               width="100%"
               height="100%"
               style={{ border: 0, minHeight: '256px' }}
