@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, orderBy, onSnapshot, where, addDoc, updateDoc, doc, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, where, addDoc, updateDoc, doc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { formatMessageTime } from '@buenobrows/shared/messaging';
 import type { Message } from '@buenobrows/shared/messaging';
@@ -167,6 +167,43 @@ export default function Messages() {
     }
   };
 
+  const markAllAsReadNow = async () => {
+    if (!selectedConversation) return;
+    try {
+      await markAsRead(selectedConversation.customerId);
+      setConversations(prev => prev.map(c => c.customerId === selectedConversation.customerId ? { ...c, unreadCount: 0 } : c));
+    } catch (e) {
+      console.error('Mark all read failed:', e);
+    }
+  };
+
+  const deleteConversation = async () => {
+    if (!selectedConversation) return;
+    const confirmDelete = confirm('Delete this entire conversation and all messages? This cannot be undone.');
+    if (!confirmDelete) return;
+    try {
+      const customerId = selectedConversation.customerId;
+      // Delete messages in batches
+      const q = query(
+        collection(db, 'messages'),
+        where('customerId', '==', customerId)
+      );
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(doc(db, 'messages', d.id)));
+      await batch.commit();
+      // Delete conversation doc
+      await deleteDoc(doc(db, 'conversations', customerId));
+      // Update UI
+      setSelectedConversation(null);
+      setMessages([]);
+      setConversations(prev => prev.filter(c => c.customerId !== customerId));
+    } catch (e) {
+      console.error('Delete conversation failed:', e);
+      alert('Failed to delete conversation.');
+    }
+  };
+
   const filteredConversations = conversations.filter(conv => {
     if (filter === 'all') return true;
     if (filter === 'active') return conv.status === 'active';
@@ -287,6 +324,20 @@ export default function Messages() {
                   <p className="text-sm text-gray-600">{selectedConversation.customerEmail}</p>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    onClick={markAllAsReadNow}
+                    className="px-3 py-1 rounded-md text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    title="Mark all as read"
+                  >
+                    Mark Read
+                  </button>
+                  <button
+                    onClick={deleteConversation}
+                    className="px-3 py-1 rounded-md text-sm bg-red-600 text-white hover:bg-red-700"
+                    title="Delete conversation"
+                  >
+                    Delete
+                  </button>
                   <button
                     onClick={() => updateConversationStatus('active')}
                     className={`px-3 py-1 rounded-md text-sm ${
