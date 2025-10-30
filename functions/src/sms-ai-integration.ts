@@ -41,7 +41,7 @@ const BUSINESS_CONTEXT = {
     sunday: "10:00 AM - 4:00 PM"
   },
   location: "123 Main Street, Downtown",
-  phone: "(555) 123-4567"
+  phone: "(650) 613-8455"
 };
 
 // Get real-time business data
@@ -198,7 +198,7 @@ async function callGeminiAI(message: string, context: any, phoneNumber: string, 
       return generateFallbackResponse(message);
     }
 
-    const systemPrompt = `You are an AI assistant for Bueno Brows beauty salon. 
+    const systemPrompt = `You are an AI assistant for Bueno Brows beauty salon.
 
 BUSINESS INFO:
 - Name: ${BUSINESS_CONTEXT.name}
@@ -218,11 +218,12 @@ REAL-TIME DATA:
 CUSTOMER: ${context.customer.phoneNumber} (${context.customer.name || 'New customer'})
 
 INSTRUCTIONS:
-1. Be friendly and professional
-2. Keep responses under 160 characters for SMS
-3. Help with appointments, pricing, hours
-4. Always end with "- Bueno Brows"
-5. If booking, provide clear next steps
+1. Be friendly and professional; answer all questions to the best of your ability.
+2. Keep responses under 160 characters for SMS when possible.
+3. Keep answers specific to Bueno Brows; do not speculate about other businesses.
+4. Help with appointments, pricing, and hours. Offer to book when appropriate.
+5. Always end with "- Bueno Brows" and, when relevant, add: "Call (650) 613-8455".
+6. If uncertain or it needs a human, say an admin will follow up shortly or the customer can call (650) 613-8455.
 
 Customer message: ${message}`;
 
@@ -273,11 +274,11 @@ function generateFallbackResponse(message: string): string {
   const text = message.toLowerCase();
   
   if (text.includes('available') || text.includes('open')) {
-    return "Hi! We have slots available this week. Call (555) 123-4567 to book. - Bueno Brows";
+    return "We have openings this week. Call (650) 613-8455 to book, or an admin will follow up shortly. - Bueno Brows";
   }
   
   if (text.includes('price') || text.includes('cost')) {
-    return "Services start at $45. Basic Brow $45, Premium $55, Tinting $25. - Bueno Brows";
+    return "Services: Basic $45, Premium $55, Tint $25. Call (650) 613-8455 for details. - Bueno Brows";
   }
   
   if (text.includes('hours')) {
@@ -285,10 +286,10 @@ function generateFallbackResponse(message: string): string {
   }
   
   if (text.includes('book') || text.includes('appointment')) {
-    return "To book, call (555) 123-4567 or visit our website. - Bueno Brows";
+    return "To book, call (650) 613-8455. An admin can also assist shortly. - Bueno Brows";
   }
   
-  return "Thanks for contacting Bueno Brows! Call (555) 123-4567 for help. - Bueno Brows";
+  return "Thanks for contacting Bueno Brows! Call (650) 613-8455 or wait for an admin reply. - Bueno Brows";
 }
 
 // Send SMS via AWS SNS

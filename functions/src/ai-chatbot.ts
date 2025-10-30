@@ -36,7 +36,7 @@ const BUSINESS_CONTEXT = {
     sunday: "10:00 AM - 4:00 PM"
   },
   location: "123 Main Street, Downtown",
-  phone: "(555) 123-4567",
+  phone: "(650) 613-8455",
   policies: {
     cancellation: "24 hours notice required for cancellations",
     payment: "Cash, credit cards, and Venmo accepted",
@@ -321,7 +321,7 @@ async function callGeminiAPI(prompt: string, context: any, apiKey: string): Prom
       return generateFallbackResponse(prompt);
     }
 
-    const systemPrompt = `You are an AI assistant for Bueno Brows, a beauty salon specializing in eyebrow services. 
+    const systemPrompt = `You are an AI assistant for Bueno Brows, a beauty salon specializing in eyebrow services.
 
 BUSINESS INFORMATION:
 - Name: ${BUSINESS_CONTEXT.name}
@@ -350,12 +350,12 @@ CUSTOMER CONTEXT:
 - Previous messages: ${context.customer.conversationHistory.slice(-3).map((msg: ChatMessage) => `${msg.role}: ${msg.content}`).join('\n')}
 
 INSTRUCTIONS:
-1. Be friendly, professional, and helpful
-2. Provide accurate information about services, pricing, and availability
-3. Help customers book appointments when they're ready
-4. Keep responses concise (under 160 characters for SMS)
-5. If you need to book an appointment, provide clear next steps
-6. Always end with "- Bueno Brows" for branding
+1. Be friendly, professional, and helpful; answer all questions to the best of your ability.
+2. Keep answers specific to Bueno Brows and our services; do not speculate about unrelated businesses.
+3. Provide accurate info about services, pricing, hours, and availability. Offer to book when appropriate.
+4. Keep responses concise (aim for < 160 characters when possible).
+5. Always end with "- Bueno Brows". When relevant, include: "Call (650) 613-8455".
+6. If uncertain or the request needs a human, say an admin will follow up shortly or the customer can call (650) 613-8455.
 
 Customer message: ${prompt}`;
 
@@ -414,11 +414,11 @@ function generateFallbackResponse(prompt: string): string {
   const text = prompt.toLowerCase();
   
   if (text.includes('available') || text.includes('open')) {
-    return "Hi! We have availability this week. Please call (555) 123-4567 to book or visit our website. - Bueno Brows";
+    return "We have openings this week. Call (650) 613-8455 to book, or an admin will follow up shortly. - Bueno Brows";
   }
   
   if (text.includes('price') || text.includes('cost')) {
-    return "Our services start at $45. Basic Brow Shaping $45, Premium $55, Tinting $25. Call (555) 123-4567 for details. - Bueno Brows";
+    return "Services: Basic $45, Premium $55, Tint $25. Call (650) 613-8455 for details, or we’ll follow up shortly. - Bueno Brows";
   }
   
   if (text.includes('hours') || text.includes('open')) {
@@ -426,10 +426,10 @@ function generateFallbackResponse(prompt: string): string {
   }
   
   if (text.includes('book') || text.includes('appointment')) {
-    return "To book an appointment, call (555) 123-4567 or visit our website. We'd love to help you! - Bueno Brows";
+    return "To book, call (650) 613-8455. An admin can also assist shortly if you prefer. - Bueno Brows";
   }
   
-  return "Thanks for contacting Bueno Brows! For appointments, call (555) 123-4567. We're here to help! - Bueno Brows";
+  return "Thanks for contacting Bueno Brows! Call (650) 613-8455 or wait for an admin reply. - Bueno Brows";
 }
 
 // Main AI chatbot function

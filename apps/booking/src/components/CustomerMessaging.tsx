@@ -43,8 +43,7 @@ export default function CustomerMessaging({
       (msgs) => {
         setMessages(msgs);
         setLoading(false);
-      },
-      auth.currentUser?.uid
+      }
     );
 
     // Listen for foreground messages

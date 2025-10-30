@@ -12,6 +12,7 @@ import {
   watchSpecialHours,
   findCustomerByEmail,
   createCustomer,
+  updateCustomer,
 } from '@buenobrows/shared/firestoreActions';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { watchAvailabilityByDay } from '@buenobrows/shared/availabilityHelpers';
@@ -39,6 +40,7 @@ import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
 import ConsentForm from '../components/ConsentForm';
+import type { Customer } from '@buenobrows/shared/types';
 
 type Slot = { startISO: string; endISO?: string; resourceId?: string | null };
 type Hold = { id: string; expiresAt: string; status?: string }; // from Cloud Function
@@ -341,12 +343,25 @@ export default function Book() {
   const lastHoldCreationRef = useRef<number>(0);
   const isCreatingHoldRef = useRef<boolean>(false);
   const [chosen, setChosen] = useState<Slot | null>(() => {
-    // Try to restore chosen slot from cart
+    // Try to restore chosen slot from cart, but only if recent enough to be valid
+    const HOLD_TTL_MS = 2 * 60 * 1000; // keep in sync with server hold duration
+    const RESTORE_GRACE_MS = 30 * 1000; // do not restore if near-expiry
     const saved = sessionStorage.getItem('bb_booking_cart');
     if (saved) {
       try {
         const cart = JSON.parse(saved);
-        if (cart.chosenSlot) return cart.chosenSlot;
+        if (cart.chosenSlot) {
+          const ts = typeof cart.timestamp === 'number' ? cart.timestamp : 0;
+          const age = Date.now() - ts;
+          // Only restore chosen slot if cart is recent enough so auto-recreate won't race on an expired hold
+          if (age < (HOLD_TTL_MS - RESTORE_GRACE_MS)) {
+            return cart.chosenSlot;
+          } else {
+            // Clear stale chosen/hold from storage so UI doesn't try to remount it
+            const updatedCart = { ...cart, chosenSlot: null, hold: null };
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
+          }
+        }
       } catch (e) {
         console.error('Failed to restore chosen slot:', e);
       }
@@ -597,6 +612,28 @@ export default function Book() {
     // Only run once on mount if we have a chosen slot from sessionStorage but no hold
     // and we haven't already attempted this
     if (chosen && !hold && !isCreatingHold && !isRestoringHold && !hasAttemptedAutoRecreate && selectedServices.length > 0 && slots.length > 0) {
+      // Guard: if the saved cart is older than hold TTL, skip restoration to avoid freezing UI
+      const HOLD_TTL_MS = 2 * 60 * 1000;
+      const RESTORE_GRACE_MS = 30 * 1000;
+      try {
+        const saved = sessionStorage.getItem('bb_booking_cart');
+        if (saved) {
+          const cart = JSON.parse(saved);
+          const ts = typeof cart.timestamp === 'number' ? cart.timestamp : 0;
+          const age = Date.now() - ts;
+          if (age >= (HOLD_TTL_MS - RESTORE_GRACE_MS)) {
+            console.log('⏱️ Saved booking cart is stale; skipping hold restoration');
+            setError('Your previous hold expired while you were away. Please select the time again.');
+            setChosen(null);
+            setIsRestoringHold(false);
+            const updatedCart = { ...cart, chosenSlot: null, hold: null };
+            sessionStorage.setItem('bb_booking_cart', JSON.stringify(updatedCart));
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to read cart for restoration guard:', e);
+      }
       console.log('🔄 Restoring hold for previously selected slot after navigation');
       setHasAttemptedAutoRecreate(true);
       setIsRestoringHold(true);
@@ -659,6 +696,16 @@ export default function Book() {
   const [customerId, setCustomerId] = useState<string | null>(null);
   const prevUserRef = useRef<User | null>(null);
   
+  // Profile completion modal
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [customerData, setCustomerData] = useState<Customer | null>(null);
+  const [profileFormData, setProfileFormData] = useState({
+    birthday: '',
+    phone: '',
+    email: ''
+  });
+  const [missingFields, setMissingFields] = useState<string[]>([]);
+  
   // Handle auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -703,6 +750,49 @@ export default function Book() {
       setCustomerId(null);
     }
   }, [user?.uid, user?.email, user?.phoneNumber, user?.displayName]); // More specific dependencies
+
+  // Check if customer profile is complete and show prompt if missing fields
+  useEffect(() => {
+    if (!customerId || !db || !user) return;
+    
+    const checkProfileCompleteness = async () => {
+      try {
+        // Check if we've already shown the modal in this session
+        const shownKey = `bb_profile_completion_shown_${customerId}`;
+        if (sessionStorage.getItem(shownKey)) {
+          return;
+        }
+
+        // Get customer data
+        const customerDoc = await getDoc(doc(db, 'customers', customerId));
+        if (customerDoc.exists()) {
+          const data = customerDoc.data() as Customer;
+          setCustomerData(data);
+          
+          // Determine which fields are missing
+          const missing: string[] = [];
+          if (!data.birthday) missing.push('birthday');
+          // For authenticated users, check if they need to add missing contact info
+          if (!data.phone && !user.phoneNumber) missing.push('phone');
+          if (!data.email && !user.email) missing.push('email');
+          
+          if (missing.length > 0) {
+            setMissingFields(missing);
+            setProfileFormData({
+              birthday: data.birthday || '',
+              phone: data.phone || user.phoneNumber || '',
+              email: data.email || user.email || ''
+            });
+            setShowProfileModal(true);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking customer profile:', error);
+      }
+    };
+
+    checkProfileCompleteness();
+  }, [customerId, db, user]);
 
   const [linkFlow, setLinkFlow] = useState(false);
   const [verifyEmail, setVerifyEmail] = useState('');
@@ -2438,6 +2528,139 @@ export default function Book() {
                 className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Completion Modal */}
+      {showProfileModal && customerData && missingFields.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowProfileModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-terracotta/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-slate-800 mb-2">Complete Your Profile</h3>
+              <p className="text-slate-600 text-sm">
+                Help us provide you with the best experience! Please add the following information to your profile.
+              </p>
+            </div>
+            
+            <div className="space-y-4 mb-6">
+              {missingFields.includes('birthday') && (
+                <div>
+                  <label htmlFor="profile-birthday" className="block text-sm font-medium text-slate-700 mb-2">
+                    Birthday *
+                  </label>
+                  <input
+                    id="profile-birthday"
+                    type="date"
+                    value={profileFormData.birthday}
+                    onChange={(e) => setProfileFormData({...profileFormData, birthday: e.target.value})}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  />
+                </div>
+              )}
+
+              {missingFields.includes('phone') && (
+                <div>
+                  <label htmlFor="profile-phone" className="block text-sm font-medium text-slate-700 mb-2">
+                    Phone Number *
+                  </label>
+                  <input
+                    id="profile-phone"
+                    type="tel"
+                    value={profileFormData.phone}
+                    onChange={(e) => setProfileFormData({...profileFormData, phone: e.target.value})}
+                    placeholder="(555) 123-4567"
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">We'll use this to send appointment reminders</p>
+                </div>
+              )}
+
+              {missingFields.includes('email') && (
+                <div>
+                  <label htmlFor="profile-email" className="block text-sm font-medium text-slate-700 mb-2">
+                    Email Address *
+                  </label>
+                  <input
+                    id="profile-email"
+                    type="email"
+                    value={profileFormData.email}
+                    onChange={(e) => setProfileFormData({...profileFormData, email: e.target.value})}
+                    placeholder="your@email.com"
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">We'll use this to send booking confirmations</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="space-y-3">
+              <button
+                onClick={async () => {
+                  if (!customerId || !db) return;
+                  
+                  // Validate that all required fields are filled
+                  const isComplete = missingFields.every(field => {
+                    if (field === 'birthday') return !!profileFormData.birthday;
+                    if (field === 'phone') return !!profileFormData.phone;
+                    if (field === 'email') return !!profileFormData.email;
+                    return true;
+                  });
+
+                  if (!isComplete) {
+                    alert('Please fill in all required fields.');
+                    return;
+                  }
+                  
+                  try {
+                    // Prepare update data
+                    const updates: any = {};
+                    if (missingFields.includes('birthday') && profileFormData.birthday) {
+                      updates.birthday = profileFormData.birthday;
+                    }
+                    if (missingFields.includes('phone') && profileFormData.phone) {
+                      updates.phone = profileFormData.phone;
+                    }
+                    if (missingFields.includes('email') && profileFormData.email) {
+                      updates.email = profileFormData.email;
+                    }
+
+                    // Update customer profile
+                    await updateCustomer(db, customerId, updates);
+                    
+                    // Mark as shown for this session
+                    const shownKey = `bb_profile_completion_shown_${customerId}`;
+                    sessionStorage.setItem(shownKey, 'true');
+                    
+                    setShowProfileModal(false);
+                    setProfileFormData({ birthday: '', phone: '', email: '' });
+                  } catch (error) {
+                    console.error('Error updating profile:', error);
+                    alert('Failed to update profile. Please try again.');
+                  }
+                }}
+                className="w-full bg-terracotta text-white rounded-xl px-6 py-3 font-semibold hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save Profile
+              </button>
+              
+              <button
+                onClick={() => {
+                  // Mark as dismissed for this session
+                  const shownKey = `bb_profile_completion_shown_${customerId}`;
+                  sessionStorage.setItem(shownKey, 'true');
+                  setShowProfileModal(false);
+                }}
+                className="w-full border-2 border-slate-300 text-slate-700 rounded-xl px-6 py-3 font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Maybe Later
               </button>
             </div>
           </div>
