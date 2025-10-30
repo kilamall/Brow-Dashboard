@@ -17,157 +17,360 @@ const defaultTemplates: EmailTemplate[] = [
     name: 'New Appointment Request',
     subject: '📋 Appointment Request Received - {{businessName}}',
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
-        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #8B4513; margin-bottom: 20px;">Appointment Request Received! 📋</h2>
-          
-          <p>Hi {{customerName}},</p>
-          
-          <p>Thank you for booking with us! We've received your appointment request and are reviewing it now.</p>
-          
-          <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-            <h3 style="margin-top: 0; color: #856404;">Requested Appointment</h3>
-            <p><strong>Date:</strong> {{date}}</p>
-            <p><strong>Time:</strong> {{time}}</p>
-            <p><strong>Service:</strong> {{serviceName}}</p>
-            <p><strong>Duration:</strong> {{duration}} minutes</p>
-          </div>
-          
-          <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p><strong>⏰ What happens next?</strong></p>
-            <p>We'll review your request and confirm it shortly. You'll receive a confirmation email once your appointment is approved.</p>
-          </div>
-          
-          <p>Need to make changes? <a href="https://bueno-brows-7cce7.web.app/dashboard" style="color: #8B4513; text-decoration: none; font-weight: bold;">Manage your booking online</a> or call us at {{businessPhone}}.</p>
-          
-          <p>Thank you for choosing {{businessName}}!<br>The {{businessName}} Team</p>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #FFC107; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>📋 Appointment Request Received!</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi {{customerName}},</p>
+      <p>Thank you for booking with us! We've received your appointment request and are reviewing it now.</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">{{date}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">{{time}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">{{serviceName}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Duration:</span>
+          <span class="detail-value">{{duration}} minutes</span>
         </div>
       </div>
+      <p style="margin-top: 20px;">We'll review your request and confirm it shortly. You'll receive a confirmation email once your appointment is approved.</p>
+      <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Manage Your Booking</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to make changes? Call us at {{businessPhone}} or visit our website.</p>
+      <p style="margin-top: 20px;">Thank you for choosing {{businessName}}!</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
     `,
-    variables: ['customerName', 'businessName', 'date', 'time', 'serviceName', 'duration', 'businessPhone'],
+    variables: ['customerName', 'businessName', 'date', 'time', 'serviceName', 'duration', 'businessPhone', 'businessAddress', 'businessEmail', 'bookingLink'],
     isDefault: true
   },
   {
     id: 'appointment-confirmation',
     name: 'Appointment Confirmation',
-    subject: 'Appointment Confirmed - {{businessName}}',
+    subject: '✨ Appointment Confirmed - {{businessName}}',
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
-        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #8B4513; margin-bottom: 20px;">Appointment Confirmed!</h2>
-          
-          <p>Hi {{customerName}},</p>
-          
-          <p>Your appointment has been confirmed for:</p>
-          
-          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p><strong>Date:</strong> {{date}}</p>
-            <p><strong>Time:</strong> {{time}}</p>
-            <p><strong>Service:</strong> {{serviceName}}</p>
-            <p><strong>Duration:</strong> {{duration}} minutes</p>
-          </div>
-          
-          <p>We look forward to seeing you at {{businessName}}!</p>
-          
-          <p>Need to make changes? <a href="https://bueno-brows-7cce7.web.app/dashboard" style="color: #8B4513; text-decoration: none; font-weight: bold;">Manage your booking online</a> or call us at {{businessPhone}}.</p>
-          
-          <p>Best regards,<br>{{businessName}} Team</p>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #FFC107; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .price { color: #FFC107; font-size: 20px; font-weight: 700; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>✨ Appointment Confirmed!</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi {{customerName}},</p>
+      <p>Great news! Your appointment at <strong style="color: #FFC107;">{{businessName}}</strong> has been confirmed.</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">{{serviceName}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">{{date}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">{{time}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Duration:</span>
+          <span class="detail-value">{{duration}} minutes</span>
         </div>
       </div>
+      <p style="margin-top: 20px;">We look forward to seeing you!</p>
+      <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Book Your Next Appointment</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to make changes? Call us at {{businessPhone}} or visit our website.</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
     `,
-    variables: ['customerName', 'date', 'time', 'serviceName', 'duration', 'businessName', 'businessPhone'],
+    variables: ['customerName', 'date', 'time', 'serviceName', 'duration', 'businessName', 'businessPhone', 'businessAddress', 'businessEmail', 'bookingLink'],
     isDefault: true
   },
   {
     id: 'appointment-reminder',
     name: 'Appointment Reminder',
-    subject: 'Reminder: Your appointment tomorrow at {{businessName}}',
+    subject: '🔔 Reminder: Your appointment tomorrow at {{businessName}}',
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
-        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #8B4513; margin-bottom: 20px;">Appointment Reminder</h2>
-          
-          <p>Hi {{customerName}},</p>
-          
-          <p>This is a friendly reminder that you have an appointment tomorrow:</p>
-          
-          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p><strong>Date:</strong> {{date}}</p>
-            <p><strong>Time:</strong> {{time}}</p>
-            <p><strong>Service:</strong> {{serviceName}}</p>
-            <p><strong>Duration:</strong> {{duration}} minutes</p>
-          </div>
-          
-          <p>Please arrive 5-10 minutes early for your appointment.</p>
-          
-          <p>If you need to reschedule, please contact us at {{businessPhone}}.</p>
-          
-          <p>See you tomorrow!<br>{{businessName}} Team</p>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #FFC107; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>🔔 Appointment Reminder</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi {{customerName}},</p>
+      <p>This is a friendly reminder that you have an appointment tomorrow:</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">{{date}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">{{time}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">{{serviceName}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Duration:</span>
+          <span class="detail-value">{{duration}} minutes</span>
         </div>
       </div>
+      <p style="margin-top: 20px;">Please arrive 5-10 minutes early for your appointment.</p>
+      <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">View Appointment Details</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">If you need to reschedule, call us at {{businessPhone}} or visit our website.</p>
+      <p style="margin-top: 20px;">See you tomorrow!</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
     `,
-    variables: ['customerName', 'date', 'time', 'serviceName', 'duration', 'businessName', 'businessPhone'],
+    variables: ['customerName', 'date', 'time', 'serviceName', 'duration', 'businessName', 'businessPhone', 'businessAddress', 'businessEmail', 'bookingLink'],
     isDefault: true
   },
   {
     id: 'receipt-email',
     name: 'Receipt Email',
-    subject: 'Your Receipt from {{businessName}}',
-    html: '<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">' +
-      '<div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">' +
-        '<h2 style="color: #8B4513; margin-bottom: 20px;">Thank You for Your Visit!</h2>' +
-        '<p>Hi {{customerName}},</p>' +
-        '<p>Thank you for choosing {{businessName}}! Here\'s your receipt for today\'s services:</p>' +
-        '<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">' +
-          '<h3 style="margin-top: 0; color: #333;">Receipt #{{receiptNumber}}</h3>' +
-          '<p><strong>Date:</strong> {{date}}</p>' +
-          '<p><strong>Time:</strong> {{time}}</p>' +
-          '<div style="border-top: 1px solid #ddd; margin: 15px 0; padding-top: 15px;">' +
-            '<p><strong>Services:</strong></p>' +
-            '<p>{{serviceDetails}}</p>' +
-            '<p><strong>Subtotal:</strong> ${{subtotal}}</p>' +
-            '<p><strong>Tip:</strong> ${{tip}}</p>' +
-            '<p style="font-size: 18px; font-weight: bold; border-top: 2px solid #8B4513; padding-top: 10px; margin-top: 10px;">' +
-              '<strong>Total: ${{total}}</strong>' +
-            '</p>' +
-          '</div>' +
-        '</div>' +
-        '<p>Your detailed receipt is attached as a PDF for your records.</p>' +
-        '<p>We hope you love your results! If you have any questions or would like to book your next appointment, please don\'t hesitate to contact us.</p>' +
-        '<p>Thank you again for choosing {{businessName}}!<br>The {{businessName}} Team</p>' +
-      '</div>' +
-    '</div>',
-    variables: ['customerName', 'businessName', 'receiptNumber', 'date', 'time', 'serviceDetails', 'subtotal', 'tip', 'total'],
+    subject: '💰 Your Receipt from {{businessName}}',
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #FFC107; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .total-row { margin-top: 15px; padding-top: 15px; border-top: 2px solid #FFC107; }
+    .total-price { color: #FFC107; font-size: 24px; font-weight: 700; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>💰 Thank You for Your Visit!</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi {{customerName}},</p>
+      <p>Thank you for choosing {{businessName}}! Here's your receipt for today's services:</p>
+      <div class="appointment-card">
+        <h3 style="margin-top: 0; color: #FFC107; font-size: 16px;">Receipt #{{receiptNumber}}</h3>
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">{{date}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">{{time}}</span>
+        </div>
+        <div style="border-top: 1px solid #4a4a4a; margin: 15px 0; padding-top: 15px;">
+          <p style="margin: 10px 0; color: #FFC107; font-weight: 600;">Services:</p>
+          <p style="margin: 5px 0;">{{serviceDetails}}</p>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Subtotal:</span>
+          <span class="detail-value">${{subtotal}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Tip:</span>
+          <span class="detail-value">${{tip}}</span>
+        </div>
+        <div class="appointment-row total-row">
+          <span class="detail-label">Total:</span>
+          <span class="total-price">${{total}}</span>
+        </div>
+      </div>
+      <p>Your detailed receipt is attached as a PDF for your records.</p>
+      <p style="margin-top: 20px;">We hope you love your results! If you have any questions or would like to book your next appointment, please don't hesitate to contact us.</p>
+      <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Book Your Next Appointment</a></div>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+    variables: ['customerName', 'businessName', 'receiptNumber', 'date', 'time', 'serviceDetails', 'subtotal', 'tip', 'total', 'businessAddress', 'businessPhone', 'businessEmail', 'bookingLink'],
     isDefault: true
   },
   {
     id: 'cancellation-notice',
     name: 'Cancellation Notice',
-    subject: 'Appointment Cancelled - {{businessName}}',
+    subject: '❌ Appointment Cancelled - {{businessName}}',
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
-        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #8B4513; margin-bottom: 20px;">Appointment Cancelled</h2>
-          
-          <p>Hi {{customerName}},</p>
-          
-          <p>We're sorry to inform you that your appointment has been cancelled:</p>
-          
-          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p><strong>Date:</strong> {{date}}</p>
-            <p><strong>Time:</strong> {{time}}</p>
-            <p><strong>Service:</strong> {{serviceName}}</p>
-          </div>
-          
-          <p>Reason: {{cancellationReason}}</p>
-          
-          <p>We apologize for any inconvenience. Please contact us at {{businessPhone}} to reschedule your appointment.</p>
-          
-          <p>Best regards,<br>{{businessName}} Team</p>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #dc2626; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #ffffff; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #fca5a5; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .cta-button { display: inline-block; background-color: #dc2626; color: #ffffff !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>❌ Appointment Cancelled by Admin</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi {{customerName}},</p>
+      <p>We're writing to inform you that your appointment at <strong>{{businessName}}</strong> has been cancelled by our team.</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">{{serviceName}}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">{{date}}</span>
         </div>
       </div>
+      <p style="margin-top: 20px;">We apologize for any inconvenience. Please contact us at {{businessPhone}} to reschedule your appointment.</p>
+      <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Book a New Appointment</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule? We'd love to help you find a new time that works for you.</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #dc2626;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
     `,
-    variables: ['customerName', 'date', 'time', 'serviceName', 'cancellationReason', 'businessName', 'businessPhone'],
+    variables: ['customerName', 'date', 'time', 'serviceName', 'cancellationReason', 'businessName', 'businessPhone', 'businessAddress', 'businessEmail', 'bookingLink'],
     isDefault: true
   }
 ];
