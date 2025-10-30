@@ -67,21 +67,54 @@ async function getBusinessData(): Promise<any> {
   }
 }
 
-// Get customer context
+// Normalize phone to E.164 format for consistent querying
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`; // US number
+  if (digits.length === 11 && digits[0] === '1') return `+${digits}`;
+  return `+${digits}`;
+}
+
+// Get customer context with proper canonical field support
 async function getCustomerContext(phoneNumber: string): Promise<any> {
   try {
-    const customerQuery = await db.collection('customers').where('phone', '==', phoneNumber).limit(1).get();
+    const canonicalPhone = normalizePhone(phoneNumber);
+    
+    // Try canonical phone first
+    let customerQuery = await db.collection('customers')
+      .where('canonicalPhone', '==', canonicalPhone)
+      .limit(1)
+      .get();
+    
+    // Fallback to raw phone for customers created before canonical fields
+    if (customerQuery.empty) {
+      customerQuery = await db.collection('customers')
+        .where('phone', '==', phoneNumber)
+        .limit(1)
+        .get();
+    }
     
     if (customerQuery.empty) {
       const newCustomer = await db.collection('customers').add({
         phone: phoneNumber,
+        canonicalPhone: canonicalPhone,
         name: 'SMS Customer',
         status: 'ai_customer',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
       return { customerId: newCustomer.id, phoneNumber, name: 'SMS Customer' };
     } else {
       const customerData = customerQuery.docs[0].data();
+      
+      // Update canonical field if missing
+      if (!customerData.canonicalPhone) {
+        await db.collection('customers').doc(customerQuery.docs[0].id).update({
+          canonicalPhone: canonicalPhone,
+          updatedAt: new Date().toISOString()
+        });
+      }
+      
       return { customerId: customerQuery.docs[0].id, ...customerData };
     }
   } catch (error) {

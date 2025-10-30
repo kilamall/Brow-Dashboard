@@ -144,29 +144,60 @@ function generateAvailableSlots(services: any[], businessHours: any, appointment
   return slots.slice(0, 10); // Limit to 10 slots
 }
 
-// Get or create customer context
+// Normalize phone to E.164 format for consistent querying
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`; // US number
+  if (digits.length === 11 && digits[0] === '1') return `+${digits}`;
+  return `+${digits}`;
+}
+
+// Get or create customer context with proper canonical field support
 async function getCustomerContext(phoneNumber: string): Promise<CustomerContext> {
   try {
-    // Try to find existing customer
-    const customerQuery = await db.collection('customers').where('phone', '==', phoneNumber).limit(1).get();
+    const canonicalPhone = normalizePhone(phoneNumber);
+    
+    // Try canonical phone first
+    let customerQuery = await db.collection('customers')
+      .where('canonicalPhone', '==', canonicalPhone)
+      .limit(1)
+      .get();
+    
+    // Fallback to raw phone for customers created before canonical fields
+    if (customerQuery.empty) {
+      customerQuery = await db.collection('customers')
+        .where('phone', '==', phoneNumber)
+        .limit(1)
+        .get();
+    }
     
     let customerId: string;
     let customerData: any = {};
     
     if (customerQuery.empty) {
-      // Create new customer
+      // Create new customer with canonical fields
       const newCustomer = await db.collection('customers').add({
         phone: phoneNumber,
+        canonicalPhone: canonicalPhone,
         name: 'SMS Customer',
         email: null,
         status: 'ai_customer',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         aiOptIn: true
       });
       customerId = newCustomer.id;
     } else {
       customerId = customerQuery.docs[0].id;
       customerData = customerQuery.docs[0].data();
+      
+      // Update canonical field if missing
+      if (!customerData.canonicalPhone) {
+        await db.collection('customers').doc(customerId).update({
+          canonicalPhone: canonicalPhone,
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
     
     // Get conversation history
