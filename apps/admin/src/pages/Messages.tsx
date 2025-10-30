@@ -109,10 +109,19 @@ export default function Messages() {
 
       await Promise.all(updatePromises);
 
-      // Update conversation unread count
-      await updateDoc(doc(db, 'conversations', customerId), {
-        unreadCount: 0
-      });
+      // Update conversation unread count (handle doc id != customerId)
+      try {
+        await updateDoc(doc(db, 'conversations', selectedConversation?.id || customerId), {
+          unreadCount: 0
+        });
+      } catch (e) {
+        console.warn('Conversation doc not found by id, attempting by customerId', e);
+        try {
+          await updateDoc(doc(db, 'conversations', customerId), { unreadCount: 0 });
+        } catch (e2) {
+          console.error('Failed to update conversation unread count:', e2);
+        }
+      }
     } catch (error) {
       console.error('Error marking messages as read:', error);
     }
@@ -183,6 +192,7 @@ export default function Messages() {
     if (!confirmDelete) return;
     try {
       const customerId = selectedConversation.customerId;
+      const conversationDocId = selectedConversation.id;
       // Delete messages in batches
       const q = query(
         collection(db, 'messages'),
@@ -193,7 +203,7 @@ export default function Messages() {
       snap.docs.forEach(d => batch.delete(doc(db, 'messages', d.id)));
       await batch.commit();
       // Delete conversation doc
-      await deleteDoc(doc(db, 'conversations', customerId));
+      await deleteDoc(doc(db, 'conversations', conversationDocId));
       // Update UI
       setSelectedConversation(null);
       setMessages([]);
