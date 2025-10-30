@@ -10,7 +10,7 @@ import CustomerProfile from './pages/CustomerProfile';
 import Services from './pages/Services';
 import Reviews from './pages/Reviews';
 import Messages from './pages/Messages';
-import SMS from './pages/SMS';
+import Conversations from './pages/Conversations';
 import AIConversations from './pages/AIConversations';
 import SkinAnalyses from './pages/SkinAnalyses';
 import ConsentForms from './pages/ConsentForms';
@@ -42,8 +42,9 @@ export default function App() {
               <Route path="/customers/:customerId" element={<CustomerProfile />} />
               <Route path="/services" element={<Services />} />
               <Route path="/reviews" element={<Reviews />} />
-              <Route path="/messages" element={<Messages />} />
-              <Route path="/sms" element={<SMS />} />
+              <Route path="/conversations" element={<Conversations />} />
+              <Route path="/messages" element={<Conversations initialTab={'messages'} />} />
+              <Route path="/sms" element={<Conversations initialTab={'sms'} />} />
               <Route path="/ai-conversations" element={<AIConversations />} />
               <Route path="/skin-analyses" element={<SkinAnalyses />} />
               <Route path="/consent-forms" element={<ConsentForms />} />

@@ -97,6 +97,12 @@ export default function SMSOptIn() {
             />
           </div>
 
+          <p className="text-xs text-slate-600 -mt-1">
+            By subscribing, you agree to our{' '}
+            <a href="/privacy" className="underline text-terracotta">Privacy Policy</a>.
+            We do not share your mobile information with third parties or affiliates for marketing or promotional purposes.
+          </p>
+
           <button
             type="submit"
             className="w-full bg-black text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

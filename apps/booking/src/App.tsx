@@ -5,6 +5,7 @@ import { ErrorCategory } from '@buenobrows/shared/errorHandling';
 import Navbar from './components/Navbar';
 import ServiceWorkerUpdate from './components/ServiceWorkerUpdate';
 import Home from '@/pages/Home';
+import Privacy from '@/pages/Privacy';
 import ServicesPage from '@/pages/Services';
 import Book from '@/pages/Book';
 import Reviews from '@/pages/Reviews';
@@ -27,6 +28,11 @@ export default function App() {
           <Route path="/" element={
             <ErrorBoundary fallback={(error, reset) => <FeatureError error={error} reset={reset} title="Home Page Error" />} category={ErrorCategory.UNKNOWN}>
               <Home />
+            </ErrorBoundary>
+          } />
+          <Route path="/privacy" element={
+            <ErrorBoundary fallback={(error, reset) => <FeatureError error={error} reset={reset} title="Privacy Policy Error" />} category={ErrorCategory.UNKNOWN}>
+              <Privacy />
             </ErrorBoundary>
           } />
           <Route path="/services" element={
@@ -86,6 +92,8 @@ export default function App() {
           © {new Date().getFullYear()} 
           <span className="ml-2 font-brandBueno text-brand-bueno">BUENO</span>
           <span className="ml-1 font-brandBrows text-brand-brows">BROWS</span>
+          <span className="mx-2">•</span>
+          <a className="underline hover:text-slate-800" href="/privacy">Privacy Policy</a>
         </div>
       </footer>
     </div>

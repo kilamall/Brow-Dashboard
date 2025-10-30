@@ -33,28 +33,30 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const BUSINESS_PHONE_NUMBER = process.env.BUSINESS_PHONE_NUMBER; // Your existing phone number
 
 // SMS Response Templates
+const PRIVACY_URL = 'https://bueno-brows-7cce7.web.app/privacy';
+const A2P_FOOTER = `\n\nReply STOP to opt out, HELP for help. Msg&data rates may apply. Privacy: ${PRIVACY_URL}`;
 const SMS_TEMPLATES = {
   availability: (availableSlots: string[]) => {
     if (availableSlots.length === 0) {
-      return "Hi! We don't have any available slots for the next 7 days. Please call us at (555) 123-4567 to discuss other options. - Bueno Brows";
+      return "Hi! We don't have any available slots for the next 7 days. Please call us at (555) 123-4567 to discuss other options. - Bueno Brows" + A2P_FOOTER;
     }
-    return `Hi! Here are our available slots:\n\n${availableSlots.slice(0, 5).join('\n')}\n\nReply with "BOOK [date] [time]" to reserve (e.g., "BOOK 12/15 2:00 PM"). - Bueno Brows`;
+    return `Hi! Here are our available slots:\n\n${availableSlots.slice(0, 5).join('\n')}\n\nReply with "BOOK [date] [time]" to reserve (e.g., "BOOK 12/15 2:00 PM"). - Bueno Brows` + A2P_FOOTER;
   },
   
   confirmation: (appointment: any) => {
-    return `✅ Confirmed! Your ${appointment.serviceName} appointment is scheduled for ${appointment.date} at ${appointment.time}. We'll send a reminder 24 hours before. - Bueno Brows`;
+    return `✅ Confirmed! Your ${appointment.serviceName} appointment is scheduled for ${appointment.date} at ${appointment.time}. We'll send a reminder 24 hours before. - Bueno Brows` + A2P_FOOTER;
   },
   
   faq: (question: string, answer: string) => {
-    return `${answer}\n\nNeed more help? Reply with your question or call (555) 123-4567. - Bueno Brows`;
+    return `${answer}\n\nNeed more help? Reply with your question or call (555) 123-4567. - Bueno Brows` + A2P_FOOTER;
   },
   
   booking_instructions: () => {
-    return `To book an appointment, reply with:\n"BOOK [date] [time]"\n\nExample: "BOOK 12/15 2:00 PM"\n\nFor availability, reply "AVAILABLE"\nFor questions, just ask! - Bueno Brows`;
+    return `To book an appointment, reply with:\n"BOOK [date] [time]"\n\nExample: "BOOK 12/15 2:00 PM"\n\nFor availability, reply "AVAILABLE"\nFor questions, just ask! - Bueno Brows` + A2P_FOOTER;
   },
   
   error: () => {
-    return "Sorry, I didn't understand that. Reply 'HELP' for instructions or call (555) 123-4567. - Bueno Brows";
+    return "Sorry, I didn't understand that. Reply 'HELP' for instructions or call (555) 123-4567. - Bueno Brows" + A2P_FOOTER;
   }
 };
 
@@ -339,7 +341,7 @@ export const smsWebhook = onRequest(
           
         case 'booking_request':
           // For now, provide instructions for booking
-          responseMessage = "To complete your booking, please call us at (555) 123-4567 or visit our website. We'll need to confirm your details. - Bueno Brows";
+          responseMessage = "To complete your booking, please call us at (555) 123-4567 or visit our website. We'll need to confirm your details. - Bueno Brows" + A2P_FOOTER;
           break;
           
         default:

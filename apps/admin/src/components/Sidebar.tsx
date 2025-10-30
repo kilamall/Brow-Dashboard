@@ -25,8 +25,7 @@ const navGroups = [
   {
     label: 'Communications',
     items: [
-      { to: '/messages', icon: '💬', label: 'Messages' },
-      { to: '/sms', icon: '📱', label: 'SMS Support' },
+      { to: '/conversations', icon: '💬', label: 'Conversations' },
       { to: '/ai-conversations', icon: '🤖', label: 'AI Conversations' }
     ]
   },
