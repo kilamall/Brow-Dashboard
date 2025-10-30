@@ -1,10 +1,11 @@
 // Global console filter: keep production logs clean unless explicitly enabled
 import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
 
 (() => {
-  // Initialize admin if needed
-  if (!admin.apps.length) {
-    admin.initializeApp();
+  // Initialize Admin SDK (ESM-safe)
+  if (!getApps().length) {
+    initializeApp();
   }
 
   const original = { log: console.log, info: console.info, debug: console.debug };
