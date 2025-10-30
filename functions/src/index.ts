@@ -1,6 +1,7 @@
 // Global console filter: keep production logs clean unless explicitly enabled
 import * as admin from 'firebase-admin';
 import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
 (() => {
   // Initialize Admin SDK (ESM-safe)
@@ -29,7 +30,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
   }
 
   // Read flag from Firestore and refresh periodically
-  const ref = admin.firestore().doc('settings/developerOptions');
+  const ref = getFirestore().doc('settings/developerOptions');
   const refresh = async () => {
     try {
       const snap = await ref.get();
