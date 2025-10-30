@@ -694,11 +694,15 @@ export default function Book() {
         setCustomerId(result.customerId);
       }).catch(err => {
         console.error('Failed to get customer ID:', err);
+        // Don't retry on rate limit errors
+        if (err.code !== 'functions/too-many-requests') {
+          console.log('Will retry on next user change');
+        }
       });
     } else {
       setCustomerId(null);
     }
-  }, [user]);
+  }, [user?.uid, user?.email, user?.phoneNumber, user?.displayName]); // More specific dependencies
 
   const [linkFlow, setLinkFlow] = useState(false);
   const [verifyEmail, setVerifyEmail] = useState('');
@@ -1211,6 +1215,11 @@ export default function Book() {
         },
         price: totalPrice,
         autoConfirm: true,
+        serviceIds: selectedServiceIds, // Pass multi-service data
+        servicePrices: selectedServices.reduce((acc, service) => {
+          acc[service.id] = service.price;
+          return acc;
+        }, {} as Record<string, number>),
       });
       
       console.log('Booking finalized successfully:', out);

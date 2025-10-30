@@ -172,14 +172,29 @@ export default function CalendarDayView({ date, appointments, services, business
 
           {/* Appointments */}
           {dayAppointments.map((appointment) => {
-            const service = services[appointment.serviceId];
-            const categoryName = service?.category;
+            // Handle both single serviceId and multiple serviceIds
+            const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+            const hasMultipleServices = serviceIds.length > 1;
+            
+            // Get all services
+            const allServices = serviceIds.length > 0 
+              ? serviceIds.map((serviceId: string) => services[serviceId]).filter(Boolean)
+              : [services[appointment.serviceId]].filter(Boolean);
+            
+            // Use first service for category color
+            const firstService = allServices[0];
+            const categoryName = firstService?.category;
             const categoryColor = categoryName ? categoryColors[categoryName] : null;
             
             // Use category color or fallback to default colors
             const backgroundColor = categoryColor ? `${categoryColor}20` : '#E0E7FF'; // 20 = 12.5% opacity
             const borderColor = categoryColor || '#6366F1';
             const textColor = categoryColor || '#4338CA';
+            
+            // Create service display string
+            const serviceDisplay = hasMultipleServices 
+              ? `${allServices[0]?.name || 'Service'}, ${allServices[1]?.name || ''}${allServices.length > 2 ? ` +${allServices.length - 2}` : ''}`
+              : (firstService?.name || 'Service');
             
             return (
               <div
@@ -209,7 +224,7 @@ export default function CalendarDayView({ date, appointments, services, business
                     // Compact layout for short appointments
                     <>
                       <div className="text-xs font-medium truncate">
-                        {service?.name || 'Service'} · {appointment.customerName}
+                        {serviceDisplay} · {appointment.customerName}
                       </div>
                       <div className="text-xs opacity-75">{appointment.duration} min</div>
                     </>
@@ -217,7 +232,7 @@ export default function CalendarDayView({ date, appointments, services, business
                     // Full layout for longer appointments
                     <>
                       <div className="text-xs font-medium truncate">
-                        {service?.name || 'Unknown Service'}
+                        {serviceDisplay}
                       </div>
                       <div className="text-xs truncate opacity-75">
                         {appointment.customerName}

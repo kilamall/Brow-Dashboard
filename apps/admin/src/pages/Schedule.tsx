@@ -591,7 +591,9 @@ export default function Schedule() {
   };
 
   const handleConfirmApproval = async () => {
-    if (!db || !confirmingRequest) return;
+    if (!db || !confirmingRequest) {
+      return;
+    }
     
     setApprovingEdit(true);
     try {
@@ -615,23 +617,42 @@ export default function Schedule() {
         updateData.start = confirmingRequest.requestedChanges.start;
       }
       if (confirmingRequest.requestedChanges.serviceIds && confirmingRequest.requestedChanges.serviceIds.length > 0) {
+        // Set serviceIds field for multi-service support
+        updateData.serviceIds = confirmingRequest.requestedChanges.serviceIds;
+        
+        // Backward compatibility
         updateData.serviceId = confirmingRequest.requestedChanges.serviceIds[0];
         updateData.selectedServices = confirmingRequest.requestedChanges.serviceIds;
         
-        // Calculate total duration from selected services
+        // Calculate total duration
         const totalDuration = confirmingRequest.requestedChanges.serviceIds.reduce((sum, id) => {
           const service = services[id];
           return sum + (service?.duration || 0);
         }, 0);
         updateData.duration = totalDuration;
         
-        // Calculate total price from selected services
-        const totalPrice = confirmingRequest.requestedChanges.serviceIds.reduce((sum, id) => {
-          const service = services[id];
-          return sum + (service?.price || 0);
-        }, 0);
+        // Build individual service prices
+        const servicePricesData: Record<string, number> = {};
+        let totalPrice = 0;
+        
+        confirmingRequest.requestedChanges.serviceIds.forEach((serviceId) => {
+          const service = services[serviceId];
+          const servicePrice = service?.price || 0;
+          servicePricesData[serviceId] = servicePrice;
+          totalPrice += servicePrice;
+        });
+        
+        // Store individual prices (enables per-service editing)
+        updateData.servicePrices = servicePricesData;
         updateData.bookedPrice = totalPrice;
-        updateData.totalPrice = totalPrice;
+        
+        // Calculate final total including any existing tip
+        const existingTip = appointment.tip || 0;
+        updateData.totalPrice = totalPrice + existingTip;
+        
+        // Mark as price edited (enables price editor UI)
+        updateData.isPriceEdited = true;
+        updateData.priceEditedAt = new Date().toISOString();
       }
       if (confirmingRequest.requestedChanges.notes !== undefined) {
         updateData.notes = confirmingRequest.requestedChanges.notes || '';
@@ -685,7 +706,9 @@ export default function Schedule() {
             }
             if (confirmingRequest.requestedChanges.serviceIds) {
               rollbackData.serviceId = appointment.serviceId;
+              rollbackData.serviceIds = (appointment as any).serviceIds || [appointment.serviceId];
               rollbackData.selectedServices = (appointment as any).selectedServices;
+              rollbackData.servicePrices = (appointment as any).servicePrices;
               rollbackData.duration = appointment.duration;
               rollbackData.bookedPrice = appointment.bookedPrice;
               rollbackData.totalPrice = appointment.totalPrice;
@@ -807,7 +830,17 @@ export default function Schedule() {
                       <div className="font-medium text-sm">
                         {format(safeParseDate(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration)}
                       </div>
-                      <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                      <div className="text-xs text-slate-600 truncate">
+                        {(() => {
+                          // Handle multiple services
+                          const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
+                          if (serviceIds.length > 1) {
+                            const serviceNames = serviceIds.map((serviceId: string) => services[serviceId]?.name || 'Service').filter(Boolean);
+                            return serviceNames.slice(0, 2).join(', ') + (serviceNames.length > 2 ? ` +${serviceNames.length - 2}` : '');
+                          }
+                          return services[a.serviceId]?.name || 'Service';
+                        })()}
+                      </div>
                       {a.customerName && (
                         <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
                       )}
@@ -840,7 +873,7 @@ export default function Schedule() {
                       )}
                     </div>
                     <div className="text-sm font-semibold text-terracotta">
-                      {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                      {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
                     </div>
                   </div>
                 ))}
@@ -886,7 +919,17 @@ export default function Schedule() {
                       <div className="font-medium text-sm">
                         {format(safeParseDate(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration)}
                       </div>
-                      <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
+                      <div className="text-xs text-slate-600 truncate">
+                        {(() => {
+                          // Handle multiple services
+                          const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
+                          if (serviceIds.length > 1) {
+                            const serviceNames = serviceIds.map((serviceId: string) => services[serviceId]?.name || 'Service').filter(Boolean);
+                            return serviceNames.slice(0, 2).join(', ') + (serviceNames.length > 2 ? ` +${serviceNames.length - 2}` : '');
+                          }
+                          return services[a.serviceId]?.name || 'Service';
+                        })()}
+                      </div>
                       {a.customerName && (
                         <div className="text-xs text-slate-500 truncate">{a.customerName}</div>
                       )}
@@ -944,7 +987,7 @@ export default function Schedule() {
                       )}
                     </div>
                     <div className="text-sm font-semibold text-terracotta">
-                      {fmtCurrency(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                      {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
                     </div>
                   </div>
                 ))}
@@ -1194,9 +1237,16 @@ export default function Schedule() {
                             // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
                             const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
                             const hasMultipleServices = serviceIds.length > 1;
-                            const serviceNames = hasMultipleServices 
-                              ? serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || ''
-                              : services[a.serviceId]?.name || 'Service';
+                            
+                            // Get service names - prioritize serviceIds array if it exists and has items
+                            let serviceNames = '';
+                            if (serviceIds.length > 0) {
+                              serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                            } else if (a.serviceId) {
+                              serviceNames = services[a.serviceId]?.name || 'Service';
+                            } else {
+                              serviceNames = 'Service';
+                            }
                             
                             return (
                               <div 
@@ -1313,9 +1363,16 @@ export default function Schedule() {
                           // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
                           const serviceIds = (a as any).serviceIds || (a as any).selectedServices || [];
                           const hasMultipleServices = serviceIds.length > 1;
-                          const serviceNames = hasMultipleServices 
-                            ? serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || ''
-                            : services[a.serviceId]?.name || 'Service';
+                          
+                          // Get service names - prioritize serviceIds array if it exists and has items
+                          let serviceNames = '';
+                          if (serviceIds.length > 0) {
+                            serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                          } else if (a.serviceId) {
+                            serviceNames = services[a.serviceId]?.name || 'Service';
+                          } else {
+                            serviceNames = 'Service';
+                          }
                           
                           return (
                             <li 
@@ -1501,9 +1558,6 @@ export default function Schedule() {
             weekStartDate={startOfWeek(month, { weekStartsOn: 0 })}
             appointments={appts}
             services={services}
-            businessHours={businessHours}
-            closures={closures}
-            specialHours={specialHours}
             onAppointmentClick={(appointment) => setSelectedAppointment(appointment)}
             onTimeSlotClick={(date, time) => {
               // Set the time on the date
@@ -1544,7 +1598,7 @@ export default function Schedule() {
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-sm font-semibold text-terracotta">
-                      {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0)}
+                      {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -1772,18 +1826,6 @@ export default function Schedule() {
       {showStaffManager && (
         <StaffManagerModal onClose={() => setShowStaffManager(false)} />
       )}
-
-
-      {/* Edit Appointment Modal */}
-      <EditAppointmentModal
-        appointment={editingAppointment}
-        service={editingAppointment ? services[editingAppointment.serviceId] : null}
-        onClose={() => setEditingAppointment(null)}
-        onUpdated={() => {
-          setEditingAppointment(null);
-          // Data will auto-refresh from Firestore listener
-        }}
-      />
 
       {/* Edit Request Confirmation Modal */}
       {confirmingRequest && (

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getAuth, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
@@ -52,6 +52,7 @@ export default function ClientDashboard() {
   const { db } = useFirebase();
   const auth = getAuth();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Record<string, Service>>({});
@@ -69,6 +70,9 @@ export default function ClientDashboard() {
   
   // Ref to prevent multiple simultaneous fetches
   const fetchingRef = useRef(false);
+  const retryTimeoutRef = useRef<number | null>(null);
+  const lastFetchTimeRef = useRef<number>(0);
+  const rateLimitCooldownRef = useRef<number>(0);
   
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<{
@@ -84,6 +88,19 @@ export default function ClientDashboard() {
     editRequests: false,
     consentForms: true, // Collapsed by default
   });
+
+  // Handle URL parameters for direct navigation to specific sections
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'bookings') {
+      // Expand the upcoming appointments section when tab=bookings is in URL
+      setCollapsedSections(prev => ({
+        ...prev,
+        upcoming: false,
+        past: false
+      }));
+    }
+  }, [searchParams]);
 
   const toggleSection = (section: keyof typeof collapsedSections) => {
     setCollapsedSections(prev => ({
@@ -127,29 +144,25 @@ export default function ClientDashboard() {
 
     fetchingRef.current = true;
     let unsubscribeAppointments: (() => void) | null = null;
+    let unsubscribeCustomer: (() => void) | null = null;
 
-    // Use findOrCreateCustomer to get the correct customer ID
-    const functions = getFunctions();
-    const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
-    
-    console.log(`🔍 Finding customer for auth.uid:`, user.uid);
+    // ✅ FIXED: Use user.uid directly as customer ID (matches MyBookingsCard and appointment creation)
+    const custId = user.uid;
+    console.log(`🔍 Using auth.uid as customer ID:`, custId);
 
-    findOrCreateCustomer({
-      authUid: user.uid,
-      email: user.email || undefined,
-      name: user.displayName || 'Customer',
-      phone: user.phoneNumber || undefined,
-    }).then((result: any) => {
-      const custId = result.data?.customerId;
-      if (!custId) {
-        console.log('❌ No customer ID returned from findOrCreateCustomer');
+    // Check if customer record exists
+    const customerRef = doc(db, 'customers', custId);
+    unsubscribeCustomer = onSnapshot(customerRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        console.log('❌ No customer record found for auth.uid:', custId);
         setAppointments([]);
         setHasCustomerRecord(false);
         setCustomerId(null);
+        fetchingRef.current = false;
         return;
       }
 
-      console.log('✅ Found customer ID:', custId);
+      console.log('✅ Customer record found for auth.uid:', custId);
       setHasCustomerRecord(true);
       setCustomerId(custId);
 
@@ -194,12 +207,8 @@ export default function ClientDashboard() {
         });
         console.log(`✅ Fetched ${appts.length} appointments for customer ${custId}`);
         setAppointments(appts);
+        fetchingRef.current = false;
       });
-    }).catch((error) => {
-      console.error('❌ Error finding customer:', error);
-      setAppointments([]);
-      setHasCustomerRecord(false);
-      setCustomerId(null);
     });
 
     return () => {
@@ -207,8 +216,26 @@ export default function ClientDashboard() {
       if (unsubscribeAppointments) {
         unsubscribeAppointments();
       }
+      if (unsubscribeCustomer) {
+        unsubscribeCustomer();
+      }
+      // Clear any pending retry timeout
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
     };
   }, [user?.uid, db]); // Only depend on user.uid, not the entire user object
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   // Fetch services
   useEffect(() => {
@@ -469,42 +496,66 @@ export default function ClientDashboard() {
           </div>
           {!collapsedSections.upcoming && (!hasCustomerRecord ? (
             <div className="text-center py-8">
-              <div className="text-4xl mb-3">🔧</div>
-              <p className="text-slate-600 mb-4">Customer profile not found. Let's fix this!</p>
-              <button
-                onClick={async () => {
-                  if (!user?.uid) return;
-                  try {
-                    console.log('🔄 Creating customer profile via findOrCreateCustomer...');
-                    const functions = getFunctions();
-                    const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
-                    
-                    const result = await findOrCreateCustomer({
-                      authUid: user.uid,
-                      name: user.displayName || 'Customer',
-                      email: user.email || null,
-                      phone: user.phoneNumber || null,
-                      profilePictureUrl: user.photoURL || null
-                    });
-                    
-                    console.log('✅ Customer profile created/updated:', result.data);
-                    // The real-time listener will automatically detect the customer document
-                  } catch (error: any) {
-                    console.error('❌ Failed to create customer profile:', error);
-                    alert(`Failed to create customer profile: ${error?.message || 'Unknown error'}`);
-                  }
-                }}
-                className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"
-              >
-                Create Customer Profile
-              </button>
+              {loading || fetchingRef.current ? (
+                <div className="flex flex-col items-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-terracotta mb-3"></div>
+                  <p className="text-slate-600">Loading your profile...</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center">
+                  <div className="text-4xl mb-3">🔧</div>
+                  <p className="text-slate-600 mb-4">Customer profile not found. Let's fix this!</p>
+                  <button
+                    onClick={async () => {
+                      if (!user?.uid) return;
+                      try {
+                        console.log('🔄 Creating customer profile...');
+                        const functions = getFunctions();
+                        const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
+                        
+                        const result = await findOrCreateCustomer({
+                          authUid: user.uid,
+                          name: user.displayName || 'Customer',
+                          email: user.email || null,
+                          phone: user.phoneNumber || null,
+                          profilePictureUrl: user.photoURL || null
+                        });
+                        
+                        console.log('✅ Customer profile created/updated:', result.data);
+                        // The real-time listener will automatically detect the customer document
+                      } catch (error: any) {
+                        console.error('❌ Failed to create customer profile:', error);
+                        alert(`Failed to create customer profile: ${error?.message || 'Unknown error'}`);
+                      }
+                    }}
+                    className="px-6 py-3 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors"
+                  >
+                    Create Customer Profile
+                  </button>
+                </div>
+              )}
             </div>
           ) : upcomingAppointments.length === 0 ? (
             <p className="text-slate-500">No upcoming appointments</p>
           ) : (
             <div className="space-y-4">
               {upcomingAppointments.map((apt) => {
+                // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                const serviceIds = (apt as any).serviceIds || (apt as any).selectedServices || [];
+                
+                // Get service names - prioritize serviceIds array if it exists and has items
+                let serviceNames = '';
+                if (serviceIds.length > 0) {
+                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                } else if (apt.serviceId) {
+                  serviceNames = services[apt.serviceId]?.name || 'Service';
+                } else {
+                  serviceNames = 'Service';
+                }
+                
+                // Get the first service for price calculation (backward compatibility)
                 const service = services[apt.serviceId];
+                
                 return (
                   <div
                     key={apt.id}
@@ -515,7 +566,7 @@ export default function ClientDashboard() {
                         {/* Service Name & Status */}
                         <div className="flex items-start justify-between mb-2">
                           <h3 className="font-semibold text-xl text-slate-900">
-                            {service?.name || 'Service'}
+                            {serviceNames}
                           </h3>
                           <span
                             className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -531,7 +582,7 @@ export default function ClientDashboard() {
                         {/* Service Name with Read More */}
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-sm text-slate-600">
-                            {service?.name || 'Service'}
+                            {serviceNames}
                           </span>
                           {service?.description && (
                             <button
@@ -616,7 +667,22 @@ export default function ClientDashboard() {
             {!collapsedSections.past && (
             <div className="space-y-4">
               {pastAppointments.map((apt) => {
+                // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                const serviceIds = (apt as any).serviceIds || (apt as any).selectedServices || [];
+                
+                // Get service names - prioritize serviceIds array if it exists and has items
+                let serviceNames = '';
+                if (serviceIds.length > 0) {
+                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                } else if (apt.serviceId) {
+                  serviceNames = services[apt.serviceId]?.name || 'Service';
+                } else {
+                  serviceNames = 'Service';
+                }
+                
+                // Get the first service for price calculation (backward compatibility)
                 const service = services[apt.serviceId];
+                
                 return (
                   <div
                     key={apt.id}
@@ -626,7 +692,7 @@ export default function ClientDashboard() {
                       {/* Service Name with Read More */}
                       <div className="flex items-center gap-2 mb-3">
                         <h3 className="font-semibold text-lg text-slate-800">
-                          {service?.name || 'Service'}
+                          {serviceNames}
                         </h3>
                         {service?.description && (
                           <button
@@ -691,7 +757,22 @@ export default function ClientDashboard() {
             {!collapsedSections.cancelled && (
             <div className="space-y-4">
               {cancelledAppointments.map((apt) => {
+                // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                const serviceIds = (apt as any).serviceIds || (apt as any).selectedServices || [];
+                
+                // Get service names - prioritize serviceIds array if it exists and has items
+                let serviceNames = '';
+                if (serviceIds.length > 0) {
+                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                } else if (apt.serviceId) {
+                  serviceNames = services[apt.serviceId]?.name || 'Service';
+                } else {
+                  serviceNames = 'Service';
+                }
+                
+                // Get the first service for price calculation (backward compatibility)
                 const service = services[apt.serviceId];
+                
                 return (
                   <div
                     key={apt.id}
@@ -702,7 +783,7 @@ export default function ClientDashboard() {
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-lg text-slate-800">
-                            {service?.name || 'Service'}
+                            {serviceNames}
                           </h3>
                           {service?.description && (
                             <button
@@ -783,6 +864,21 @@ export default function ClientDashboard() {
             <div className="space-y-4">
               {editRequests.filter(request => request.status === 'pending').map((request) => {
                 const appointment = appointments.find(apt => apt.id === request.appointmentId);
+                
+                // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                const serviceIds = appointment ? ((appointment as any).serviceIds || (appointment as any).selectedServices || []) : [];
+                
+                // Get service names - prioritize serviceIds array if it exists and has items
+                let serviceNames = '';
+                if (serviceIds.length > 0) {
+                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                } else if (appointment?.serviceId) {
+                  serviceNames = services[appointment.serviceId]?.name || 'Service';
+                } else {
+                  serviceNames = 'Service';
+                }
+                
+                // Get the first service for price calculation (backward compatibility)
                 const service = appointment ? services[appointment.serviceId] : null;
                 
                 return (
@@ -795,7 +891,7 @@ export default function ClientDashboard() {
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-lg text-slate-800">
-                            {service?.name || 'Service'} - Edit Request
+                            {serviceNames} - Edit Request
                           </h3>
                         </div>
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${

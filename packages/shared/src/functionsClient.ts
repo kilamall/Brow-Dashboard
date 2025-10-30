@@ -77,6 +77,8 @@ export async function finalizeBookingFromHoldClient(data: {
   customerId: string;
   price?: number;
   autoConfirm?: boolean;
+  serviceIds?: string[]; // Multi-service support
+  servicePrices?: Record<string, number>; // Individual service prices
 }): Promise<{ appointmentId: string; success: boolean }> {
   const { app } = initFirebase();
   const functions = getFunctions(app, 'us-central1');

@@ -89,11 +89,16 @@ export class MessagingService {
   // Listen to messages in real-time
   subscribeToMessages(
     customerId: string, 
-    callback: (messages: Message[]) => void
+    callback: (messages: Message[]) => void,
+    authUid?: string
   ): () => void {
+    // Use authUid if provided, otherwise fall back to customerId
+    // This ensures compatibility with Firestore security rules
+    const queryCustomerId = authUid || customerId;
+    
     const q = query(
       collection(this.db, 'messages'),
-      where('customerId', '==', customerId),
+      where('customerId', '==', queryCustomerId),
       orderBy('timestamp', 'asc')
     );
 
@@ -103,6 +108,13 @@ export class MessagingService {
         ...doc.data()
       } as Message));
       callback(messages);
+    }, (error: any) => {
+      // Permission errors are expected for non-customer users or during auth transitions
+      // Silently handle them without logging
+      if (error?.code !== 'permission-denied') {
+        console.error('Error subscribing to messages:', error);
+      }
+      callback([]);
     });
   }
 
@@ -158,8 +170,11 @@ export class MessagingService {
   }
 
   // Update conversation when new message is sent
-  async updateConversation(customerId: string, message: Partial<Message>): Promise<void> {
-    const conversationRef = doc(this.db, 'conversations', customerId);
+  async updateConversation(customerId: string, message: Partial<Message>, authUid?: string): Promise<void> {
+    // Use authUid if provided, otherwise fall back to customerId
+    // This ensures compatibility with Firestore security rules
+    const documentId = authUid || customerId;
+    const conversationRef = doc(this.db, 'conversations', documentId);
     
     // Use setDoc with merge to create or update the conversation
     await setDoc(conversationRef, {
@@ -213,8 +228,11 @@ export class MessagingService {
   }
 
   // Save FCM token for a customer
-  async saveCustomerToken(customerId: string, token: string): Promise<void> {
-    const tokenRef = doc(this.db, 'customer_tokens', customerId);
+  async saveCustomerToken(customerId: string, token: string, authUid?: string): Promise<void> {
+    // Use authUid if provided, otherwise fall back to customerId
+    // This ensures compatibility with Firestore security rules
+    const documentId = authUid || customerId;
+    const tokenRef = doc(this.db, 'customer_tokens', documentId);
     await setDoc(tokenRef, {
       customerId,
       token,

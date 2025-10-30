@@ -42,6 +42,7 @@ export default function MessagingInterface({ className = '' }: MessagingInterfac
         // Mark messages as read
         messagingService.markMessagesAsRead(selectedConversation, 'admin');
       }
+      // Admin doesn't need authUid since they have admin permissions
     );
 
     return () => {

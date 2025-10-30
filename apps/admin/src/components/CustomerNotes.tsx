@@ -28,7 +28,7 @@ const categoryColors: Record<NoteCategory, string> = {
 };
 
 export default function CustomerNotes({ customer, onUpdate }: CustomerNotesProps) {
-  const { db } = useFirebase();
+  const { db, auth } = useFirebase();
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -56,7 +56,7 @@ export default function CustomerNotes({ customer, onUpdate }: CustomerNotesProps
       await addCustomerNote(db, customer.id, {
         category: newNote.category,
         content: newNote.content.trim(),
-        addedBy: 'admin' // TODO: Get actual admin user ID
+        addedBy: auth.currentUser?.uid || 'unknown'
       });
 
       setNewNote({ category: 'general', content: '' });
@@ -118,6 +118,17 @@ export default function CustomerNotes({ customer, onUpdate }: CustomerNotesProps
   const cancelEditing = () => {
     setEditingNoteId(null);
     setEditNote({ category: 'general', content: '' });
+  };
+
+  // Function to get admin display name from UID
+  const getAdminDisplayName = (uid: string) => {
+    // If it's the current user, use their display name
+    if (auth.currentUser?.uid === uid) {
+      return auth.currentUser?.displayName || 'Admin';
+    }
+    // For other admins, we could fetch from a users collection or return a fallback
+    // For now, return a generic admin name
+    return 'Admin';
   };
 
   const notes = customer.structuredNotes || [];
@@ -289,7 +300,7 @@ export default function CustomerNotes({ customer, onUpdate }: CustomerNotesProps
                     {note.content}
                   </div>
                   <div className="text-xs text-slate-500 mt-2">
-                    Added by: {note.addedBy}
+                    Added by: {getAdminDisplayName(note.addedBy)}
                   </div>
                 </div>
               )}

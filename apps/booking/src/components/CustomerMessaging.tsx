@@ -18,7 +18,7 @@ export default function CustomerMessaging({
   appointmentId,
   className = '' 
 }: CustomerMessagingProps) {
-  const { db, app } = useFirebase();
+  const { db, app, auth } = useFirebase();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [messagingService, setMessagingService] = useState<MessagingService | null>(null);
@@ -32,8 +32,8 @@ export default function CustomerMessaging({
 
     // Request notification permission
     service.requestNotificationPermission().then((token) => {
-      if (token) {
-        service.saveCustomerToken(customerId, token);
+      if (token && auth.currentUser?.uid) {
+        service.saveCustomerToken(customerId, token, auth.currentUser.uid);
       }
     });
 
@@ -43,7 +43,8 @@ export default function CustomerMessaging({
       (msgs) => {
         setMessages(msgs);
         setLoading(false);
-      }
+      },
+      auth.currentUser?.uid
     );
 
     // Listen for foreground messages
@@ -56,7 +57,7 @@ export default function CustomerMessaging({
       unsubscribeMessages();
       unsubscribeForeground();
     };
-  }, [customerId, db, app]);
+  }, [customerId, db, app, auth]);
 
   useEffect(() => {
     scrollToBottom();
@@ -100,7 +101,7 @@ export default function CustomerMessaging({
         conversationData.appointmentId = appointmentId;
       }
 
-      await messagingService.updateConversation(customerId, conversationData);
+      await messagingService.updateConversation(customerId, conversationData, auth.currentUser?.uid);
 
       setNewMessage('');
     } catch (error) {

@@ -138,7 +138,7 @@ export const finalizeBookingFromHold = onCall(
       // SECURITY: Rate limit booking finalization (5 per minute per IP/user)
       await consumeRateLimit(rateLimiters.finalizeBooking, getUserIdentifier(req));
 
-      const { holdId, customer, customerId, price, autoConfirm = true } = req.data || {};
+      const { holdId, customer, customerId, price, autoConfirm = true, serviceIds, servicePrices } = req.data || {};
       // Your Appointment schema requires customerId; enforce it here
       assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
 
@@ -192,14 +192,45 @@ export const finalizeBookingFromHold = onCall(
         holdId
       });
       
+      // Handle multi-service appointments
+      const isMultiService = serviceIds && serviceIds.length > 1;
+      const finalServiceIds = serviceIds || [hold.serviceId];
+      const finalServicePrices = servicePrices || { [hold.serviceId]: bookedPrice };
+      
+      // Calculate total duration for multi-service appointments
+      let finalDuration = duration;
+      if (isMultiService && serviceIds) {
+        // Calculate duration from all services
+        let totalServiceDuration = 0;
+        for (const serviceId of serviceIds) {
+          const serviceDoc = await tx.get(db.collection('services').doc(serviceId));
+          if (serviceDoc.exists) {
+            const serviceData = serviceDoc.data();
+            totalServiceDuration += serviceData?.duration || 0;
+          }
+        }
+        if (totalServiceDuration > 0) {
+          finalDuration = totalServiceDuration;
+        }
+      }
+      
+      // Calculate total price for multi-service appointments
+      let finalBookedPrice = bookedPrice;
+      if (isMultiService && servicePrices) {
+        finalBookedPrice = Object.values(servicePrices).reduce((sum, price) => (sum as number) + (price as number), 0);
+      }
+      
       const appt = {
-        serviceId: hold.serviceId,
+        serviceId: hold.serviceId, // Keep first service for backward compatibility
+        serviceIds: finalServiceIds, // Multi-service support
+        selectedServices: finalServiceIds, // Legacy field for backward compatibility
         customerId: finalCustomerId,
         start: hold.start,
-        duration,
+        duration: finalDuration,
         status: 'pending', // Always create as pending, admin must confirm
-        bookedPrice,
-        totalPrice: bookedPrice, // Initially same as bookedPrice, can be updated with tips
+        bookedPrice: finalBookedPrice,
+        servicePrices: finalServicePrices, // Individual service prices
+        totalPrice: finalBookedPrice, // Initially same as bookedPrice, can be updated with tips
         tip: 0, // Default tip amount
         isPriceEdited: false, // Not edited initially
         // Small snapshot for convenience (optional)

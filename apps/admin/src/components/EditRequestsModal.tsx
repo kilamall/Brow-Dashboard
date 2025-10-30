@@ -129,21 +129,43 @@ export default function EditRequestsModal({ isOpen, onClose }: Props) {
         updateData.start = request.requestedChanges.start;
       }
       if (request.requestedChanges.serviceIds && request.requestedChanges.serviceIds.length > 0) {
+        // Set serviceIds field for multi-service support
+        updateData.serviceIds = request.requestedChanges.serviceIds;
+        
+        // Backward compatibility
         updateData.serviceId = request.requestedChanges.serviceIds[0];
         updateData.selectedServices = request.requestedChanges.serviceIds;
         
+        // Calculate total duration
         const totalDuration = request.requestedChanges.serviceIds.reduce((sum, id) => {
           const service = services[id];
           return sum + (service?.duration || 0);
         }, 0);
         updateData.duration = totalDuration;
         
-        const totalPrice = request.requestedChanges.serviceIds.reduce((sum, id) => {
-          const service = services[id];
-          return sum + (service?.price || 0);
-        }, 0);
+        // Build individual service prices
+        const servicePricesData: Record<string, number> = {};
+        let totalPrice = 0;
+        
+        request.requestedChanges.serviceIds.forEach((serviceId) => {
+          const service = services[serviceId];
+          const servicePrice = service?.price || 0;
+          servicePricesData[serviceId] = servicePrice;
+          totalPrice += servicePrice;
+        });
+        
+        // Store individual prices (enables per-service editing)
+        updateData.servicePrices = servicePricesData;
         updateData.bookedPrice = totalPrice;
-        updateData.totalPrice = totalPrice;
+        
+        // Calculate final total including any existing tip
+        const existingAppointment = appointments[request.appointmentId];
+        const existingTip = existingAppointment?.tip || 0;
+        updateData.totalPrice = totalPrice + existingTip;
+        
+        // Mark as price edited (enables price editor UI)
+        updateData.isPriceEdited = true;
+        updateData.priceEditedAt = new Date().toISOString();
       }
       if (request.requestedChanges.notes !== undefined) {
         updateData.notes = request.requestedChanges.notes || '';

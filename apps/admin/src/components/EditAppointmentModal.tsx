@@ -26,6 +26,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   const [notes, setNotes] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [tipAmount, setTipAmount] = useState('');
+  const [editedServicePrices, setEditedServicePrices] = useState<Record<string, string>>({});
+  const [useDefaultPrices, setUseDefaultPrices] = useState(true);
 
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
@@ -35,10 +37,18 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
     () => selectedServices.reduce((sum, service) => sum + service.duration, 0),
     [selectedServices]
   );
-  const totalPrice = useMemo(
-    () => selectedServices.reduce((sum, service) => sum + service.price, 0),
-    [selectedServices]
-  );
+  const totalPrice = useMemo(() => {
+    if (useDefaultPrices || selectedServiceIds.length <= 1) {
+      // Use default service prices
+      return selectedServices.reduce((sum, service) => sum + service.price, 0);
+    } else {
+      // Use edited service prices
+      return selectedServiceIds.reduce((sum, serviceId) => {
+        const priceStr = editedServicePrices[serviceId];
+        return sum + (parseFloat(priceStr) || 0);
+      }, 0);
+    }
+  }, [selectedServices, selectedServiceIds, editedServicePrices, useDefaultPrices]);
   const tipValue = parseFloat(tipAmount) || 0;
   const finalTotal = totalPrice + tipValue;
 
@@ -89,13 +99,57 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
   // Initialize form when appointment changes
   useEffect(() => {
-    if (appointment) {
+    if (appointment && services.length > 0) {
+      console.log('🔍 EditAppointmentModal - Appointment data:', {
+        serviceId: appointment.serviceId,
+        serviceIds: (appointment as any).serviceIds,
+        selectedServices: (appointment as any).selectedServices,
+        bookedPrice: appointment.bookedPrice,
+        totalPrice: appointment.totalPrice,
+        servicePrices: appointment.servicePrices
+      });
+      
       // Handle both single serviceId and multiple serviceIds
-      if ((appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds)) {
-        setSelectedServiceIds((appointment as any).serviceIds);
+      const serviceIds = (appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds) 
+        ? (appointment as any).serviceIds 
+        : appointment.serviceId 
+          ? [appointment.serviceId] 
+          : [];
+      
+      setSelectedServiceIds(serviceIds);
+      
+      // Initialize edited service prices
+      // If servicePrices exist, use them. Otherwise, check if we need to preserve an edited total price
+      if (appointment.servicePrices && Object.keys(appointment.servicePrices).length > 0) {
+        // Load existing edited prices from servicePrices field
+        const prices: Record<string, string> = {};
+        serviceIds.forEach((serviceId: string) => {
+          prices[serviceId] = (appointment.servicePrices?.[serviceId] || 0).toString();
+        });
+        setEditedServicePrices(prices);
+        setUseDefaultPrices(false);
+      } else if (serviceIds.length === 1) {
+        // Single service - check if it has a custom price
+        const serviceId = serviceIds[0];
+        const service = services.find(s => s.id === serviceId);
+        const hadCustomPrice = appointment.isPriceEdited || (appointment.bookedPrice && service && appointment.bookedPrice !== service.price);
+        
+        if (hadCustomPrice) {
+          // Use the edited bookedPrice for this single service
+          const prices: Record<string, string> = {};
+          prices[serviceId] = (appointment.bookedPrice || service?.price || 0).toString();
+          setEditedServicePrices(prices);
+          setUseDefaultPrices(false);
+        } else {
+          setEditedServicePrices({});
+          setUseDefaultPrices(true);
+        }
       } else {
-        setSelectedServiceIds(appointment.serviceId ? [appointment.serviceId] : []);
+        // Multi-service without existing servicePrices - use defaults
+        setEditedServicePrices({});
+        setUseDefaultPrices(true);
       }
+      
       setSelectedCustomerId(appointment.customerId);
       const startDate = parseISO(appointment.start);
       setDate(format(startDate, 'yyyy-MM-dd'));
@@ -104,7 +158,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
       setStatus(appointment.status);
       setTipAmount((appointment.tip ?? 0).toString());
     }
-  }, [appointment]);
+  }, [appointment, services]);
 
   const handleSave = async () => {
     if (!appointment) return;
@@ -113,6 +167,24 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
     try {
       const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
       const newStart = new Date(`${date}T${time}`);
+      
+      // Calculate service prices based on whether we're using defaults or edited prices
+      let servicePricesData: Record<string, number>;
+      if (useDefaultPrices || selectedServiceIds.length <= 1) {
+        // Use default service prices
+        servicePricesData = selectedServices.reduce((acc, service) => {
+          acc[service.id] = service.price;
+          return acc;
+        }, {} as Record<string, number>);
+      } else {
+        // Use edited service prices
+        servicePricesData = {};
+        for (const serviceId of selectedServiceIds) {
+          const priceStr = editedServicePrices[serviceId];
+          const service = services.find(s => s.id === serviceId);
+          servicePricesData[serviceId] = parseFloat(priceStr) || service?.price || 0;
+        }
+      }
       
       await updateDoc(doc(db, 'appointments', appointment.id), {
         serviceIds: selectedServiceIds,
@@ -124,10 +196,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
         start: newStart.toISOString(),
         duration: totalDuration,
         bookedPrice: totalPrice, // Legacy field - total price for all services
-        servicePrices: selectedServices.reduce((acc, service) => {
-          acc[service.id] = service.price; // Store individual service prices
-          return acc;
-        }, {} as Record<string, number>),
+        servicePrices: servicePricesData,
         tip: tipValue,
         totalPrice: finalTotal,
         isPriceEdited: true,
@@ -304,6 +373,79 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
                     </span>
                   </div>
                 </div>
+              </div>
+            )}
+            
+            {/* Individual Service Price Editor - Only for multi-service appointments */}
+            {selectedServices.length > 1 && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="font-medium text-sm text-blue-800">Individual Service Prices</h3>
+                    <p className="text-xs text-blue-600 mt-1">Adjust pricing per service (optional)</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (useDefaultPrices) {
+                        // Switch to custom prices mode
+                        setUseDefaultPrices(false);
+                        // Initialize with current service prices
+                        const prices: Record<string, string> = {};
+                        selectedServices.forEach((service) => {
+                          prices[service.id] = service.price.toString();
+                        });
+                        setEditedServicePrices(prices);
+                      } else {
+                        // Switch back to default prices
+                        setUseDefaultPrices(true);
+                        setEditedServicePrices({});
+                      }
+                    }}
+                    className="text-xs px-3 py-1 rounded bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors"
+                  >
+                    {useDefaultPrices ? 'Customize Prices' : 'Use Defaults'}
+                  </button>
+                </div>
+                
+                {!useDefaultPrices && (
+                  <div className="space-y-2">
+                    {selectedServices.map((service, index) => (
+                      <div key={service.id} className="bg-white border border-blue-200 rounded p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 bg-blue-200 text-blue-800 rounded-full flex items-center justify-center text-xs font-medium">
+                              {index + 1}
+                            </span>
+                            <span className="text-sm font-medium text-slate-800">{service.name}</span>
+                          </div>
+                          <span className="text-xs text-slate-500">Default: ${service.price.toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editedServicePrices[service.id] || service.price}
+                            onChange={(e) => setEditedServicePrices(prev => ({
+                              ...prev,
+                              [service.id]: e.target.value
+                            }))}
+                            className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <div className="bg-blue-100 rounded p-2 mt-2">
+                      <div className="text-xs text-blue-700 flex justify-between">
+                        <span>Services Subtotal:</span>
+                        <span className="font-semibold">${totalPrice.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

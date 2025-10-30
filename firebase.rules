@@ -127,8 +127,9 @@ service cloud.firestore {
     match /customer_tokens/{id} {
       allow read, write: if isAdmin() || 
         (request.auth != null && 
-         request.auth.uid == resource.data.customerId);
-      allow create: if request.resource.data.customerId is string &&
+         request.auth.uid == id);
+      allow create: if request.auth != null &&
+        request.resource.data.customerId is string &&
         request.resource.data.token is string;
     }
 

@@ -88,12 +88,14 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   // Initialize price and tip values when appointment changes
   useEffect(() => {
     if (appointment) {
-      console.log('🔍 Appointment price data:', {
+      console.log('🔍 EnhancedAppointmentDetailModal - Appointment data:', {
+        serviceId: appointment.serviceId,
+        serviceIds: (appointment as any).serviceIds,
+        selectedServices: (appointment as any).selectedServices,
         bookedPrice: appointment.bookedPrice,
         servicePrices: appointment.servicePrices,
         totalPrice: appointment.totalPrice,
         tip: appointment.tip,
-        serviceId: appointment.serviceId,
         servicePrice: services[appointment.serviceId]?.price
       });
       
@@ -112,7 +114,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
         setEditedPrice(''); // Clear single price field
       } else {
         // Legacy single price mode
-        setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+      setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
         setEditedServicePrices({}); // Clear individual prices
       }
       
@@ -173,7 +175,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
       setEditedPrice(''); // Clear single price field
     } else {
       // Legacy single price mode
-      setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
+    setEditedPrice((appointment.bookedPrice ?? services[appointment.serviceId]?.price ?? 0).toString());
       setEditedServicePrices({}); // Clear individual prices
     }
     
@@ -189,6 +191,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     
     let updateData: any = {
       isPriceEdited: true,
+      priceEditedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     
@@ -227,18 +230,18 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
       updateData.bookedPrice = totalServicePrice;
     } else {
       // Single service mode: legacy behavior
-      const newPrice = parseFloat(editedPrice);
-      const newTip = parseFloat(tipAmount) || 0;
-      const newTotal = newPrice + newTip;
-      
-      if (isNaN(newPrice) || newPrice < 0) {
-        alert('Please enter a valid price');
-        return;
-      }
-      
-      if (newTip < 0) {
-        alert('Tip amount cannot be negative');
-        return;
+    const newPrice = parseFloat(editedPrice);
+    const newTip = parseFloat(tipAmount) || 0;
+    const newTotal = newPrice + newTip;
+    
+    if (isNaN(newPrice) || newPrice < 0) {
+      alert('Please enter a valid price');
+      return;
+    }
+    
+    if (newTip < 0) {
+      alert('Tip amount cannot be negative');
+      return;
       }
       
       updateData.bookedPrice = newPrice;
@@ -588,13 +591,31 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                       <div className="space-y-1">
                         {serviceIds.map((serviceId: string, index: number) => {
                           const service = services[serviceId];
+                          const editedPrice = appointment.servicePrices?.[serviceId];
+                          const isPriceEdited = editedPrice !== undefined && editedPrice !== service?.price;
+                          const currentPrice = editedPrice ?? service?.price ?? 0;
+                          
                           return service ? (
                             <div key={serviceId} className="text-sm text-blue-700 flex items-center gap-2">
                               <span className="w-4 h-4 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium">
                                 {index + 1}
                               </span>
                               <span>{service.name}</span>
-                              <span className="text-blue-600">(${service.price})</span>
+                              <div className="flex items-center gap-2">
+                                <span className={isPriceEdited ? "text-green-700 font-medium" : "text-blue-600"}>
+                                  ${currentPrice}
+                                </span>
+                                {isPriceEdited && (
+                                  <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                                    Edited
+                                  </span>
+                                )}
+                                {isPriceEdited && (
+                                  <span className="text-xs text-slate-500 line-through">
+                                    ${service.price}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           ) : null;
                         })}
@@ -604,27 +625,55 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                 })()}
                 
                 {/* Clickable Price Section */}
-                <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm text-slate-600">Total Price</div>
-                      <div className="text-2xl font-bold text-terracotta">
-                        ${(appointment.totalPrice ?? appointment.bookedPrice ?? 0).toFixed(2)}
-                      </div>
-                      {appointment.tip && appointment.tip > 0 && (
-                        <div className="text-sm text-slate-600">
-                          Service: ${(appointment.bookedPrice ?? 0).toFixed(2)} + Tip: ${appointment.tip.toFixed(2)}
+                {(() => {
+                  // Get serviceIds again for the price section
+                  const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+                  const hasMultipleServices = serviceIds.length > 1;
+                  
+                  return (
+                    <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm text-slate-600">Total Price</div>
+                            {appointment.isPriceEdited && (
+                              <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">
+                                Edited
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-2xl font-bold text-terracotta">
+                              ${(appointment.totalPrice ?? appointment.bookedPrice ?? 0).toFixed(2)}
+                            </div>
+                            {appointment.isPriceEdited && hasMultipleServices && (() => {
+                              // Calculate default total
+                              const defaultTotal = serviceIds.reduce((sum, serviceId) => {
+                                return sum + (services[serviceId]?.price || 0);
+                              }, 0);
+                              return (
+                                <span className="text-sm text-slate-400 line-through">
+                                  ${defaultTotal.toFixed(2)}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                          {appointment.tip && appointment.tip > 0 && (
+                            <div className="text-sm text-slate-600">
+                              Service: ${(appointment.bookedPrice ?? 0).toFixed(2)} + Tip: ${appointment.tip.toFixed(2)}
+                            </div>
+                          )}
                         </div>
-                      )}
+                        <button
+                          onClick={() => setIsEditingPrice(true)}
+                          className="px-3 py-1 text-sm bg-terracotta text-white rounded hover:bg-terracotta/90 transition-colors"
+                        >
+                          Edit Price
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => setIsEditingPrice(true)}
-                      className="px-3 py-1 text-sm bg-terracotta text-white rounded hover:bg-terracotta/90 transition-colors"
-                    >
-                      Edit Price
-                    </button>
-                  </div>
-                </div>
+                  );
+                })()}
                 {/* Price Editing Modal */}
                 {isEditingPrice && (
                   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -695,21 +744,21 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                           } else {
                             // Single service mode: legacy behavior
                             return (
-                              <div>
-                                <label className="block text-sm text-slate-600 mb-1">Service Price</label>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-slate-500">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={editedPrice}
-                                    onChange={(e) => setEditedPrice(e.target.value)}
-                                    className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
-                                    placeholder="0.00"
-                                  />
-                                </div>
-                              </div>
+                        <div>
+                          <label className="block text-sm text-slate-600 mb-1">Service Price</label>
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-500">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editedPrice}
+                              onChange={(e) => setEditedPrice(e.target.value)}
+                              className="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
                             );
                           }
                         })()}

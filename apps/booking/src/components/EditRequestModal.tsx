@@ -80,7 +80,16 @@ export default function EditRequestModal({
     }
     return '';
   });
-  const [requestedServiceIds, setRequestedServiceIds] = useState<string[]>([appointment.serviceId]);
+  const [requestedServiceIds, setRequestedServiceIds] = useState<string[]>(() => {
+    // Handle both single serviceId and multiple serviceIds
+    if ((appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds) && (appointment as any).serviceIds.length > 0) {
+      return (appointment as any).serviceIds;
+    } else if ((appointment as any).selectedServices && Array.isArray((appointment as any).selectedServices) && (appointment as any).selectedServices.length > 0) {
+      return (appointment as any).selectedServices;
+    } else {
+      return appointment.serviceId ? [appointment.serviceId] : [];
+    }
+  });
   const [requestedNotes, setRequestedNotes] = useState(appointment.notes || '');
   const [reason, setReason] = useState('');
   
@@ -302,7 +311,11 @@ export default function EditRequestModal({
     }
 
     // Check if services have changed
-    const originalServiceIds = [appointment.serviceId];
+    const originalServiceIds = (appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds) && (appointment as any).serviceIds.length > 0
+      ? (appointment as any).serviceIds
+      : (appointment as any).selectedServices && Array.isArray((appointment as any).selectedServices) && (appointment as any).selectedServices.length > 0
+        ? (appointment as any).selectedServices
+        : appointment.serviceId ? [appointment.serviceId] : [];
     const servicesChanged = JSON.stringify(requestedServiceIds.sort()) !== JSON.stringify(originalServiceIds.sort());
     if (servicesChanged) {
       changes.serviceIds = requestedServiceIds;
@@ -346,7 +359,15 @@ export default function EditRequestModal({
           <div className="mb-6 p-4 bg-slate-50 rounded-lg">
             <h3 className="font-semibold text-slate-800 mb-2">Current Appointment</h3>
             <div className="space-y-1 text-sm text-slate-600">
-              <p><strong>Service:</strong> {currentService?.name || 'Unknown Service'}</p>
+              <div>
+                <strong>Service{requestedServiceIds.length > 1 ? 's' : ''}:</strong>{' '}
+                {requestedServiceIds.map((serviceId, index) => (
+                  <span key={serviceId}>
+                    {services[serviceId]?.name || 'Unknown Service'}
+                    {index < requestedServiceIds.length - 1 ? ', ' : ''}
+                  </span>
+                ))}
+              </div>
               <p><strong>Date:</strong> {safeFormatDate(appointment.start, 'EEEE, MMMM d, yyyy', 'Date TBD', `EditRequestModal ${appointment.id}`)}</p>
               <p><strong>Time:</strong> {safeFormatDate(appointment.start, 'h:mm a', 'Time TBD', `EditRequestModal ${appointment.id}`)} - {appointment.start && !isNaN(new Date(appointment.start).getTime()) ? format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a') : 'End Time TBD'}</p>
               {appointment.notes && <p><strong>Notes:</strong> {appointment.notes}</p>}
@@ -567,14 +588,28 @@ export default function EditRequestModal({
             </div>
 
             {/* Summary */}
-            {(requestedDate || requestedTime || JSON.stringify(requestedServiceIds.sort()) !== JSON.stringify([appointment.serviceId].sort()) || requestedNotes !== (appointment.notes || '')) && (
+            {(requestedDate || requestedTime || JSON.stringify(requestedServiceIds.sort()) !== JSON.stringify(((() => {
+                const originalServiceIds = (appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds) && (appointment as any).serviceIds.length > 0
+                  ? (appointment as any).serviceIds
+                  : (appointment as any).selectedServices && Array.isArray((appointment as any).selectedServices) && (appointment as any).selectedServices.length > 0
+                    ? (appointment as any).selectedServices
+                    : appointment.serviceId ? [appointment.serviceId] : [];
+                return originalServiceIds;
+              })()).sort()) || requestedNotes !== (appointment.notes || '')) && (
               <div className="p-4 bg-blue-50 rounded-lg">
                 <h4 className="font-semibold text-blue-800 mb-2">Change Summary</h4>
                 <div className="space-y-1 text-sm text-blue-700">
                   {requestedDate && requestedTime && (
                     <p><strong>New Date/Time:</strong> {format(new Date(`${requestedDate}T${requestedTime}`), 'EEEE, MMMM d, yyyy \'at\' h:mm a')}</p>
                   )}
-                  {JSON.stringify(requestedServiceIds.sort()) !== JSON.stringify([appointment.serviceId].sort()) && (
+                  {JSON.stringify(requestedServiceIds.sort()) !== JSON.stringify(((() => {
+                      const originalServiceIds = (appointment as any).serviceIds && Array.isArray((appointment as any).serviceIds) && (appointment as any).serviceIds.length > 0
+                        ? (appointment as any).serviceIds
+                        : (appointment as any).selectedServices && Array.isArray((appointment as any).selectedServices) && (appointment as any).selectedServices.length > 0
+                          ? (appointment as any).selectedServices
+                          : appointment.serviceId ? [appointment.serviceId] : [];
+                      return originalServiceIds;
+                    })()).sort()) && (
                     <div>
                       <p><strong>New Services:</strong></p>
                       <ul className="ml-4 list-disc">

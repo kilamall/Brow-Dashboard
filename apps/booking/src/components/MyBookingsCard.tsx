@@ -197,14 +197,26 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
           {upcomingCount > 0 ? (
             <div className="p-4 space-y-3">
               {upcomingAppointments.slice(0, 2).map((apt) => {
-                const service = services[apt.serviceId];
+                // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
+                const serviceIds = (apt as any).serviceIds || (apt as any).selectedServices || [];
+                
+                // Get service names - prioritize serviceIds array if it exists and has items
+                let serviceNames = '';
+                if (serviceIds.length > 0) {
+                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
+                } else if (apt.serviceId) {
+                  serviceNames = services[apt.serviceId]?.name || 'Service';
+                } else {
+                  serviceNames = 'Service';
+                }
+                
                 return (
                   <div key={apt.id} className="bg-slate-50 rounded-lg p-3">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <h4 className="font-medium text-slate-800 text-sm">
-                            {service?.name || 'Service'}
+                            {serviceNames}
                           </h4>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                             apt.status === 'confirmed'
