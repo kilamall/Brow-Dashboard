@@ -32,6 +32,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const { db, functions } = useFirebase();
 
   useEffect(() => {
@@ -252,9 +253,25 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                     
                     <div className="flex justify-between items-start flex-1 min-w-0">
                       <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-medium text-gray-900 truncate">
-                          {customer?.name || 'SMS Customer'}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <input
+                            id={`select-sms-${phoneNumber}`}
+                            name={`select-sms-${phoneNumber}`}
+                            type="checkbox"
+                            checked={selectedPhones.has(phoneNumber)}
+                            onChange={(e) => {
+                              setSelectedPhones(prev => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(phoneNumber); else next.delete(phoneNumber);
+                                return next;
+                              });
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <h3 className="text-sm font-medium text-gray-900 truncate">
+                            {customer?.name || 'SMS Customer'}
+                          </h3>
+                        </div>
                       <p className="text-xs text-gray-500 truncate">
                         {phoneNumber}
                       </p>
@@ -348,6 +365,34 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
 
             {/* Message Input */}
             <div className="p-4 border-t border-gray-200">
+              {selectedPhones.size > 0 && (
+                <div className="mb-3">
+                  <button
+                    onClick={async () => {
+                      const confirmDelete = confirm(`Delete ${selectedPhones.size} selected SMS threads?`);
+                      if (!confirmDelete) return;
+                      try {
+                        const phones = Array.from(selectedPhones);
+                        for (const phone of phones) {
+                          const q = query(collection(db, 'sms_conversations'), where('phoneNumber', '==', phone));
+                          const snap = await getDocs(q);
+                          const batch = writeBatch(db);
+                          snap.docs.forEach(d => batch.delete(doc(db, 'sms_conversations', d.id)));
+                          await batch.commit();
+                        }
+                        setSelectedPhones(new Set());
+                        setSelectedCustomer(null);
+                      } catch (e) {
+                        console.error('Bulk delete SMS threads failed:', e);
+                        alert('Failed to delete selected SMS threads.');
+                      }
+                    }}
+                    className="px-3 py-1 rounded-md text-sm bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Delete Selected Threads
+                  </button>
+                </div>
+              )}
               <div className="flex space-x-2">
                 <input
                   id="sms-message-input"

@@ -27,6 +27,7 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'ai'>('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Load conversations
   useEffect(() => {
@@ -283,13 +284,32 @@ export default function Messages() {
             filteredConversations.map((conv) => (
               <div
                 key={conv.id}
-                onClick={() => setSelectedConversation(conv)}
+                onClick={(e) => {
+                  // Prevent row click when toggling checkbox
+                  const target = e.target as HTMLElement;
+                  if ((target as HTMLInputElement).type !== 'checkbox') setSelectedConversation(conv);
+                }}
                 className={`p-4 border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors ${
                   selectedConversation?.id === conv.id ? 'bg-blue-50' : ''
                 }`}
               >
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
+                    <input
+                      id={`select-conv-${conv.id}`}
+                      name={`select-conv-${conv.id}`}
+                      type="checkbox"
+                      checked={selectedIds.has(conv.id)}
+                      onChange={(e) => {
+                        setSelectedIds(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(conv.id); else next.delete(conv.id);
+                          return next;
+                        });
+                      }}
+                      className="mr-1"
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <h3 className="font-semibold text-gray-900">{conv.customerName}</h3>
                     {conv.hasAIResponse && (
                       <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full">
@@ -334,6 +354,35 @@ export default function Messages() {
                   <p className="text-sm text-gray-600">{selectedConversation.customerEmail}</p>
                 </div>
                 <div className="flex gap-2">
+                  {selectedIds.size > 0 && (
+                    <button
+                      onClick={async () => {
+                        const confirmDelete = confirm(`Delete ${selectedIds.size} selected conversations?`);
+                        if (!confirmDelete) return;
+                        try {
+                          const toDelete = conversations.filter(c => selectedIds.has(c.id));
+                          for (const conv of toDelete) {
+                            const q = query(
+                              collection(db, 'messages'),
+                              where('customerId', '==', conv.customerId)
+                            );
+                            const snap = await getDocs(q);
+                            const batch = writeBatch(db);
+                            snap.docs.forEach(d => batch.delete(doc(db, 'messages', d.id)));
+                            await batch.commit();
+                            await deleteDoc(doc(db, 'conversations', conv.id));
+                          }
+                          setSelectedIds(new Set());
+                        } catch (e) {
+                          console.error('Bulk delete failed:', e);
+                          alert('Failed to delete selected conversations.');
+                        }
+                      }}
+                      className="px-3 py-1 rounded-md text-sm bg-red-600 text-white hover:bg-red-700"
+                    >
+                      Delete Selected
+                    </button>
+                  )}
                   <button
                     onClick={markAllAsReadNow}
                     className="px-3 py-1 rounded-md text-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
