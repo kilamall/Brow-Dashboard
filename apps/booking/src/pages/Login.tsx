@@ -148,6 +148,23 @@ export default function Login() {
           setError('Please verify your email before signing in. Check your inbox for the verification link.');
           return;
         }
+
+        // Ensure customer record is linked on returning email/password sign-in
+        if (userCredential.user) {
+          try {
+            const { getFunctions, httpsCallable } = await import('firebase/functions');
+            const functions = getFunctions();
+            const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+            await findOrCreate({
+              email: userCredential.user.email,
+              phone: null,
+              name: userCredential.user.displayName || 'Customer',
+              authUid: userCredential.user.uid,
+            });
+          } catch (linkErr) {
+            console.warn('Customer linkage on email sign-in failed (non-fatal):', linkErr);
+          }
+        }
       }
       
       // Restore booking state if coming from booking flow
@@ -407,7 +424,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Try to sign in temporarily to send verification email
+      // Sign in temporarily ONLY to send verification email, then immediately sign out
       const tempUser = await signInWithEmailAndPassword(auth, unverifiedEmail, password);
       
       if (tempUser.user) {
@@ -418,16 +435,13 @@ export default function Login() {
         
         console.log('Verification email sent successfully');
         
-        // Don't sign out - let them stay signed in after verification
-        setError(''); // Clear any errors
-        alert('Verification email sent! Please check your inbox and click the verification link. You can then refresh this page to continue.');
-        
-        // Hide the verification message since they're now signed in
-        setNeedsVerification(false);
-        setUnverifiedEmail('');
-        
-        // Redirect them to the return URL
-        nav(returnTo);
+        // Immediately sign out to prevent accessing the app prior to verification
+        await auth.signOut();
+        setError('');
+        alert('Verification email sent! Please check your inbox and click the verification link, then sign in again.');
+        // Keep the verification prompt visible and require a fresh login after verifying
+        setNeedsVerification(true);
+        setUnverifiedEmail(unverifiedEmail);
       }
     } catch (err: any) {
       console.error('Resend verification error:', err);

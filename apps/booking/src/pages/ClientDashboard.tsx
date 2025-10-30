@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getAuth, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, addDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, orderBy, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import type { Appointment, Service, SkinAnalysis, CustomerConsent, AppointmentEditRequest } from '@buenobrows/shared/types';
 import { watchCustomerConsents } from '@buenobrows/shared/consentFormHelpers';
 import { format } from 'date-fns';
@@ -146,70 +146,115 @@ export default function ClientDashboard() {
     let unsubscribeAppointments: (() => void) | null = null;
     let unsubscribeCustomer: (() => void) | null = null;
 
-    // ✅ FIXED: Use user.uid directly as customer ID (matches MyBookingsCard and appointment creation)
-    const custId = user.uid;
-    console.log(`🔍 Using auth.uid as customer ID:`, custId);
+    // Resolve the correct customerId: prefer customers/{uid}, otherwise find by authUid or email
+    (async () => {
+      try {
+        const custIdCandidate = user.uid;
+        console.log(`🔍 Looking up customer for auth.uid:`, custIdCandidate);
 
-    // Check if customer record exists
-    const customerRef = doc(db, 'customers', custId);
-    unsubscribeCustomer = onSnapshot(customerRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        console.log('❌ No customer record found for auth.uid:', custId);
-        setAppointments([]);
-        setHasCustomerRecord(false);
-        setCustomerId(null);
-        fetchingRef.current = false;
-        return;
-      }
-
-      console.log('✅ Customer record found for auth.uid:', custId);
+        const customerRef = doc(db, 'customers', custIdCandidate);
+        const directSnapUnsub = onSnapshot(customerRef, async (snapshot) => {
+          // If direct doc exists, use it
+          if (snapshot.exists()) {
+            const resolvedId = custIdCandidate;
+            console.log('✅ Customer record found for auth.uid:', resolvedId);
       setHasCustomerRecord(true);
-      setCustomerId(custId);
+            setCustomerId(resolvedId);
 
-      // Fetch appointments for this customer
+            // Start appointments listener
       const appointmentsRef = collection(db, 'appointments');
       const appointmentsQuery = query(
         appointmentsRef,
-        where('customerId', '==', custId)
+              where('customerId', '==', resolvedId)
       );
-
       unsubscribeAppointments = onSnapshot(appointmentsQuery, (snapshot) => {
         const appts: Appointment[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
           const apt = { id: doc.id, ...data } as Appointment;
-          
-          // ENHANCED LOGGING: Check for invalid dates at source
           if (!apt.start) {
-            console.error(`🚨 INVALID APPOINTMENT: Missing 'start' field`, {
-              appointmentId: doc.id,
-              customerId: custId,
-              serviceId: apt.serviceId,
-              status: apt.status,
-              rawData: data
-            });
+                  console.error(`🚨 INVALID APPOINTMENT: Missing 'start' field`, { appointmentId: doc.id, customerId: resolvedId, rawData: data });
           } else {
             const testDate = new Date(apt.start);
             if (isNaN(testDate.getTime())) {
-              console.error(`🚨 INVALID APPOINTMENT: Malformed 'start' date`, {
-                appointmentId: doc.id,
-                customerId: custId,
-                startValue: apt.start,
-                startType: typeof apt.start,
-                serviceId: apt.serviceId,
-                status: apt.status,
-                rawData: data
-              });
+                    console.error(`🚨 INVALID APPOINTMENT: Malformed 'start' date`, { appointmentId: doc.id, customerId: resolvedId, startValue: apt.start });
             }
           }
-          
           appts.push(apt);
         });
-        console.log(`✅ Fetched ${appts.length} appointments for customer ${custId}`);
+              console.log(`✅ Fetched ${appts.length} appointments for customer ${resolvedId}`);
         setAppointments(appts);
         fetchingRef.current = false;
       });
-    });
+            unsubscribeCustomer = directSnapUnsub;
+            return;
+          }
+
+          // Otherwise, try by authUid
+          console.log('❌ No customers/{uid} doc. Searching by authUid...');
+          const customersRef = collection(db, 'customers');
+          const byAuthUidQ = query(customersRef, where('authUid', '==', user.uid));
+          const byAuthUidSnap = await getDocs(byAuthUidQ);
+          if (!byAuthUidSnap.empty) {
+            const first = byAuthUidSnap.docs[0];
+            const resolvedId = first.id;
+            console.log('✅ Found customer by authUid:', resolvedId);
+            setHasCustomerRecord(true);
+            setCustomerId(resolvedId);
+            // Ensure the record has authUid set
+            try { await updateDoc(doc(db, 'customers', resolvedId), { authUid: user.uid }); } catch {}
+            const appointmentsRef = collection(db, 'appointments');
+            const appointmentsQuery = query(appointmentsRef, where('customerId', '==', resolvedId));
+            unsubscribeAppointments = onSnapshot(appointmentsQuery, (snapshot) => {
+              const appts: Appointment[] = [];
+              snapshot.forEach((doc) => appts.push({ id: doc.id, ...doc.data() } as Appointment));
+              setAppointments(appts);
+              fetchingRef.current = false;
+            });
+            return;
+          }
+
+          // Finally, try by email if available
+          if (user.email) {
+            console.log('🔎 Searching customer by email:', user.email);
+            const byEmailQ = query(customersRef, where('email', '==', user.email));
+            const byEmailSnap = await getDocs(byEmailQ);
+            if (!byEmailSnap.empty) {
+              const first = byEmailSnap.docs[0];
+              const resolvedId = first.id;
+              console.log('✅ Found customer by email:', resolvedId);
+              setHasCustomerRecord(true);
+              setCustomerId(resolvedId);
+              // Link authUid for future lookups
+              try { await updateDoc(doc(db, 'customers', resolvedId), { authUid: user.uid }); } catch {}
+              const appointmentsRef = collection(db, 'appointments');
+              const appointmentsQuery = query(appointmentsRef, where('customerId', '==', resolvedId));
+              unsubscribeAppointments = onSnapshot(appointmentsQuery, (snapshot) => {
+                const appts: Appointment[] = [];
+                snapshot.forEach((doc) => appts.push({ id: doc.id, ...doc.data() } as Appointment));
+                setAppointments(appts);
+                fetchingRef.current = false;
+              });
+              return;
+            }
+          }
+
+          // Not found anywhere
+          console.log('❌ No customer record found by uid, authUid, or email');
+          setAppointments([]);
+          setHasCustomerRecord(false);
+          setCustomerId(null);
+          fetchingRef.current = false;
+        });
+        unsubscribeCustomer = directSnapUnsub;
+      } catch (e) {
+        console.error('❌ Error resolving customer record:', e);
+        setAppointments([]);
+        setHasCustomerRecord(false);
+        setCustomerId(null);
+        fetchingRef.current = false;
+      }
+    })();
 
     return () => {
       fetchingRef.current = false;

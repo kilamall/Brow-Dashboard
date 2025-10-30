@@ -424,6 +424,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
                         <div className="flex items-center gap-2">
                           <span className="text-slate-500">$</span>
                           <input
+                            id={`service-price-${service.id}`}
+                            name={`servicePrice-${service.id}`}
                             type="number"
                             step="0.01"
                             min="0"
@@ -452,8 +454,10 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
           {/* Customer */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
+            <label htmlFor="edit-appointment-customer" className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
             <select
+              id="edit-appointment-customer"
+              name="customerId"
               value={selectedCustomerId}
               onChange={(e) => setSelectedCustomerId(e.target.value)}
               className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
@@ -468,10 +472,12 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
           {/* Tip Amount */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Tip Amount (optional)</label>
+            <label htmlFor="edit-appointment-tip" className="block text-sm font-medium text-slate-700 mb-1">Tip Amount (optional)</label>
             <div className="flex items-center gap-2">
               <span className="text-slate-500">$</span>
               <input
+                id="edit-appointment-tip"
+                name="tipAmount"
                 type="number"
                 step="0.01"
                 min="0"
@@ -495,8 +501,10 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
           {/* Date & Time */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Date *</label>
+              <label htmlFor="edit-appointment-date" className="block text-sm font-medium text-slate-700 mb-1">Date *</label>
               <input
+                id="edit-appointment-date"
+                name="date"
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
@@ -505,8 +513,10 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Time *</label>
+              <label htmlFor="edit-appointment-time" className="block text-sm font-medium text-slate-700 mb-1">Time *</label>
               <input
+                id="edit-appointment-time"
+                name="time"
                 type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
@@ -518,8 +528,10 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
           {/* Status */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
+            <label htmlFor="edit-appointment-status" className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
             <select
+              id="edit-appointment-status"
+              name="status"
               value={status}
               onChange={(e) => setStatus(e.target.value as 'confirmed' | 'pending' | 'cancelled')}
               className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
@@ -532,7 +544,7 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="edit-appointment-notes" className="block text-sm font-medium text-slate-700 mb-1">
               Appointment-Specific Notes (optional)
             </label>
             <p className="text-xs text-slate-500 mb-2">
@@ -540,6 +552,8 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
               Use Customer Notes for preferences, allergies, etc.
             </p>
             <textarea
+              id="edit-appointment-notes"
+              name="notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}

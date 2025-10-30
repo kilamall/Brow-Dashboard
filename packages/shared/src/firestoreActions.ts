@@ -369,7 +369,6 @@ export async function ensureCustomerDataConsistency(
 
 export async function deleteCustomer(db: Firestore, id: string) {
   try {
-    console.log('🗑️ deleteCustomer: Starting deletion for customer ID:', id);
     
     // Check if customer exists first
     const customerRef = doc(db, 'customers', id);
@@ -379,12 +378,9 @@ export async function deleteCustomer(db: Firestore, id: string) {
       throw new Error(`Customer with ID ${id} does not exist`);
     }
     
-    console.log('✅ deleteCustomer: Customer exists, proceeding with deletion');
-    
     // Delete the customer document
     await deleteDoc(customerRef);
     
-    console.log('✅ deleteCustomer: Customer deleted successfully');
     
     // Soft-delete alternative -> await updateCustomer(db, id, { status: 'blocked' });
   } catch (error) {
@@ -424,18 +420,10 @@ export function watchCustomers(db: Firestore, term: string | undefined, cb: (row
     customers = customers.filter(customer => {
       // Hide customers that have been migrated or have migratedTo field
       const isMigrated = customer.identityStatus === 'migrated' || customer.migratedTo;
-      if (isMigrated) {
-        console.log('🚫 Hiding migrated customer:', customer.name, customer.id, {
-          identityStatus: customer.identityStatus,
-          migratedTo: customer.migratedTo
-        });
-      }
       return !isMigrated;
     });
     
-    if (beforeFilter !== customers.length) {
-      console.log(`📊 Filtered out ${beforeFilter - customers.length} migrated customers`);
-    }
+    
     
     // Case-insensitive filtering
     if (searchTerm) {
@@ -479,7 +467,6 @@ export function watchAppointmentsByDay(db: Firestore, day: Date, cb: (rows: Appo
     // Handle permission errors gracefully - if user doesn't have permission, return empty array
     console.warn('Error watching appointments:', error);
     if (error.code === 'permission-denied') {
-      console.log('Permission denied for appointments - returning empty array for availability calculation');
       cb([]);
     } else {
       // For other errors, still return empty array to prevent UI breaking
@@ -1030,7 +1017,6 @@ export function watchSpecialHours(
         ranges: ranges
       });
     });
-    console.log('[watchSpecialHours] Received special hours:', specialHours);
     cb(specialHours);
   });
 }

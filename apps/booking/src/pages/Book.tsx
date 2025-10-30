@@ -2152,6 +2152,8 @@ export default function Book() {
                             ) : (sentEmailCode || sentEmailCode === 'sent') ? (
                               <div className="flex gap-2">
                                 <input
+                                  id="email-verification-code"
+                                  name="emailVerificationCode"
                                   type="text"
                                   placeholder="Enter 6-digit code"
                                   value={emailVerificationCode}
@@ -2202,6 +2204,8 @@ export default function Book() {
                             ) : (sentPhoneCode || sentPhoneCode === 'sent') ? (
                               <div className="flex gap-2">
                                 <input
+                                  id="phone-verification-code"
+                                  name="phoneVerificationCode"
                                   type="text"
                                   placeholder="Enter 6-digit code"
                                   value={phoneVerificationCode}

@@ -97,7 +97,6 @@ export default function CalendarDayView({ date, appointments, services, business
     const newHour = Math.max(6, Math.min(22, Math.floor((y - dragStart.offsetY) / hourHeight) + 6));
     
     // Update appointment time (this would need to be implemented with proper backend calls)
-    console.log('Dragging to hour:', newHour);
   };
 
   const handleMouseUp = () => {

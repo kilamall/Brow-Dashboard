@@ -9,6 +9,14 @@ import { ErrorCategory } from '@buenobrows/shared/errorHandling';
 import App from './App';
 import './index.css';
 
+// Silence non-essential console output in production
+if (import.meta.env.PROD) {
+  const noop = () => {};
+  console.log = noop;
+  console.debug = noop;
+  console.info = noop;
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary 

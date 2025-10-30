@@ -1,3 +1,50 @@
+// Global console filter: keep production logs clean unless explicitly enabled
+import * as admin from 'firebase-admin';
+
+(() => {
+  // Initialize admin if needed
+  if (!admin.apps.length) {
+    admin.initializeApp();
+  }
+
+  const original = { log: console.log, info: console.info, debug: console.debug };
+  const noop = () => {};
+  const apply = (enabled: boolean) => {
+    if (enabled) {
+      console.log = original.log as any;
+      console.info = original.info as any;
+      console.debug = original.debug as any;
+    } else {
+      console.log = noop as any;
+      console.info = noop as any;
+      console.debug = noop as any;
+    }
+  };
+
+  // Env var override
+  if (process.env.DEBUG_LOGS === 'true') {
+    apply(true);
+    return;
+  }
+
+  // Read flag from Firestore and refresh periodically
+  const ref = admin.firestore().doc('settings/developerOptions');
+  const refresh = async () => {
+    try {
+      const snap = await ref.get();
+      const enabled = !!(snap.exists && (snap.data() as any)?.debugLogs);
+      apply(enabled);
+    } catch {
+      // On failure, default to disabled
+      apply(false);
+    }
+  };
+
+  // Initial read and periodic refresh
+  refresh();
+  setInterval(refresh, 60_000).unref();
+})();
+
 // Export all Cloud Functions
 export * from './holds.js';
 export * from './messaging.js';

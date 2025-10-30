@@ -511,8 +511,10 @@ function EmailTemplateEditor({ template, onSave, onCancel, onResetToDefault }: E
       <div className="space-y-6">
         {/* Subject Line */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">Subject Line</label>
+          <label htmlFor="email-template-subject" className="block text-sm font-medium text-slate-700 mb-2">Subject Line</label>
           <input
+            id="email-template-subject"
+            name="subject"
             type="text"
             value={editedTemplate.subject}
             onChange={(e) => handleSubjectChange(e.target.value)}
@@ -524,7 +526,7 @@ function EmailTemplateEditor({ template, onSave, onCancel, onResetToDefault }: E
         {/* Template Content */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-slate-700">Template Content</label>
+            <label htmlFor="email-template-html" className="block text-sm font-medium text-slate-700">Template Content</label>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setPreviewMode('html')}
@@ -551,6 +553,8 @@ function EmailTemplateEditor({ template, onSave, onCancel, onResetToDefault }: E
           
           {previewMode === 'html' ? (
             <textarea
+              id="email-template-html"
+              name="html"
               value={editedTemplate.html}
               onChange={(e) => handleHtmlChange(e.target.value)}
               className="w-full h-96 px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-terracotta focus:border-transparent font-mono text-sm"

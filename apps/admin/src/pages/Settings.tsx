@@ -15,7 +15,7 @@ import type { AnalyticsTargets, BusinessHours, BusinessInfo, HomePageContent, Ap
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { format, parseISO } from 'date-fns';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, query, onSnapshot, orderBy, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, doc, getDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import DataManagement from '../components/DataManagement';
 import VerificationSettings from '../components/VerificationSettings';
@@ -225,10 +225,19 @@ export default function Settings() {
         )}
 
         {activeTab === 'accessibility' && (
-          <section className="bg-white rounded-xl shadow-soft p-6">
-            <h2 className="font-serif text-xl mb-2">Accessibility Settings</h2>
-            <p className="text-sm text-slate-600 mb-6">Customize the interface for better accessibility and reduced stress</p>
+          <section className="bg-white rounded-xl shadow-soft p-6 space-y-6">
+            <div>
+              <h2 className="font-serif text-xl mb-2">Accessibility Settings</h2>
+              <p className="text-sm text-slate-600">Customize the interface for better accessibility and reduced stress</p>
+            </div>
             <AccessibilitySettings />
+
+            {/* Developer Options */}
+            <div className="pt-6 border-t">
+              <h3 className="font-serif text-lg mb-2">Developer Options</h3>
+              <p className="text-sm text-slate-600 mb-4">Control advanced options for troubleshooting</p>
+              <DeveloperOptions />
+            </div>
           </section>
         )}
 
@@ -2241,6 +2250,93 @@ function AccessibilitySettings() {
           {saving ? 'Saving…' : 'Save Accessibility Settings'}
         </button>
         {msg && <span className={`text-sm ${msg === 'Settings saved successfully' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+// -------------------- Developer Options --------------------
+function DeveloperOptions() {
+  const { db } = useFirebase();
+  const [debugLogs, setDebugLogs] = useState<boolean>(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const saved = localStorage.getItem('admin:debugLogs');
+    if (saved != null) setDebugLogs(saved === 'true');
+    (async () => {
+      try {
+        const ref = doc(db, 'settings', 'developerOptions');
+        const snap = await getDoc(ref);
+        if (!cancelled && snap.exists()) {
+          const data = snap.data() as any;
+          if (typeof data.debugLogs === 'boolean') {
+            setDebugLogs(data.debugLogs);
+            localStorage.setItem('admin:debugLogs', data.debugLogs ? 'true' : 'false');
+            try { (window as any).__applyConsoleFilter?.(data.debugLogs); } catch {}
+          }
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setMsg('');
+    try {
+      localStorage.setItem('admin:debugLogs', debugLogs ? 'true' : 'false');
+      // Apply immediately without refresh if available (prod only)
+      try {
+        (window as any).__applyConsoleFilter?.(debugLogs);
+      } catch {}
+      // Persist to Firestore for Cloud Functions to read
+      try {
+        const ref = doc(db, 'settings', 'developerOptions');
+        await setDoc(ref, { debugLogs, updatedAt: serverTimestamp() }, { merge: true });
+      } catch {}
+      setMsg('Settings saved');
+      setTimeout(() => setMsg(''), 2500);
+    } catch (e) {
+      setMsg('Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <div>
+          <div className="font-medium text-slate-800">Enable Debug Logs</div>
+          <div className="text-sm text-slate-600 mt-1">Show `console.log/info/debug` messages in the Admin app (production only). Errors and warnings always show.</div>
+        </div>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={debugLogs}
+            onChange={(e) => setDebugLogs(e.target.checked)}
+            className="w-4 h-4 text-terracotta focus:ring-terracotta border-gray-300 rounded"
+          />
+          <span className="text-sm text-slate-700">{debugLogs ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button 
+          className="bg-terracotta text-white rounded-lg px-6 py-2 hover:bg-terracotta/90 transition-colors disabled:opacity-50" 
+          onClick={save}
+          disabled={saving}
+        >
+          {saving ? 'Saving…' : 'Save Developer Options'}
+        </button>
+        {msg && <span className={`text-sm ${msg.includes('Saved') || msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>}
+      </div>
+
+      <div className="text-xs text-slate-500">
+        Changes apply immediately for new logs. Some startup logs may require a refresh.
       </div>
     </div>
   );

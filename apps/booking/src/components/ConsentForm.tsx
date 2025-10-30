@@ -31,10 +31,10 @@ export default function ConsentForm({
 
   if (!isOpen) return null;
 
-  const requiredSections = template.sections.filter((s) => s.required);
-  const allRequiredChecked = requiredSections.every((_, idx) =>
-    checkedSections.has(idx)
-  );
+  // All required sections must be checked by their actual index in the full list
+  const allRequiredChecked = template.sections.every((section, idx) => (
+    !section.required || checkedSections.has(idx)
+  ));
   const canSubmit = allRequiredChecked && signature.trim().length > 0 && hasScrolled;
 
   const handleCheckboxChange = (index: number) => {
@@ -111,24 +111,23 @@ export default function ConsentForm({
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  {section.required && (
-                    <input
-                      type="checkbox"
-                      checked={checkedSections.has(idx)}
-                      onChange={() => handleCheckboxChange(idx)}
-                      className="mt-1 h-5 w-5 rounded border-slate-300 text-terracotta focus:ring-terracotta"
-                      id={`section-${idx}`}
-                    />
-                  )}
+                  {/* Show a checkbox for all sections. Required ones gate submission; optional ones are informational (e.g., photo consent). */}
+                  <input
+                    id={`section-${idx}`}
+                    name={`section-${idx}`}
+                    type="checkbox"
+                    checked={checkedSections.has(idx)}
+                    onChange={() => handleCheckboxChange(idx)}
+                    className="mt-1 h-5 w-5 rounded border-slate-300 text-terracotta focus:ring-terracotta"
+                    aria-required={section.required ? true : undefined}
+                  />
                   <div className="flex-grow">
                     <label htmlFor={`section-${idx}`} className="cursor-pointer">
                       <h3 className="font-semibold text-slate-900 mb-2 flex items-center gap-2">
                         {section.heading}
-                        {section.required && (
-                          <span className="text-xs text-terracotta font-normal">
-                            (Required)
-                          </span>
-                        )}
+                        {section.required ? (
+                          <span className="text-xs text-terracotta font-normal">(Required)</span>
+                        ) : null}
                       </h3>
                       <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
                         {section.content}

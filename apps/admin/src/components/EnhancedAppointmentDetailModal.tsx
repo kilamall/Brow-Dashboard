@@ -715,6 +715,8 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                                       <div className="flex items-center gap-2">
                                         <span className="text-slate-500">$</span>
                                         <input
+                                          id={`multi-service-price-${serviceId}`}
+                                          name={`servicePrice-${serviceId}`}
                                           type="number"
                                           step="0.01"
                                           min="0"
@@ -745,10 +747,12 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                             // Single service mode: legacy behavior
                             return (
                         <div>
-                          <label className="block text-sm text-slate-600 mb-1">Service Price</label>
+                          <label htmlFor="single-service-price" className="block text-sm text-slate-600 mb-1">Service Price</label>
                           <div className="flex items-center gap-2">
                             <span className="text-slate-500">$</span>
                             <input
+                              id="single-service-price"
+                              name="servicePrice"
                               type="number"
                               step="0.01"
                               min="0"
@@ -764,10 +768,12 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                         })()}
                         
                         <div>
-                          <label className="block text-sm text-slate-600 mb-1">Tip Amount</label>
+                          <label htmlFor="detail-tip-amount" className="block text-sm text-slate-600 mb-1">Tip Amount</label>
                           <div className="flex items-center gap-2">
                             <span className="text-slate-500">$</span>
                             <input
+                              id="detail-tip-amount"
+                              name="tipAmount"
                               type="number"
                               step="0.01"
                               min="0"
@@ -955,8 +961,10 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     <div className="bg-slate-50 rounded-lg p-4 mb-4">
                       <div className="space-y-3">
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                          <label htmlFor="customer-note-category" className="block text-sm font-medium text-slate-700 mb-1">Category</label>
                           <select
+                            id="customer-note-category"
+                            name="noteCategory"
                             value={newNote.category}
                             onChange={(e) => setNewNote({ ...newNote, category: e.target.value as any })}
                             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
@@ -969,8 +977,10 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                           </select>
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Note</label>
+                          <label htmlFor="customer-note-content" className="block text-sm font-medium text-slate-700 mb-1">Note</label>
                           <textarea
+                            id="customer-note-content"
+                            name="noteContent"
                             value={newNote.content}
                             onChange={(e) => setNewNote({ ...newNote, content: e.target.value })}
                             placeholder="Add a note about this customer..."

@@ -43,11 +43,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   useEffect(() => watchDayClosures(db, setClosures), [db]);
   useEffect(() => watchSpecialHours(db, setSpecialHours), [db]);
 
-  // Debug logging to verify closures and special hours are being loaded
-  useEffect(() => {
-    console.log('[AddAppointmentModal] Closures:', closures);
-    console.log('[AddAppointmentModal] Special hours:', specialHours);
-  }, [closures, specialHours]);
+  // Debug logging removed for production cleanliness
 
   // Form - Initialize with prefilled data if provided
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
@@ -296,7 +292,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           serviceNames: selectedServices.map(s => s.name).join(', '),
           totalPrice: totalPrice
         });
-        console.log('✅ Confirmation email sent for appointment:', id);
+        // Confirmation email sent
       } catch (emailError) {
         console.error('⚠️ Failed to send confirmation email:', emailError);
         // Don't fail the appointment creation if email fails

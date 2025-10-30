@@ -45,13 +45,7 @@ export default function CalendarDayHighlighting({
     }
 
     try {
-      console.log('[CalendarDayHighlighting] Checking date:', date);
-      console.log('[CalendarDayHighlighting] Special hours:', specialHours);
-      console.log('[CalendarDayHighlighting] Closures:', closures);
-      
       const effectiveHours = getEffectiveHoursForDate(date, businessHours, closures, specialHours);
-      console.log('[CalendarDayHighlighting] Effective hours:', effectiveHours);
-      
       setIsOpen(effectiveHours !== null && effectiveHours.length > 0);
     } catch (error) {
       console.error('Error determining if day is open:', error);
