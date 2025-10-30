@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, orderBy, limit, onSnapshot, addDoc, where } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, addDoc, where, getDocs, updateDoc, doc, writeBatch, deleteDoc } from 'firebase/firestore';
 
 interface SMSConversation {
   id: string;
@@ -90,6 +90,48 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
       .filter(conv => conv.phoneNumber === phoneNumber)
       .sort((a, b) => new Date(a.timestamp?.toDate?.() || a.timestamp).getTime() - 
                       new Date(b.timestamp?.toDate?.() || b.timestamp).getTime());
+  };
+
+  const markThreadAsRead = async () => {
+    if (!selectedCustomer) return;
+    try {
+      const customer = customers.find(c => c.id === selectedCustomer);
+      if (!customer?.phone) return;
+      const q = query(
+        collection(db, 'sms_conversations'),
+        where('phoneNumber', '==', customer.phone),
+        where('direction', '==', 'inbound')
+      );
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => {
+        if (!(d.data() as any).read) {
+          batch.update(doc(db, 'sms_conversations', d.id), { read: true, readAt: new Date().toISOString() });
+        }
+      });
+      await batch.commit();
+    } catch (e) {
+      console.error('Failed to mark SMS thread as read:', e);
+    }
+  };
+
+  const deleteThread = async () => {
+    if (!selectedCustomer) return;
+    const confirmDelete = confirm('Delete this entire SMS thread? This will remove all SMS messages for this number.');
+    if (!confirmDelete) return;
+    try {
+      const customer = customers.find(c => c.id === selectedCustomer);
+      if (!customer?.phone) return;
+      const q = query(collection(db, 'sms_conversations'), where('phoneNumber', '==', customer.phone));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(doc(db, 'sms_conversations', d.id)));
+      await batch.commit();
+      setSelectedCustomer(null);
+    } catch (e) {
+      console.error('Failed to delete SMS thread:', e);
+      alert('Failed to delete SMS thread.');
+    }
   };
 
   const handleSendSMS = async () => {
@@ -246,7 +288,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
         {selectedCustomer ? (
           <>
             {/* Messages Header */}
-            <div className="p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               {(() => {
                 const customer = customers.find(c => c.id === selectedCustomer);
                 return customer ? (
@@ -258,6 +300,10 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                   </div>
                 ) : null;
               })()}
+              <div className="flex gap-2">
+                <button onClick={markThreadAsRead} className="px-3 py-1 rounded-md text-sm bg-gray-200 text-gray-700 hover:bg-gray-300">Mark Read</button>
+                <button onClick={deleteThread} className="px-3 py-1 rounded-md text-sm bg-red-600 text-white hover:bg-red-700">Delete</button>
+              </div>
             </div>
 
             {/* Messages List */}
