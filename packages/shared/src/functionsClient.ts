@@ -94,11 +94,33 @@ export async function findOrCreateCustomerClient(data: {
   phone?: string;
   authUid?: string;
 }): Promise<{ customerId: string; isNew: boolean; merged?: boolean; needsSignIn?: boolean }> {
-  const { app } = initFirebase();
-  const functions = getFunctions(app, 'us-central1');
-  const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
-  const result = await findOrCreateCustomer(data);
-  return result.data as { customerId: string; isNew: boolean; merged?: boolean; needsSignIn?: boolean };
+  // Debounce multiple rapid calls across auth flows
+  const KEY_TS = 'bb_find_or_create_last_success';
+  const KEY_INFLIGHT = 'bb_find_or_create_inflight';
+  try {
+    const last = Number(sessionStorage.getItem(KEY_TS) || '0');
+    const now = Date.now();
+    if (last && now - last < 60_000) {
+      // Return a noop result; caller generally only needs linkage
+      return { customerId: data.authUid || '', isNew: false } as any;
+    }
+    if (sessionStorage.getItem(KEY_INFLIGHT) === '1') {
+      // Another call in-flight; avoid spamming the backend
+      return { customerId: data.authUid || '', isNew: false } as any;
+    }
+    sessionStorage.setItem(KEY_INFLIGHT, '1');
+
+    const { app } = initFirebase();
+    const functions = getFunctions(app, 'us-central1');
+    const findOrCreateCustomer = httpsCallable(functions, 'findOrCreateCustomer');
+    const result = await findOrCreateCustomer(data);
+    sessionStorage.setItem(KEY_TS, String(Date.now()));
+    return result.data as { customerId: string; isNew: boolean; merged?: boolean; needsSignIn?: boolean };
+  } catch (e) {
+    throw e;
+  } finally {
+    sessionStorage.removeItem(KEY_INFLIGHT);
+  }
 }
 
 // Delete customer data (admin only)
@@ -116,12 +138,27 @@ export async function createCustomerUniqueClient(data: {
   phone?: string;
   profilePictureUrl?: string;
   notes?: string;
+  birthday?: string;
   authUid?: string;
 }): Promise<{ customerId: string; alreadyExists: boolean; customer: any }> {
   const { app } = initFirebase();
   const functions = getFunctions(app, 'us-central1');
   const createCustomerUnique = httpsCallable(functions, 'createCustomerUnique');
-  return await createCustomerUnique(data);
+  const result = await createCustomerUnique(data);
+  return result.data as { customerId: string; alreadyExists: boolean; customer: any };
+}
+
+// Send initial onboarding/invitation email to a customer
+export async function sendInitialRequestClient(data: {
+  customerId?: string;
+  customerName?: string;
+  customerEmail: string;
+}): Promise<{ success: boolean }>{
+  const { app } = initFirebase();
+  const functions = getFunctions(app, 'us-central1');
+  const sendInitialRequest = httpsCallable(functions, 'sendInitialRequest');
+  const res = await sendInitialRequest(data);
+  return res.data as { success: boolean };
 }
 
 // Run canonical fields migration (admin only)

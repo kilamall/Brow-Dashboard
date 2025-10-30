@@ -18,11 +18,12 @@ export const rateLimiters = {
     blockDuration: 120, // block for 2 minutes if exceeded
   }),
 
-  // Customer creation: 10 per hour per IP
+  // Customer creation: relaxed to handle multi-path auth flows
+  // 60 per hour per user/IP with short block to recover quickly during onboarding
   createCustomer: new RateLimiterMemory({
-    points: 10,
+    points: 60,
     duration: 3600, // per hour
-    blockDuration: 300, // block for 5 minutes if exceeded
+    blockDuration: 60, // block for 60 seconds if exceeded
   }),
 
   // SMS sending: 5 per 5 minutes per phone number

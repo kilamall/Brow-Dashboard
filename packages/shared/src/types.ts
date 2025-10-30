@@ -100,6 +100,7 @@ userId?: string; // Firebase Auth UID - matches the document ID for new customer
 name: string;
 email?: string;
 phone?: string;
+birthday?: string; // Date in YYYY-MM-DD format
 profilePictureUrl?: string; // Customer profile picture URL
 notes?: string;
 structuredNotes?: Array<{

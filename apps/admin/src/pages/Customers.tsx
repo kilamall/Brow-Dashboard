@@ -5,7 +5,8 @@ import {
   updateCustomer,
   deleteCustomer
 } from '@buenobrows/shared/firestoreActions';
-import { createCustomerUniqueClient, runCanonicalFieldsMigrationClient, mergeCustomersClient } from '@buenobrows/shared/functionsClient';
+import { findOrCreateCustomerClient, runCanonicalFieldsMigrationClient, mergeCustomersClient } from '@buenobrows/shared/functionsClient';
+import { sendInitialRequestClient } from '@buenobrows/shared/functionsClient';
 import type { Customer } from '@buenobrows/shared/types';
 import CustomerProfile from '../components/CustomerProfile';
 import MergeCustomersModal from '../components/MergeCustomersModal';
@@ -431,7 +432,7 @@ export default function Customers(){
         })}
       </div>
 
-      {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} />}
+      {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} onRefresh={refreshCustomers} />}
       {viewing && <CustomerProfile customer={viewing} onClose={()=>setViewing(null)} db={db} />}
     </div>
 
@@ -446,7 +447,7 @@ export default function Customers(){
   );
 }
 
-function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void; db: any }){
+function Editor({ initial, onClose, db, onRefresh }:{ initial: Customer; onClose: ()=>void; db: any; onRefresh: ()=>void }){
   const [c, setC] = useState<Customer>(initial);
   const [loading, setLoading] = useState(false);
 
@@ -460,52 +461,32 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
     try {
       if (c.id) {
         await updateCustomer(db, c.id, c);
+        onRefresh(); // Refresh the customer list
         onClose();
       } else {
-        // Use uniqueness-enforced customer creation
-        try {
-          const result = await createCustomerUniqueClient({
-            name: c.name,
-            email: c.email,
-            phone: c.phone,
-            profilePictureUrl: c.profilePictureUrl,
-            notes: c.notes
+        // Use findOrCreate to handle duplicates gracefully
+        const result = await findOrCreateCustomerClient({
+          name: c.name || 'Unnamed',
+          email: c.email,
+          phone: c.phone
+        });
+        
+        // Update with any additional fields (notes, birthday, profilePicture)
+        if (c.notes || c.birthday || c.profilePictureUrl) {
+          await updateCustomer(db, result.customerId, {
+            notes: c.notes,
+            birthday: c.birthday,
+            profilePictureUrl: c.profilePictureUrl
           });
-          
-          if (result.data?.alreadyExists) {
-            // Auto-populate form with existing customer data
-            const existingCustomer = result.data.customer;
-            console.log('Customer already exists, auto-populating form:', existingCustomer);
-            
-            // Update the form with existing customer data
-            setC({
-              id: existingCustomer.id,
-              name: existingCustomer.name || c.name,
-              email: existingCustomer.email || c.email,
-              phone: existingCustomer.phone || c.phone,
-              profilePictureUrl: existingCustomer.profilePictureUrl || c.profilePictureUrl,
-              notes: existingCustomer.notes || c.notes,
-              status: existingCustomer.status || 'active'
-            });
-            
-            // Show success message
-            alert(`Customer already exists! Form updated with existing customer data: ${existingCustomer.name}`);
-            return;
-          }
-          
-          onClose();
-        } catch (error: any) {
-          console.error('Customer creation error:', error);
-          
-          // Check if it's a duplicate error
-          if (error.code === 'already-exists' || error.message?.includes('already exists')) {
-            alert('Customer already exists! Please search for this customer instead.');
-            return;
-          }
-          
-          // Re-throw other errors to be handled by outer catch
-          throw error;
         }
+        
+        // If customer was found (not created), show helpful message
+        if (!result.isNew) {
+          alert(`Customer "${c.name}" already exists in your database.`);
+        }
+        
+        onRefresh(); // Refresh the customer list after creating new customer
+        onClose();
       }
     } catch (error) {
       console.error('Failed to save customer:', error);
@@ -566,6 +547,17 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
             </div>
           </div>
 
+          {/* Birthday */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Birthday</label>
+            <input 
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              type="date"
+              value={c.birthday||''} 
+              onChange={e=>setC({...c, birthday:e.target.value})} 
+            />
+          </div>
+
           {/* Status */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
@@ -603,14 +595,22 @@ function Editor({ initial, onClose, db }:{ initial: Customer; onClose: ()=>void;
                 <button 
                   className="bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition-colors text-sm font-medium"
                   onClick={async () => {
-                    if (confirm(`Send initial request to ${c.name} at ${c.email}?`)) {
-                      try {
-                        // TODO: Implement sendInitialRequest function
-                        alert('Initial request sent! (Feature coming soon)');
-                      } catch (error) {
-                        console.error('Failed to send initial request:', error);
+                    if (!c.email) return;
+                    if (!confirm(`Send initial request to ${c.name} at ${c.email}?`)) return;
+                    try {
+                      const res = await sendInitialRequestClient({
+                        customerId: c.id,
+                        customerName: c.name,
+                        customerEmail: c.email,
+                      });
+                      if (res.success) {
+                        alert('Initial request sent!');
+                      } else {
                         alert('Failed to send initial request');
                       }
+                    } catch (error) {
+                      console.error('Failed to send initial request:', error);
+                      alert('Failed to send initial request');
                     }
                   }}
                 >

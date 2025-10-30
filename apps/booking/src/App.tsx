@@ -1,4 +1,7 @@
+import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { findOrCreateCustomerClient } from '@buenobrows/shared/functionsClient';
 import { ErrorBoundary } from '@buenobrows/shared/ErrorBoundary';
 import { FeatureError } from '@buenobrows/shared/FallbackUI';
 import { ErrorCategory } from '@buenobrows/shared/errorHandling';
@@ -19,6 +22,26 @@ import Verify from '@/pages/verify';
 
 
 export default function App() {
+  // Ensure a customer record exists/links on any auth state change
+  useEffect(() => {
+    const auth = getAuth();
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        await findOrCreateCustomerClient({
+          email: user.email || undefined,
+          name: user.displayName || 'Customer',
+          phone: user.phoneNumber || undefined,
+          authUid: user.uid,
+        });
+      } catch (e) {
+        // Non-fatal; other flows also create the record
+        console.warn('findOrCreateCustomer on auth state failed:', e);
+      }
+    });
+    return () => unsub();
+  }, []);
+
   return (
     <div className="min-h-screen bg-cream text-slate-800">
       <Navbar />

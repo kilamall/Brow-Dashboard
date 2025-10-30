@@ -46,6 +46,7 @@ export default function Login() {
   const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
   const [profilePictureUrl, setProfilePictureUrl] = useState('');
+  const [birthday, setBirthday] = useState('');
 
   // Format phone number as user types
   const formatPhoneNumber = (value: string) => {
@@ -120,7 +121,8 @@ export default function Login() {
               phone: phone || null,
               name: name || 'Customer',
               profilePictureUrl: profilePictureUrl || null,
-              authUid: userCredential.user.uid
+              authUid: userCredential.user.uid,
+              birthday: birthday || null
             }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
             
             if (result.data.merged) {
@@ -374,7 +376,8 @@ export default function Login() {
             phone: phone,
             name: name || userCredential.user.displayName || 'Customer',
             email: null, // Phone auth doesn't provide email
-            authUid: userCredential.user.uid
+            authUid: userCredential.user.uid,
+            birthday: birthday || null
           }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
           
           if (result.data.merged) {
@@ -565,6 +568,21 @@ export default function Login() {
                 currentImageUrl={profilePictureUrl}
                 compact={true}
               />
+
+              <div>
+                <label htmlFor="birthday" className="block text-sm font-medium text-slate-700">
+                  Birthday *
+                </label>
+                <input
+                  id="birthday"
+                  name="birthday"
+                  type="date"
+                  required={isSignUp}
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                />
+              </div>
             </>
           )}
 
@@ -797,21 +815,37 @@ export default function Login() {
             {!showVerification ? (
               <form className="mt-8 space-y-6" onSubmit={handlePhoneAuth}>
                 {isSignUp && (
-                  <div>
-                    <label htmlFor="phone-name" className="block text-sm font-medium text-slate-700">
-                      Full Name
-                    </label>
-                    <input
-                      id="phone-name"
-                      name="name"
-                      type="text"
-                      required={isSignUp}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
-                      placeholder="John Doe"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <label htmlFor="phone-name" className="block text-sm font-medium text-slate-700">
+                        Full Name
+                      </label>
+                      <input
+                        id="phone-name"
+                        name="name"
+                        type="text"
+                        required={isSignUp}
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                        placeholder="John Doe"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="phone-birthday" className="block text-sm font-medium text-slate-700">
+                        Birthday *
+                      </label>
+                      <input
+                        id="phone-birthday"
+                        name="birthday"
+                        type="date"
+                        required={isSignUp}
+                        value={birthday}
+                        onChange={(e) => setBirthday(e.target.value)}
+                        className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-terracotta focus:border-terracotta"
+                      />
+                    </div>
+                  </>
                 )}
 
                 <div>

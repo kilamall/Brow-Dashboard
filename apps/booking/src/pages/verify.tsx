@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import { getAuth, applyActionCode, confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 type Status = 'idle' | 'working' | 'done' | 'error';
 type ActionType = 'email-verification' | 'password-reset' | 'magic-link' | 'unknown';
@@ -55,6 +56,23 @@ export default function Verify() {
         // Handle email verification (both verifyEmail and verifyAndChangeEmail modes)
         await applyActionCode(auth, oobCode);
         setStatus('done');
+        // After verifying, if the user is already signed in (browser session), ensure customer exists
+        try {
+          const user = auth.currentUser;
+          if (user) {
+            const functions = getFunctions();
+            const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+            await findOrCreate({
+              email: user.email,
+              name: user.displayName || 'Customer',
+              phone: user.phoneNumber || null,
+              authUid: user.uid,
+            });
+          }
+        } catch (e) {
+          // Non-fatal: customer record creation can also occur on next sign-in
+          // Intentionally swallow errors here
+        }
       } else if (actionType === 'password-reset' && oobCode) {
         // Handle password reset
         if (newPassword !== confirmPassword) {
@@ -69,6 +87,23 @@ export default function Verify() {
         // Handle magic link sign-in
         await completeMagicLinkSignIn(email);
         setStatus('done');
+        // After magic link sign-in, ensure customer exists
+        try {
+          const auth = getAuth();
+          const user = auth.currentUser;
+          if (user) {
+            const functions = getFunctions();
+            const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+            await findOrCreate({
+              email: user.email,
+              name: user.displayName || 'Customer',
+              phone: user.phoneNumber || null,
+              authUid: user.uid,
+            });
+          }
+        } catch (e) {
+          // Non-fatal
+        }
       } else {
         throw new Error('Invalid verification link');
       }

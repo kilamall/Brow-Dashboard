@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { collection, query, orderBy, onSnapshot, where, addDoc, updateDoc, doc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -310,7 +311,15 @@ export default function Messages() {
                       className="mr-1"
                       onClick={(e) => e.stopPropagation()}
                     />
-                    <h3 className="font-semibold text-gray-900">{conv.customerName}</h3>
+                    <h3 className="font-semibold text-gray-900">
+                      <Link
+                        to={`/customers/${conv.customerId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="hover:underline"
+                      >
+                        {conv.customerName}
+                      </Link>
+                    </h3>
                     {conv.hasAIResponse && (
                       <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full">
                         AI
@@ -350,7 +359,14 @@ export default function Messages() {
             <div className="p-4 border-b border-gray-200 bg-gray-50">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold text-gray-900">{selectedConversation.customerName}</h3>
+                  <h3 className="font-semibold text-gray-900">
+                    <Link
+                      to={`/customers/${selectedConversation.customerId}`}
+                      className="hover:underline"
+                    >
+                      {selectedConversation.customerName}
+                    </Link>
+                  </h3>
                   <p className="text-sm text-gray-600">{selectedConversation.customerEmail}</p>
                 </div>
                 <div className="flex gap-2">

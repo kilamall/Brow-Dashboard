@@ -27,11 +27,11 @@ export const findOrCreateCustomer = onCall(
     // SECURITY: Rate limit customer creation (10 per hour per IP/user)
     await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
 
-    const { email, name, phone, profilePictureUrl, authUid } = req.data || {};
+    const { email, name, phone, profilePictureUrl, authUid, birthday } = req.data || {};
     
-    // Require at least email or phone
-    if (!email && !phone) {
-      throw new HttpsError('invalid-argument', 'Either email or phone is required');
+    // Require at least email, phone, or name
+    if (!email && !phone && !name) {
+      throw new HttpsError('invalid-argument', 'Either email, phone, or name is required');
     }
 
     const canonicalEmail = email ? normalizeEmail(email) : null;
@@ -115,6 +115,67 @@ export const findOrCreateCustomer = onCall(
         if (canonicalPhone && !existingCustomer.canonicalPhone) {
           updates.canonicalPhone = canonicalPhone;
           updates.phone = phone;
+        }
+        
+        // Clean up any duplicate customers automatically
+        if (canonicalEmail || canonicalPhone) {
+          try {
+            const duplicateQueries = [];
+            if (canonicalEmail) {
+              duplicateQueries.push(
+                db.collection('customers')
+                  .where('canonicalEmail', '==', canonicalEmail)
+                  .where('__name__', '!=', existingCustomer.id)
+                  .get(),
+                db.collection('customers')
+                  .where('email', '==', email)
+                  .where('__name__', '!=', existingCustomer.id)
+                  .get()
+              );
+            }
+            if (canonicalPhone) {
+              duplicateQueries.push(
+                db.collection('customers')
+                  .where('canonicalPhone', '==', canonicalPhone)
+                  .where('__name__', '!=', existingCustomer.id)
+                  .get(),
+                db.collection('customers')
+                  .where('phone', '==', phone)
+                  .where('__name__', '!=', existingCustomer.id)
+                  .get()
+              );
+            }
+            
+            const duplicateResults = await Promise.all(duplicateQueries);
+            const duplicates = new Set<string>();
+            duplicateResults.forEach(snapshot => {
+              snapshot.forEach(doc => {
+                const data = doc.data();
+                // Only merge customers that aren't already migrated
+                if (data.identityStatus !== 'migrated' && !data.migratedTo) {
+                  duplicates.add(doc.id);
+                }
+              });
+            });
+            
+            // Mark duplicates as migrated
+            if (duplicates.size > 0) {
+              console.log(`🧹 Found ${duplicates.size} duplicate(s) to merge`);
+              const batch = db.batch();
+              duplicates.forEach(dupId => {
+                batch.update(db.collection('customers').doc(dupId), {
+                  migratedTo: existingCustomer.id,
+                  identityStatus: 'migrated',
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              await batch.commit();
+              console.log(`✅ Marked ${duplicates.size} duplicate(s) as migrated`);
+            }
+          } catch (cleanupError) {
+            console.error('⚠️ Error cleaning up duplicates:', cleanupError);
+            // Don't fail the main operation if cleanup fails
+          }
         }
         
         // Check if customer exists but caller isn't authenticated (needsSignIn scenario)
@@ -302,6 +363,7 @@ export const findOrCreateCustomer = onCall(
         name: name || 'Guest',
         email: email || null,
         phone: phone || null,
+        birthday: birthday || null,
         profilePictureUrl: profilePictureUrl || null,
         canonicalEmail: canonicalEmail || null,
         canonicalPhone: canonicalPhone || null,

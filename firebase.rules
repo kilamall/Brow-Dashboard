@@ -91,14 +91,34 @@ service cloud.firestore {
 
     match /messages/{id} {
       allow read: if isAdmin() || 
-        (request.auth != null && 
-         request.auth.uid == resource.data.customerId);
+        (request.auth != null && (
+          // Allow legacy auth-uid keyed messages
+          request.auth.uid == resource.data.customerId ||
+          // Allow customers whose email/phone match the customers doc referenced by customerId
+          (
+            exists(/databases/$(database)/documents/customers/$(resource.data.customerId)) &&
+            (
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.email == request.auth.token.email ||
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.phone == request.auth.token.phone_number
+            )
+          )
+        ));
       allow create: if request.auth != null &&
         request.resource.data.content is string &&
         request.resource.data.type in ['customer', 'admin'] &&
         request.resource.data.customerName is string &&
         request.resource.data.customerEmail is string &&
-        request.resource.data.customerId is string;
+        request.resource.data.customerId is string &&
+        (
+          request.auth.uid == request.resource.data.customerId ||
+          (
+            exists(/databases/$(database)/documents/customers/$(request.resource.data.customerId)) &&
+            (
+              get(/databases/$(database)/documents/customers/$(request.resource.data.customerId)).data.email == request.auth.token.email ||
+              get(/databases/$(database)/documents/customers/$(request.resource.data.customerId)).data.phone == request.auth.token.phone_number
+            )
+          )
+        );
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -115,14 +135,40 @@ service cloud.firestore {
 
     match /conversations/{id} {
       allow read: if isAdmin() || 
-        (request.auth != null && 
-         request.auth.uid == resource.data.customerId);
+        (request.auth != null && (
+          request.auth.uid == resource.data.customerId ||
+          (
+            exists(/databases/$(database)/documents/customers/$(resource.data.customerId)) &&
+            (
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.email == request.auth.token.email ||
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.phone == request.auth.token.phone_number
+            )
+          )
+        ));
       allow create: if request.auth != null && 
         request.resource.data.customerId is string &&
-        request.resource.data.customerName is string;
+        request.resource.data.customerName is string &&
+        (
+          request.auth.uid == request.resource.data.customerId ||
+          (
+            exists(/databases/$(database)/documents/customers/$(request.resource.data.customerId)) &&
+            (
+              get(/databases/$(database)/documents/customers/$(request.resource.data.customerId)).data.email == request.auth.token.email ||
+              get(/databases/$(database)/documents/customers/$(request.resource.data.customerId)).data.phone == request.auth.token.phone_number
+            )
+          )
+        );
       allow update: if isAdmin() || 
-        (request.auth != null && 
-         request.auth.uid == resource.data.customerId);
+        (request.auth != null && (
+          request.auth.uid == resource.data.customerId ||
+          (
+            exists(/databases/$(database)/documents/customers/$(resource.data.customerId)) &&
+            (
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.email == request.auth.token.email ||
+              get(/databases/$(database)/documents/customers/$(resource.data.customerId)).data.phone == request.auth.token.phone_number
+            )
+          )
+        ));
       allow delete: if isAdmin();
     }
 

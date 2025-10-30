@@ -27,32 +27,42 @@ export const createCustomerUnique = onCall(
     // SECURITY: Rate limit customer creation (10 per hour per IP/user)
     await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
 
-    const { name, email, phone, profilePictureUrl, notes, authUid } = req.data || {};
+    const { name, email, phone, profilePictureUrl, notes, birthday, authUid } = req.data || {};
     
-    // Require at least email or phone
-    if (!email && !phone) {
-      throw new HttpsError('invalid-argument', 'Either email or phone is required');
+    console.log('🔍 createCustomerUnique called with:', { name, email, phone, hasProfilePicture: !!profilePictureUrl, notes, birthday });
+    
+    // Require at least email or phone for automatic creation
+    // But allow name-only customers (for admin manual creation)
+    if (!email && !phone && !name) {
+      throw new HttpsError('invalid-argument', 'At least name is required');
     }
 
     const canonicalEmail = email ? normalizeEmail(email) : null;
     const canonicalPhone = phone ? normalizePhone(phone) : null;
     
+    console.log('📋 Canonical fields:', { canonicalEmail, canonicalPhone });
+    
     try {
-      // Step 1: Check for existing reservations
+      // Step 1: Check for existing reservations (only if we have contact info)
       const reservationKeys: string[] = [];
       if (canonicalEmail) reservationKeys.push(`email:${canonicalEmail}`);
       if (canonicalPhone) reservationKeys.push(`phone:${canonicalPhone}`);
       
-      if (reservationKeys.length === 0) {
-        throw new HttpsError('invalid-argument', 'No valid contact information provided');
-      }
+      console.log('🔑 Reservation keys:', reservationKeys);
+      
+      // Only throw error if we have contact info but it already exists
+      // If we have no contact info (name-only), we'll create a new customer without reservation checks
 
       // Use transaction to ensure atomicity
       const result = await db.runTransaction(async (tx) => {
+        console.log('🔄 Starting transaction with', reservationKeys.length, 'reservation keys');
+        
         // Check all reservation keys
         const reservationChecks = await Promise.all(
           reservationKeys.map(key => tx.get(db.doc(`uniqueContacts/${key}`)))
         );
+        
+        console.log('✅ Reservation checks completed:', reservationChecks.map((r, i) => ({ key: reservationKeys[i], exists: r.exists })));
         
         // If any reservation exists, return the existing customer
         for (let i = 0; i < reservationChecks.length; i++) {
@@ -63,7 +73,7 @@ export const createCustomerUnique = onCall(
               // Get the existing customer to return full data
               const existingCustomer = await tx.get(db.doc(`customers/${existingCustomerId}`));
               if (existingCustomer.exists) {
-                console.log('✅ Customer already exists:', existingCustomerId);
+                console.log('✅ Customer already exists:', existingCustomerId, existingCustomer.data());
                 return {
                   customerId: existingCustomerId,
                   alreadyExists: true,
@@ -75,11 +85,13 @@ export const createCustomerUnique = onCall(
         }
         
         // No existing customer found, create new one
+        console.log('🆕 No existing customer found, creating new one...');
         const customerRef = db.collection('customers').doc();
         const customerData = {
           name: name || 'Unnamed',
           email: email || null,
           phone: phone || null,
+          birthday: birthday || null,
           canonicalEmail,
           canonicalPhone,
           profilePictureUrl: profilePictureUrl || null,
@@ -90,11 +102,14 @@ export const createCustomerUnique = onCall(
           updatedAt: new Date(),
         };
         
+        console.log('📝 Customer data to create:', customerData);
+        
         // Create customer document
         tx.set(customerRef, customerData);
         
         // Create reservations for uniqueness
         for (const key of reservationKeys) {
+          console.log('🔒 Creating reservation for:', key);
           tx.set(db.doc(`uniqueContacts/${key}`), {
             customerId: customerRef.id,
             createdAt: new Date(),

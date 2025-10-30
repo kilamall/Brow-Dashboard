@@ -24,10 +24,23 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
   const [showChat, setShowChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const auth = getAuth();
+  
+  // Real-time customer data to stay updated
+  const [currentCustomer, setCurrentCustomer] = useState<Customer>(customer);
 
   // Load customer data
   useEffect(() => {
     if (!customer.id) return;
+
+    // Subscribe to real-time customer updates
+    const customerDocRef = doc(db, 'customers', customer.id);
+    const unsubscribeCustomer = onSnapshot(customerDocRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const customerData = { id: snapshot.id, ...snapshot.data() } as Customer;
+        setCurrentCustomer(customerData);
+        setNotes(customerData.notes || '');
+      }
+    });
 
     // Load appointments
     const appointmentsQuery = query(
@@ -55,6 +68,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
     });
 
     return () => {
+      unsubscribeCustomer();
       unsubscribeAppointments();
       unsubscribeServices();
     };
@@ -81,12 +95,12 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
     });
 
     return () => unsubscribe();
-  }, [showChat, customer.id, db]);
+  }, [showChat, currentCustomer.id, db]);
 
   const handleSaveNotes = async () => {
     setSavingNotes(true);
     try {
-      await updateDoc(doc(db, 'customers', customer.id), { notes });
+      await updateDoc(doc(db, 'customers', currentCustomer.id), { notes });
     } catch (error) {
       console.error('Failed to save notes:', error);
       alert('Failed to save notes. Please try again.');
@@ -117,9 +131,9 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
       const adminName = auth.currentUser?.displayName || 'Admin';
 
       await addDoc(collection(db, 'messages'), {
-        customerId: customer.id,
-        customerName: customer.name,
-        customerEmail: customer.email || '',
+        customerId: currentCustomer.id,
+        customerName: currentCustomer.name,
+        customerEmail: currentCustomer.email || '',
         adminId,
         adminName,
         content: newMessage.trim(),
@@ -164,11 +178,11 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
 
   const getCustomerAvatar = () => {
     // If customer has a profile picture, show it
-    if (customer.profilePictureUrl) {
+    if (currentCustomer.profilePictureUrl) {
       return (
         <img 
-          src={customer.profilePictureUrl} 
-          alt={customer.name}
+          src={currentCustomer.profilePictureUrl} 
+          alt={currentCustomer.name}
           className="w-12 h-12 rounded-full object-cover"
           onError={(e) => {
             // Fallback to initials if image fails to load
@@ -176,7 +190,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
             target.style.display = 'none';
             const parent = target.parentElement;
             if (parent) {
-              const initials = (customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
+              const initials = (currentCustomer.name && typeof currentCustomer.name === 'string') ? currentCustomer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
               parent.innerHTML = `<div class="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center"><span class="text-lg font-semibold text-terracotta">${initials}</span></div>`;
             }
           }}
@@ -185,7 +199,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
     }
     
     // Fallback to initials if no profile picture
-    const initials = (customer.name && typeof customer.name === 'string') ? customer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
+    const initials = (currentCustomer.name && typeof currentCustomer.name === 'string') ? currentCustomer.name.split(' ').map(n => n[0]).join('').toUpperCase() : '?';
     return (
       <div className="w-12 h-12 rounded-full bg-terracotta/10 flex items-center justify-center">
         <span className="text-lg font-semibold text-terracotta">{initials}</span>
@@ -219,9 +233,9 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
           <div className="flex items-center gap-4">
             {getCustomerAvatar()}
             <div>
-              <h2 className="font-serif text-2xl text-slate-800">{customer.name}</h2>
+              <h2 className="font-serif text-2xl text-slate-800">{currentCustomer.name}</h2>
               <p className="text-sm text-slate-600">
-                Customer since {customer.createdAt ? new Date(customer.createdAt.toMillis?.() || customer.createdAt).toLocaleDateString() : 'Unknown'}
+                Customer since {currentCustomer.createdAt ? new Date(currentCustomer.createdAt.toMillis?.() || currentCustomer.createdAt).toLocaleDateString() : 'Unknown'}
               </p>
             </div>
           </div>
@@ -261,20 +275,30 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
               <div>
                 <h3 className="text-lg font-semibold text-slate-800 mb-4">Contact Information</h3>
                 <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-                  {customer.email && (
+                  {currentCustomer.email && (
                     <div className="flex items-center gap-3">
                       <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
                       </svg>
-                      <span className="text-sm text-slate-700">{customer.email}</span>
+                      <span className="text-sm text-slate-700">{currentCustomer.email}</span>
                     </div>
                   )}
-                  {customer.phone && (
+                  {currentCustomer.phone && (
                     <div className="flex items-center gap-3">
                       <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                       </svg>
-                      <span className="text-sm text-slate-700">{customer.phone}</span>
+                      <span className="text-sm text-slate-700">{currentCustomer.phone}</span>
+                    </div>
+                  )}
+                  {currentCustomer.birthday && (
+                    <div className="flex items-center gap-3">
+                      <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <span className="text-sm text-slate-700">
+                        {new Date(currentCustomer.birthday).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -290,8 +314,8 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                   </div>
                   <div className="bg-green-50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-green-600">
-                      <span className={`text-xs px-2 py-1 rounded border ${getStatusColor(customer.status || 'pending')}`}>
-                        {customer.status || 'pending'}
+                      <span className={`text-xs px-2 py-1 rounded border ${getStatusColor(currentCustomer.status || 'pending')}`}>
+                        {currentCustomer.status || 'pending'}
                       </span>
                     </div>
                     <div className="text-xs text-slate-600">Status</div>
@@ -325,7 +349,7 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                   <div className="flex justify-end">
                     <button
                       onClick={handleSaveNotes}
-                      disabled={savingNotes || notes === (customer.notes || '')}
+                      disabled={savingNotes || notes === (currentCustomer.notes || '')}
                       className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                     >
                       {savingNotes ? 'Saving...' : 'Save Notes'}
@@ -643,8 +667,8 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
                     <div className="flex justify-between">
                       <span className="text-slate-600">Average per Month:</span>
                       <span className="font-medium">
-                        {customer.createdAt ? 
-                          (completedVisits.length / Math.max(1, Math.floor((Date.now() - (customer.createdAt.toMillis?.() || customer.createdAt)) / (1000 * 60 * 60 * 24 * 30)))).toFixed(1) : 
+                        {currentCustomer.createdAt ? 
+                          (completedVisits.length / Math.max(1, Math.floor((Date.now() - (currentCustomer.createdAt.toMillis?.() || currentCustomer.createdAt)) / (1000 * 60 * 60 * 24 * 30)))).toFixed(1) : 
                           'N/A'
                         }
                       </span>

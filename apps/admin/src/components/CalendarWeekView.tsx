@@ -23,9 +23,14 @@ export default function CalendarWeekView({
   const { db } = useFirebase();
   // Measured layout for precise placement
   const tableRef = useRef<HTMLTableElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const [hourHeightPx, setHourHeightPx] = useState(64);
   const [overlayTopPx, setOverlayTopPx] = useState(64);
   const [timeColWidthPx, setTimeColWidthPx] = useState(64);
+  // Measure each day column individually to avoid accumulation errors
+  const [dayColumns, setDayColumns] = useState<Array<{ left: number; width: number }>>(
+    Array(7).fill({ left: 64, width: 150 })
+  );
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [businessHours, setBusinessHours] = useState<BusinessHours | null>(null);
   const [closures, setClosures] = useState<DayClosure[]>([]);
@@ -60,25 +65,56 @@ export default function CalendarWeekView({
   // Generate hourly time slots (6 AM to 10 PM)
   const timeSlots = Array.from({ length: 17 }, (_, i) => addHours(startOfDay(new Date()), i + 6));
 
-  // Measure table geometry to avoid hardcoded px assumptions
+  // Measure table geometry - measure each day column individually
   useLayoutEffect(() => {
     const table = tableRef.current;
-    if (!table) return;
+    const overlay = overlayRef.current;
+    if (!table || !overlay) return;
 
     const measure = () => {
       const tbody = table.querySelector('tbody');
-      const firstRow = tbody?.querySelector('tr');
-      const timeTh = table.querySelector('thead th');
-      const timeTd = tbody?.querySelector('td');
+      const tableRect = table.getBoundingClientRect();
+      const overlayRect = overlay.getBoundingClientRect();
 
-      if (firstRow) {
-        const rect = firstRow.getBoundingClientRect();
-        if (rect.height > 0) setHourHeightPx(rect.height);
-        const tableTop = table.getBoundingClientRect().top;
-        const off = rect.top - tableTop;
-        if (off >= 0) setOverlayTopPx(off);
+      // Measure hour height from first two rows
+      const r1c2 = tbody?.querySelector('tr:nth-child(1) td:nth-child(2)');
+      const r2c2 = tbody?.querySelector('tr:nth-child(2) td:nth-child(2)');
+      
+      if (r1c2) {
+        const a = r1c2.getBoundingClientRect();
+        setOverlayTopPx(Math.max(0, a.top - tableRect.top));
+        if (r2c2) {
+          const b = r2c2.getBoundingClientRect();
+          const dh = b.top - a.top;
+          if (dh > 0) setHourHeightPx(dh);
+        } else if (a.height > 0) {
+          setHourHeightPx(a.height);
+        }
       }
 
+      // Measure each day column individually (columns 2-8, skip time column)
+      const measuredColumns: Array<{ left: number; width: number }> = [];
+      for (let i = 2; i <= 8; i++) {
+        const cell = tbody?.querySelector(`tr:nth-child(1) td:nth-child(${i})`);
+        if (cell) {
+          const rect = cell.getBoundingClientRect();
+          // Position relative to overlay container
+          const left = rect.left - overlayRect.left;
+          const width = rect.width;
+          measuredColumns.push({ left: Math.round(left), width: Math.round(width) });
+        } else {
+          // Fallback if cell doesn't exist yet
+          measuredColumns.push({ left: 64 + (i - 2) * 150, width: 150 });
+        }
+      }
+      
+      if (measuredColumns.length === 7) {
+        setDayColumns(measuredColumns);
+      }
+
+      // Time column width
+      const timeTh = table.querySelector('thead th');
+      const timeTd = tbody?.querySelector('td');
       const tdW = timeTd?.getBoundingClientRect().width;
       const thW = timeTh?.getBoundingClientRect().width;
       const w = (tdW && tdW > 0 ? tdW : thW && thW > 0 ? thW : 64);
@@ -86,6 +122,9 @@ export default function CalendarWeekView({
     };
 
     measure();
+    if ((document as any).fonts?.ready) {
+      (document as any).fonts.ready.then(() => requestAnimationFrame(measure)).catch(() => {});
+    }
     const onResize = () => requestAnimationFrame(measure);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -136,11 +175,11 @@ export default function CalendarWeekView({
       const minutesFromStart = ((startHour - 6) * 60) + startMinute;
       const minutesDuration = ((endHour - startHour) * 60) + (endMinute - startMinute);
       const pxPerMinute = hourHeightPx / 60;
-      const topRaw = minutesFromStart * pxPerMinute;
-      const heightRaw = minutesDuration * pxPerMinute;
-
-      const top = Math.max(0, Math.round(topRaw));
-      const height = Math.max(20, Math.round(heightRaw));
+      const rawTop = minutesFromStart * pxPerMinute;
+      // snap to nearest 5 minutes to avoid tiny drift
+      const snapUnit = pxPerMinute * 5;
+      const top = Math.max(0, Math.round(rawTop / snapUnit) * snapUnit);
+      const height = Math.max(20, Math.round((minutesDuration * pxPerMinute)));
 
       return { top, height };
     } catch {
@@ -245,18 +284,19 @@ export default function CalendarWeekView({
           </tbody>
         </table>
 
-        {/* Appointments Overlay - uses measured overlayTopPx */}
-        <div className="absolute left-0 w-full h-full pointer-events-none" style={{ top: `${overlayTopPx}px` }}>
+        {/* Appointments Overlay - uses measured overlayTopPx and individually measured day columns */}
+        <div ref={overlayRef} className="absolute left-0 w-full h-full pointer-events-none" style={{ top: `${overlayTopPx}px` }}>
           {weekDays.map((day, dayIndex) => {
             const dayAppointments = getAppointmentsForDay(day);
+            const column = dayColumns[dayIndex] || { left: 64 + dayIndex * 150, width: 150 };
             
             return (
               <div
                 key={dayIndex}
                 className="absolute top-0"
                 style={{
-                  left: `calc(${timeColWidthPx}px + ${dayIndex} * ((100% - ${timeColWidthPx}px) / 7))`,
-                  width: `calc((100% - ${timeColWidthPx}px) / 7)`,
+                  left: `${column.left}px`,
+                  width: `${column.width}px`,
                   height: '100%',
                   pointerEvents: 'none',
                 }}
@@ -336,14 +376,15 @@ export default function CalendarWeekView({
             if (currentHour < 6 || currentHour >= 23) return null;
             
             const topOffset = ((currentHour - 6) * 60 + currentMinute) * (hourHeightPx / 60);
+            const column = dayColumns[todayIndex] || { left: 64 + todayIndex * 150, width: 150 };
             
             return (
               <div
                 className="absolute h-0.5 bg-red-500 z-20"
                 style={{
                   top: `${topOffset}px`,
-                  left: `calc(${timeColWidthPx}px + ${todayIndex} * ((100% - ${timeColWidthPx}px) / 7))`,
-                  width: `calc((100% - ${timeColWidthPx}px) / 7)`,
+                  left: `${column.left}px`,
+                  width: `${column.width}px`,
                 }}
               >
                 <div className="absolute left-0 top-0 w-2 h-2 bg-red-500 rounded-full transform -translate-x-1 -translate-y-0.5" />

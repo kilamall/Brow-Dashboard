@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { collection, query, orderBy, limit, onSnapshot, addDoc, where, getDocs, updateDoc, doc, writeBatch, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -277,7 +278,17 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                             onClick={(e) => e.stopPropagation()}
                           />
                           <h3 className="text-sm font-medium text-gray-900 truncate">
-                            {customer?.name || 'SMS Customer'}
+                            {customer?.id ? (
+                              <Link
+                                to={`/customers/${customer.id}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="hover:underline"
+                              >
+                                {customer.name}
+                              </Link>
+                            ) : (
+                              'SMS Customer'
+                            )}
                           </h3>
                         </div>
                       <p className="text-xs text-gray-500 truncate">
@@ -319,7 +330,12 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                 return customer ? (
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900">
-                      {customer.name}
+                      <Link
+                        to={`/customers/${customer.id}`}
+                        className="hover:underline"
+                      >
+                        {customer.name}
+                      </Link>
                     </h3>
                     <p className="text-sm text-gray-500">{customer.phone}</p>
                   </div>

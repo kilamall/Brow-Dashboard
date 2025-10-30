@@ -1665,3 +1665,115 @@ export const sendAppointmentConfirmation = onCall(
     }
   }
 );
+
+/**
+ * Send an initial onboarding/invitation email to a customer with key links
+ * - Booking page
+ * - Profile setup
+ * - Skin analysis
+ */
+export const sendInitialRequest = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    // SECURITY: Require admin role
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    const userToken = req.auth.token as any;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+
+    const { customerId, customerName, customerEmail } = req.data || {};
+
+    if (!customerEmail) {
+      throw new HttpsError('invalid-argument', 'customerEmail is required');
+    }
+
+    try {
+      // Prefer values from Firestore to keep links and name in sync
+      let name = customerName as string | undefined;
+      if (customerId) {
+        const snap = await db.collection('customers').doc(customerId).get();
+        if (snap.exists) {
+          const data = snap.data() as any;
+          name = data?.name || name;
+        }
+      }
+
+      // Optional: load business info for variables
+      const businessDoc = await db.collection('settings').doc('businessInfo').get();
+      const business = businessDoc.exists ? (businessDoc.data() as any) : {};
+
+      // Try to load a customizable template first
+      const template = await getEmailTemplate('initial-request');
+
+      const vars = {
+        customerName: name || 'there',
+        businessName: business?.name || 'Bueno Brows',
+        bookingLink: 'https://bueno-brows-7cce7.web.app/book',
+        profileLink: 'https://bueno-brows-7cce7.web.app/profile',
+        skinAnalysisLink: 'https://bueno-brows-7cce7.web.app/skin-analysis',
+        businessPhone: business?.phone || '(650) 766-3918',
+        businessEmail: business?.email || 'hello@buenobrows.com',
+        businessAddress: business?.address || 'San Mateo, CA',
+      } as Record<string, string>;
+
+      const subject = template
+        ? replaceTemplateVariables(template.subject, vars)
+        : `Welcome to ${vars.businessName}! Start by booking or setting up your profile`;
+
+      const html = template
+        ? replaceTemplateVariables(template.html, vars)
+        : `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .wrap { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .banner { background-color: #FFC107; padding: 36px 20px; text-align: center; }
+    .banner h1 { margin: 0; font-size: 24px; font-weight: 700; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 28px 20px; color: #ffffff; }
+    .cta { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 12px 22px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 10px 8px 0 0; }
+    .footer { background-color: #1a1a1a; padding: 24px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="banner"><h1>BUENO BROWS</h1></div>
+      <div class="content">
+        <p>Hi ${vars.customerName},</p>
+        <p>Welcome! You can get started in a few ways:</p>
+        <p>
+          <a class="cta" href="${vars.bookingLink}">Book an appointment</a>
+          <a class="cta" href="${vars.profileLink}">Set up your profile</a>
+          <a class="cta" href="${vars.skinAnalysisLink}">Try Skin Analysis</a>
+        </p>
+        <p style="margin-top:16px; color:#bbb">Questions? Call us at ${vars.businessPhone}.</p>
+      </div>
+      <div class="footer">
+        <p><strong style="color:#FFC107;">${vars.businessName}</strong></p>
+        <p>📍 ${vars.businessAddress}</p>
+        <p>✉️ ${vars.businessEmail}</p>
+      </div>
+    </div>
+  </body>
+</html>`;
+
+      const sent = await sendEmail({
+        to: customerEmail,
+        from: { email: FROM_EMAIL, name: FROM_NAME },
+        subject,
+        html,
+      });
+
+      return { success: !!sent };
+    } catch (err: any) {
+      console.error('Error sending initial request:', err);
+      throw new HttpsError('internal', 'Failed to send initial request');
+    }
+  }
+);

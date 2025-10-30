@@ -13,6 +13,54 @@ interface EmailTemplate {
 
 const defaultTemplates: EmailTemplate[] = [
   {
+    id: 'initial-request',
+    name: 'Initial Request / Invitation',
+    subject: 'Welcome to {{businessName}} — Get Started',
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 12px 22px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 8px 10px 0 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+></head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{customerName}},</p>
+      <p>Welcome to {{businessName}}! You can get started in a few ways:</p>
+      <p>
+        <a class="cta-button" href="{{bookingLink}}">Book an appointment</a>
+        <a class="cta-button" href="{{profileLink}}">Set up your profile</a>
+        <a class="cta-button" href="{{skinAnalysisLink}}">Try Skin Analysis</a>
+      </p>
+      <p style="margin-top: 16px; color:#bbb">Questions? Call us at {{businessPhone}}.</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">{{businessName}}</strong></p>
+      <p>📍 {{businessAddress}}</p>
+      <p>📞 {{businessPhone}}</p>
+      <p>✉️ {{businessEmail}}</p>
+    </div>
+  </div>
+</body>
+</html>
+    `,
+    variables: ['customerName', 'businessName', 'bookingLink', 'profileLink', 'skinAnalysisLink', 'businessPhone', 'businessAddress', 'businessEmail'],
+    isDefault: true
+  },
+  {
     id: 'appointment-pending',
     name: 'New Appointment Request',
     subject: '📋 Appointment Request Received - {{businessName}}',
@@ -450,7 +498,7 @@ export default function EmailTemplatesManager() {
         <h4 className="font-medium text-blue-900 mb-2">Available Variables</h4>
         <p className="text-sm text-blue-800 mb-2">Use these variables in your templates by wrapping them in double curly braces:</p>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-          {['customerName', 'customerEmail', 'customerPhone', 'date', 'time', 'serviceName', 'serviceDetails', 'duration', 'price', 'tip', 'total', 'subtotal', 'businessName', 'businessPhone', 'businessEmail', 'businessAddress', 'receiptNumber', 'receiptUrl', 'cancellationReason'].map(variable => (
+          {['customerName', 'customerEmail', 'customerPhone', 'date', 'time', 'serviceName', 'serviceDetails', 'duration', 'price', 'tip', 'total', 'subtotal', 'businessName', 'businessPhone', 'businessEmail', 'businessAddress', 'receiptNumber', 'receiptUrl', 'cancellationReason', 'bookingLink', 'profileLink', 'skinAnalysisLink'].map(variable => (
             <code key={variable} className="bg-white px-2 py-1 rounded border">{'{{' + variable + '}}'}</code>
           ))}
         </div>

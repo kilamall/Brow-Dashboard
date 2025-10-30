@@ -148,6 +148,7 @@ export async function createCustomer(db: Firestore, input: Partial<Customer>): P
       name: input.name || 'Unnamed',
       email: input.email || null,
       phone: input.phone || null,
+      birthday: input.birthday || null,
       profilePictureUrl: input.profilePictureUrl || null,
       notes: input.notes || null,
       status: input.status || 'pending',
@@ -165,6 +166,7 @@ export async function updateCustomer(db: Firestore, id: string, patch: Partial<C
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.email !== undefined ? { email: patch.email ?? null } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
+    ...(patch.birthday !== undefined ? { birthday: patch.birthday ?? null } : {}),
     ...(patch.profilePictureUrl !== undefined ? { profilePictureUrl: patch.profilePictureUrl ?? null } : {}),
     ...(patch.notes !== undefined ? { notes: patch.notes ?? null } : {}),
     ...(patch.structuredNotes !== undefined ? { structuredNotes: patch.structuredNotes } : {}),
@@ -416,9 +418,10 @@ export function watchCustomers(db: Firestore, term: string | undefined, cb: (row
     let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Customer);
     
     // Filter out migrated customers to prevent confusion in admin UI
+    // Only show the "canonical" version of each customer (not the migrated duplicates)
     const beforeFilter = customers.length;
     customers = customers.filter(customer => {
-      // Hide customers that have been migrated or have migratedTo field
+      // Hide customers that have been migrated (they're duplicates/old versions)
       const isMigrated = customer.identityStatus === 'migrated' || customer.migratedTo;
       return !isMigrated;
     });
