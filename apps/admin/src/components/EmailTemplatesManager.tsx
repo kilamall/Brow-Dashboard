@@ -13,6 +13,41 @@ interface EmailTemplate {
 
 const defaultTemplates: EmailTemplate[] = [
   {
+    id: 'appointment-pending',
+    name: 'New Appointment Request',
+    subject: '📋 Appointment Request Received - {{businessName}}',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h2 style="color: #8B4513; margin-bottom: 20px;">Appointment Request Received! 📋</h2>
+          
+          <p>Hi {{customerName}},</p>
+          
+          <p>Thank you for booking with us! We've received your appointment request and are reviewing it now.</p>
+          
+          <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+            <h3 style="margin-top: 0; color: #856404;">Requested Appointment</h3>
+            <p><strong>Date:</strong> {{date}}</p>
+            <p><strong>Time:</strong> {{time}}</p>
+            <p><strong>Service:</strong> {{serviceName}}</p>
+            <p><strong>Duration:</strong> {{duration}} minutes</p>
+          </div>
+          
+          <div style="background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p><strong>⏰ What happens next?</strong></p>
+            <p>We'll review your request and confirm it shortly. You'll receive a confirmation email once your appointment is approved.</p>
+          </div>
+          
+          <p>Need to make changes? <a href="https://bueno-brows-7cce7.web.app/dashboard" style="color: #8B4513; text-decoration: none; font-weight: bold;">Manage your booking online</a> or call us at {{businessPhone}}.</p>
+          
+          <p>Thank you for choosing {{businessName}}!<br>The {{businessName}} Team</p>
+        </div>
+      </div>
+    `,
+    variables: ['customerName', 'businessName', 'date', 'time', 'serviceName', 'duration', 'businessPhone'],
+    isDefault: true
+  },
+  {
     id: 'appointment-confirmation',
     name: 'Appointment Confirmation',
     subject: 'Appointment Confirmed - {{businessName}}',
@@ -34,7 +69,7 @@ const defaultTemplates: EmailTemplate[] = [
           
           <p>We look forward to seeing you at {{businessName}}!</p>
           
-          <p>If you need to reschedule or have any questions, please contact us at {{businessPhone}}.</p>
+          <p>Need to make changes? <a href="https://bueno-brows-7cce7.web.app/dashboard" style="color: #8B4513; text-decoration: none; font-weight: bold;">Manage your booking online</a> or call us at {{businessPhone}}.</p>
           
           <p>Best regards,<br>{{businessName}} Team</p>
         </div>
