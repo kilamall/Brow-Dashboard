@@ -100,6 +100,7 @@ service cloud.firestore {
         request.resource.data.customerEmail is string &&
         request.resource.data.customerId is string;
       allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /reviews/{id} {
@@ -122,6 +123,7 @@ service cloud.firestore {
       allow update: if isAdmin() || 
         (request.auth != null && 
          request.auth.uid == resource.data.customerId);
+      allow delete: if isAdmin();
     }
 
     match /customer_tokens/{id} {
