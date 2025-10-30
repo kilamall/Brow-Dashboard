@@ -17,6 +17,45 @@ const sendgridApiKey = defineString('SENDGRID_API_KEY', {
 const FROM_EMAIL = 'hello@buenobrows.com';
 const FROM_NAME = 'Bueno Brows';
 
+// Helper function to load email template from Firestore
+async function getEmailTemplate(templateId: string): Promise<{ subject: string; html: string; variables: string[] } | null> {
+  try {
+    const templatesDoc = await db.collection('settings').doc('emailTemplates').get();
+    if (!templatesDoc.exists) {
+      console.warn(`⚠️ Email templates not found in Firestore for template: ${templateId}`);
+      return null;
+    }
+    
+    const templatesData = templatesDoc.data();
+    const templates = templatesData?.templates || [];
+    
+    const template = templates.find((t: any) => t.id === templateId);
+    if (!template) {
+      console.warn(`⚠️ Template ${templateId} not found in Firestore`);
+      return null;
+    }
+    
+    return {
+      subject: template.subject,
+      html: template.html,
+      variables: template.variables || []
+    };
+  } catch (error) {
+    console.error(`❌ Error loading email template ${templateId}:`, error);
+    return null;
+  }
+}
+
+// Helper function to replace template variables
+function replaceTemplateVariables(template: string, variables: Record<string, string | number>): string {
+  let result = template;
+  Object.entries(variables).forEach(([key, value]) => {
+    const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+    result = result.replace(regex, String(value));
+  });
+  return result;
+}
+
 // Helper to initialize SendGrid
 export function initSendGrid(): boolean {
   const apiKey = sendgridApiKey.value();
@@ -94,281 +133,76 @@ export async function sendAppointmentConfirmationEmail(
     timeZone: businessTimezone,
   });
 
-  // Create email content
-  const htmlContent = `
+  // Try to load custom template from Firestore
+  let htmlContent: string;
+  let emailSubject: string;
+  
+  const customTemplate = await getEmailTemplate('appointment-confirmation');
+  
+  if (customTemplate) {
+    // Use custom template from admin settings
+    console.log('✅ Using custom email template for appointment confirmation');
+    
+    const businessInfo = await db.collection('settings').doc('businessInfo').get();
+    const businessData = businessInfo.exists ? businessInfo.data() : {};
+    
+    const templateVariables: Record<string, string | number> = {
+      customerName: customerName,
+      businessName: businessData?.name || 'Bueno Brows',
+      date: formattedDate,
+      time: time,
+      serviceName: serviceName,
+      duration: duration.toString(),
+      businessPhone: businessData?.phone || '(650) 766-3918',
+      bookingLink: 'https://bueno-brows-7cce7.web.app/dashboard'
+    };
+    
+    htmlContent = replaceTemplateVariables(customTemplate.html, templateVariables);
+    emailSubject = replaceTemplateVariables(customTemplate.subject, templateVariables);
+  } else {
+    // Fallback to hardcoded template
+    console.log('⚠️ Using default hardcoded email template (no custom template found)');
+    htmlContent = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta name="color-scheme" content="light dark">
       <meta name="supported-color-schemes" content="light dark">
       <style>
-        /* Base styles */
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
-          line-height: 1.6;
-          color: #333;
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 20px;
-          background-color: #FAF6EF;
-        }
-        .header {
-          background: linear-gradient(135deg, #ffcc33 0%, #D8A14A 100%);
-          color: #2c1810;
-          padding: 40px 30px;
-          border-radius: 10px 10px 0 0;
-          text-align: center;
-          position: relative;
-          box-shadow: inset 0 0 0 1px rgba(44, 24, 16, 0.1);
-        }
-        .logo {
-          margin-bottom: 15px;
-        }
-        .logo-bueno {
-          font-size: 32px;
-          font-weight: 700;
-          color: #1a0f08 !important;
-          letter-spacing: 1px;
-          text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.9);
-        }
-        .logo-brows {
-          font-size: 32px;
-          font-weight: 600;
-          color: #2d1b0f !important;
-          letter-spacing: 1px;
-          margin-left: 8px;
-          text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.9);
-        }
-        .header-title {
-          margin: 15px 0 0 0;
-          font-size: 24px;
-          color: #1a0f08 !important;
-          font-weight: 700;
-          text-shadow: 2px 2px 3px rgba(255, 255, 255, 0.8);
-        }
-        .content {
-          background: #ffffff;
-          padding: 30px;
-          border: 2px solid #D8A14A;
-          border-top: none;
-        }
-        .appointment-details {
-          background: #FAF6EF;
-          padding: 20px;
-          border-radius: 8px;
-          margin: 20px 0;
-          border: 1px solid #D8A14A;
-          box-shadow: 0 10px 20px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04);
-        }
-        .detail-row {
-          display: flex;
-          padding: 12px 0;
-          border-bottom: 1px solid #e8dfcf;
-        }
-        .detail-row:last-child {
-          border-bottom: none;
-        }
-        .detail-label {
-          font-weight: 600;
-          width: 140px;
-          color: #804d00;
-        }
-        .detail-value {
-          color: #4a4a4a;
-        }
-        .footer {
-          background: #FAF6EF;
-          padding: 20px 30px;
-          border: 2px solid #D8A14A;
-          border-top: none;
-          border-radius: 0 0 10px 10px;
-          text-align: center;
-          color: #4a4a4a;
-          font-size: 14px;
-        }
-        .footer-text {
-          color: #6b7280;
-        }
-        .button {
-          display: inline-block;
-          background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%);
-          color: #ffffff !important;
-          padding: 16px 40px;
-          text-decoration: none;
-          border-radius: 8px;
-          margin: 20px 0;
-          font-weight: 700;
-          font-size: 16px;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-          transition: all 0.3s ease;
-          border: 3px solid #D8A14A;
-          text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-          letter-spacing: 0.5px;
-        }
-        .button:hover {
-          box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-        }
-        .note {
-          background: #fff8d1;
-          border-left: 4px solid #ffcc33;
-          padding: 15px;
-          margin: 20px 0;
-          border-radius: 4px;
-        }
-
-        /* Dark mode styles */
-        @media (prefers-color-scheme: dark) {
-          body {
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-          }
-          .header {
-            background: linear-gradient(135deg, #cc9922 0%, #b3861e 100%);
-            color: #2c1810;
-          }
-          .logo-bueno {
-            color: #2c1810;
-            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
-          }
-          .logo-brows {
-            color: #4a2c1a;
-            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
-          }
-          .header-title {
-            color: #2c1810;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.6);
-          }
-          .content {
-            background: #2a2a2a;
-            border-color: #b3861e;
-            color: #e0e0e0;
-          }
-          .appointment-details {
-            background: #1f1f1f;
-            border-color: #b3861e;
-          }
-          .detail-row {
-            border-bottom-color: #3a3a3a;
-          }
-          .detail-label {
-            color: #ffcc33;
-          }
-          .detail-value {
-            color: #d0d0d0;
-          }
-          .footer {
-            background: #1a1a1a;
-            border-color: #b3861e;
-            color: #d0d0d0;
-          }
-          .footer-text {
-            color: #a0a0a0;
-          }
-          .button {
-            background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%);
-            color: #ffffff !important;
-            font-weight: 700;
-            font-size: 16px;
-            border: 3px solid #b3861e;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-            letter-spacing: 0.5px;
-          }
-          .note {
-            background: #2a2400;
-            border-left-color: #e6b829;
-            color: #e0e0e0;
-          }
-        }
-
-        /* Light mode specific adjustments */
-        @media (prefers-color-scheme: light) {
-          .logo-bueno {
-            color: #2c1810;
-            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
-          }
-          .logo-brows {
-            color: #4a2c1a;
-            text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.8);
-          }
-          .header-title {
-            color: #2c1810;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.6);
-          }
-        }
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #FAF6EF; }
+        .header { background: linear-gradient(135deg, #ffcc33 0%, #D8A14A 100%); color: #2c1810; padding: 40px 30px; border-radius: 10px 10px 0 0; text-align: center; }
+        .content { background: #ffffff; padding: 30px; border: 2px solid #D8A14A; border-top: none; }
+        .appointment-details { background: #FAF6EF; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #D8A14A; }
+        .detail-row { display: flex; padding: 12px 0; border-bottom: 1px solid #e8dfcf; }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { font-weight: 600; width: 140px; color: #804d00; }
+        .detail-value { color: #4a4a4a; }
+        .button { display: inline-block; background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%); color: #ffffff !important; padding: 16px 40px; text-decoration: none; border-radius: 8px; margin: 20px 0; font-weight: 700; }
       </style>
     </head>
     <body>
       <div class="header">
-        <div class="logo">
-          <span class="logo-bueno">BUENO</span>
-          <span class="logo-brows">BROWS</span>
-        </div>
-        <h1 class="header-title">✨ Appointment Confirmed!</h1>
+        <h1>✨ Appointment Confirmed!</h1>
       </div>
-      
       <div class="content">
         <p>Hi ${customerName},</p>
-        
         <p>Great news! Your appointment at <strong>Bueno Brows</strong> has been confirmed.</p>
-        
         <div class="appointment-details">
-          <div class="detail-row">
-            <div class="detail-label">Service:</div>
-            <div class="detail-value"><strong>${serviceName}</strong></div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Date:</div>
-            <div class="detail-value">${formattedDate}</div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Time:</div>
-            <div class="detail-value">${time}</div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Duration:</div>
-            <div class="detail-value">${duration} minutes</div>
-          </div>
-          ${price ? `
-          <div class="detail-row">
-            <div class="detail-label">Price:</div>
-            <div class="detail-value">$${price.toFixed(2)}</div>
-          </div>
-          ` : ''}
+          <div class="detail-row"><div class="detail-label">Service:</div><div class="detail-value"><strong>${serviceName}</strong></div></div>
+          <div class="detail-row"><div class="detail-label">Date:</div><div class="detail-value">${formattedDate}</div></div>
+          <div class="detail-row"><div class="detail-label">Time:</div><div class="detail-value">${time}</div></div>
+          <div class="detail-row"><div class="detail-label">Duration:</div><div class="detail-value">${duration} minutes</div></div>
+          ${price ? `<div class="detail-row"><div class="detail-label">Price:</div><div class="detail-value">$${price.toFixed(2)}</div></div>` : ''}
         </div>
-
-        ${notes ? `
-        <div class="note">
-          <strong>Note:</strong> ${notes}
-        </div>
-        ` : ''}
-
-        <div style="text-align: center;">
-          <a href="https://buenobrows.com" class="button">Book Your Next Appointment</a>
-        </div>
-
-        <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
-          <strong>Need to reschedule or cancel?</strong><br>
-          Please call us at least 24 hours in advance to avoid any cancellation fees.
-        </p>
-      </div>
-      
-      <div class="footer">
-        <p style="margin: 0 0 10px 0;">
-          <span class="logo-bueno" style="font-size: 18px;">BUENO</span>
-          <span class="logo-brows" style="font-size: 18px; margin-left: 4px;">BROWS</span>
-        </p>
-        <p style="margin: 5px 0;">📍 315 9th Ave, San Mateo, CA 94401</p>
-        <p style="margin: 5px 0;">📞 Phone: <a href="tel:+16507663918" style="color: #D8A14A; text-decoration: none;">(650) 766-3918</a></p>
-        <p style="margin: 5px 0;">✉️ Email: hello@buenobrows.com</p>
-        <p style="margin: 5px 0;">🌐 Website: <a href="https://buenobrows.com" style="color: #D8A14A; text-decoration: none;">buenobrows.com</a></p>
-        <p class="footer-text" style="margin: 15px 0 0 0; font-size: 12px;">
-          You're receiving this email because you booked an appointment with us.<br>
-          <strong>Bueno Brows</strong> - Filipino-inspired beauty studio specializing in brows & lashes
-        </p>
+        ${notes ? `<div style="background: #fff8d1; border-left: 4px solid #ffcc33; padding: 15px; margin: 20px 0; border-radius: 4px;"><strong>Note:</strong> ${notes}</div>` : ''}
+        <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="button">Manage Your Booking</a></div>
+        <p style="margin-top: 30px;">Need to reschedule or cancel? Please call us at (650) 766-3918</p>
       </div>
     </body>
     </html>
-  `;
+    `;
+    emailSubject = `✨ Appointment Confirmed - ${serviceName} on ${formattedDate}`;
+  }
 
   const textContent = `
 Appointment Confirmed!
@@ -386,7 +220,7 @@ ${price ? `Price: $${price.toFixed(2)}` : ''}
 
 ${notes ? `Note: ${notes}` : ''}
 
-Need to reschedule or cancel? Please call us at least 24 hours in advance.
+Need to reschedule or cancel? Please call us at (650) 766-3918
 
 Bueno Brows
 📍 315 9th Ave, San Mateo, CA 94401
@@ -403,7 +237,7 @@ Filipino-inspired beauty studio specializing in brows & lashes
       email: FROM_EMAIL,
       name: FROM_NAME,
     },
-    subject: `✨ Appointment Confirmed - ${serviceName} on ${formattedDate}`,
+    subject: emailSubject,
     text: textContent,
     html: htmlContent,
   };
