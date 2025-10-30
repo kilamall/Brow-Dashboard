@@ -363,7 +363,7 @@ export async function sendAppointmentCancellationEmail(
     </div>
     <div class="content">
       <p class="greeting">Hi ${customerName},</p>
-      <p>We're writing to inform you that your appointment at <strong>${customerName}</strong> has been cancelled by ${cancelledByText}.</p>
+      <p>We're writing to inform you that your appointment at <strong>Bueno Brows</strong> has been cancelled by ${cancelledByText}.</p>
       <div class="appointment-card">
         <div class="appointment-row">
           <span class="detail-label">Service:</span>
