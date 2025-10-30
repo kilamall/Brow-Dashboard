@@ -162,45 +162,68 @@ export async function sendAppointmentConfirmationEmail(
   } else {
     // Fallback to hardcoded template
     console.log('⚠️ Using default hardcoded email template (no custom template found)');
-    htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="color-scheme" content="light dark">
-      <meta name="supported-color-schemes" content="light dark">
-      <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #FAF6EF; }
-        .header { background: linear-gradient(135deg, #ffcc33 0%, #D8A14A 100%); color: #2c1810; padding: 40px 30px; border-radius: 10px 10px 0 0; text-align: center; }
-        .content { background: #ffffff; padding: 30px; border: 2px solid #D8A14A; border-top: none; }
-        .appointment-details { background: #FAF6EF; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #D8A14A; }
-        .detail-row { display: flex; padding: 12px 0; border-bottom: 1px solid #e8dfcf; }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-label { font-weight: 600; width: 140px; color: #804d00; }
-        .detail-value { color: #4a4a4a; }
-        .button { display: inline-block; background: linear-gradient(135deg, #2c1810 0%, #4a2c1a 100%); color: #ffffff !important; padding: 16px 40px; text-decoration: none; border-radius: 8px; margin: 20px 0; font-weight: 700; }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <h1>✨ Appointment Confirmed!</h1>
-      </div>
-      <div class="content">
-        <p>Hi ${customerName},</p>
-        <p>Great news! Your appointment at <strong>Bueno Brows</strong> has been confirmed.</p>
-        <div class="appointment-details">
-          <div class="detail-row"><div class="detail-label">Service:</div><div class="detail-value"><strong>${serviceName}</strong></div></div>
-          <div class="detail-row"><div class="detail-label">Date:</div><div class="detail-value">${formattedDate}</div></div>
-          <div class="detail-row"><div class="detail-label">Time:</div><div class="detail-value">${time}</div></div>
-          <div class="detail-row"><div class="detail-label">Duration:</div><div class="detail-value">${duration} minutes</div></div>
-          ${price ? `<div class="detail-row"><div class="detail-label">Price:</div><div class="detail-value">$${price.toFixed(2)}</div></div>` : ''}
+    htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #FFC107; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #1a1a1a; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #1a1a1a; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #FFC107; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .cta-button { display: inline-block; background-color: #FFC107; color: #1a1a1a !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>✨ Appointment Confirmed!</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi ${customerName},</p>
+      <p>Great news! Your appointment at <strong style="color: #FFC107;">Bueno Brows</strong> has been confirmed.</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">${serviceName}</span>
         </div>
-        ${notes ? `<div style="background: #fff8d1; border-left: 4px solid #ffcc33; padding: 15px; margin: 20px 0; border-radius: 4px;"><strong>Note:</strong> ${notes}</div>` : ''}
-        <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="button">Manage Your Booking</a></div>
-        <p style="margin-top: 30px;">Need to reschedule or cancel? Please call us at (650) 766-3918</p>
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">${formattedDate}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">${time}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Duration:</span>
+          <span class="detail-value">${duration} minutes</span>
+        </div>
       </div>
-    </body>
-    </html>
-    `;
+      ${notes ? `<div style="background: #3a3a3a; border-left: 4px solid #FFC107; padding: 15px; margin: 20px 0; border-radius: 4px; color: #ffffff;"><strong>Note:</strong> ${notes}</div>` : ''}
+      <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="cta-button">Manage Your Booking</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at (650) 766-3918</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #FFC107;">Bueno Brows</strong></p>
+      <p>📍 315 9th Ave, San Mateo, CA 94401</p>
+      <p>📞 (650) 766-3918</p>
+      <p>✉️ hello@buenobrows.com</p>
+    </div>
+  </div>
+</body>
+</html>`;
     emailSubject = `✨ Appointment Confirmed - ${serviceName} on ${formattedDate}`;
   }
 
@@ -310,265 +333,65 @@ export async function sendAppointmentCancellationEmail(
   const cancellationTitle = cancelledBy === 'customer' ? 'Appointment Cancelled' : 'Appointment Cancelled by Admin';
 
   // Create email content
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="color-scheme" content="light dark">
-      <meta name="supported-color-schemes" content="light dark">
-      <style>
-        /* Base styles */
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
-          line-height: 1.6;
-          color: #333;
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 20px;
-          background-color: #FAF6EF;
-        }
-        .header {
-          background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-          color: #ffffff;
-          padding: 40px 30px;
-          border-radius: 10px 10px 0 0;
-          text-align: center;
-          position: relative;
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-        }
-        .logo {
-          margin-bottom: 15px;
-        }
-        .logo-bueno {
-          font-size: 32px;
-          font-weight: 700;
-          color: #ffffff !important;
-          letter-spacing: 1px;
-          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        .logo-brows {
-          font-size: 32px;
-          font-weight: 600;
-          color: #ffffff !important;
-          letter-spacing: 1px;
-          margin-left: 8px;
-          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        .header-title {
-          margin: 15px 0 0 0;
-          font-size: 24px;
-          color: #ffffff !important;
-          font-weight: 700;
-          text-shadow: 2px 2px 3px rgba(0, 0, 0, 0.3);
-        }
-        .content {
-          background: #ffffff;
-          padding: 30px;
-          border: 2px solid #dc2626;
-          border-top: none;
-        }
-        .appointment-details {
-          background: #fef2f2;
-          padding: 20px;
-          border-radius: 8px;
-          margin: 20px 0;
-          border: 1px solid #fecaca;
-          box-shadow: 0 10px 20px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04);
-        }
-        .detail-row {
-          display: flex;
-          padding: 12px 0;
-          border-bottom: 1px solid #fecaca;
-        }
-        .detail-row:last-child {
-          border-bottom: none;
-        }
-        .detail-label {
-          font-weight: 600;
-          width: 140px;
-          color: #dc2626;
-        }
-        .detail-value {
-          color: #4a4a4a;
-        }
-        .footer {
-          background: #FAF6EF;
-          padding: 20px 30px;
-          border: 2px solid #dc2626;
-          border-top: none;
-          border-radius: 0 0 10px 10px;
-          text-align: center;
-          color: #4a4a4a;
-          font-size: 14px;
-        }
-        .footer-text {
-          color: #6b7280;
-        }
-        .button {
-          display: inline-block;
-          background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-          color: #ffffff !important;
-          padding: 16px 40px;
-          text-decoration: none;
-          border-radius: 8px;
-          margin: 20px 0;
-          font-weight: 700;
-          font-size: 16px;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-          transition: all 0.3s ease;
-          border: 3px solid #dc2626;
-          text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-          letter-spacing: 0.5px;
-        }
-        .button:hover {
-          box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-        }
-        .note {
-          background: #fef2f2;
-          border-left: 4px solid #dc2626;
-          padding: 15px;
-          margin: 20px 0;
-          border-radius: 4px;
-        }
-        .cancellation-info {
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          border-radius: 8px;
-          padding: 20px;
-          margin: 20px 0;
-        }
-
-        /* Dark mode styles */
-        @media (prefers-color-scheme: dark) {
-          body {
-            background-color: #1a1a1a;
-            color: #e0e0e0;
-          }
-          .header {
-            background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
-            color: #ffffff;
-          }
-          .content {
-            background: #2a2a2a;
-            border-color: #b91c1c;
-            color: #e0e0e0;
-          }
-          .appointment-details {
-            background: #1f1f1f;
-            border-color: #b91c1c;
-          }
-          .detail-row {
-            border-bottom-color: #3a3a3a;
-          }
-          .detail-label {
-            color: #fca5a5;
-          }
-          .detail-value {
-            color: #d0d0d0;
-          }
-          .footer {
-            background: #1a1a1a;
-            border-color: #b91c1c;
-            color: #d0d0d0;
-          }
-          .footer-text {
-            color: #a0a0a0;
-          }
-          .button {
-            background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
-            border-color: #b91c1c;
-          }
-          .note {
-            background: #1f1f1f;
-            border-left-color: #fca5a5;
-            color: #e0e0e0;
-          }
-          .cancellation-info {
-            background: #1f1f1f;
-            border-color: #b91c1c;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <div class="logo">
-          <span class="logo-bueno">BUENO</span>
-          <span class="logo-brows">BROWS</span>
+  const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #1a1a1a; }
+    .email-wrapper { max-width: 600px; margin: 0 auto; background-color: #1a1a1a; }
+    .header-banner { background-color: #dc2626; padding: 40px 20px; text-align: center; }
+    .header-banner h1 { margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; letter-spacing: 1px; }
+    .header-banner h2 { margin: 10px 0 0 0; font-size: 18px; font-weight: 600; color: #ffffff; }
+    .content { background-color: #2a2a2a; padding: 30px 20px; color: #ffffff; }
+    .greeting { margin: 0 0 15px 0; font-size: 16px; }
+    .appointment-card { background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .appointment-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #4a4a4a; }
+    .appointment-row:last-child { border-bottom: none; }
+    .detail-label { color: #fca5a5; font-weight: 500; }
+    .detail-value { color: #ffffff; font-weight: 600; }
+    .cta-button { display: inline-block; background-color: #dc2626; color: #ffffff !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 700; margin: 20px 0; }
+    .footer { background-color: #1a1a1a; padding: 30px 20px; text-align: center; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="header-banner">
+      <h1>BUENO BROWS</h1>
+      <h2>❌ ${cancellationTitle}</h2>
+    </div>
+    <div class="content">
+      <p class="greeting">Hi ${customerName},</p>
+      <p>We're writing to inform you that your appointment at <strong>${customerName}</strong> has been cancelled by ${cancelledByText}.</p>
+      <div class="appointment-card">
+        <div class="appointment-row">
+          <span class="detail-label">Service:</span>
+          <span class="detail-value">${serviceName}</span>
         </div>
-        <h1 class="header-title">❌ ${cancellationTitle}</h1>
+        <div class="appointment-row">
+          <span class="detail-label">Date:</span>
+          <span class="detail-value">${formattedDate}</span>
+        </div>
+        <div class="appointment-row">
+          <span class="detail-label">Time:</span>
+          <span class="detail-value">${time}</span>
+        </div>
       </div>
-      
-      <div class="content">
-        <p>Hi ${customerName},</p>
-        
-        <p>We're writing to inform you that your appointment at <strong>Bueno Brows</strong> has been cancelled by ${cancelledByText}.</p>
-        
-        <div class="appointment-details">
-          <div class="detail-row">
-            <div class="detail-label">Service:</div>
-            <div class="detail-value"><strong>${serviceName}</strong></div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Date:</div>
-            <div class="detail-value">${formattedDate}</div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Time:</div>
-            <div class="detail-value">${time}</div>
-          </div>
-          <div class="detail-row">
-            <div class="detail-label">Duration:</div>
-            <div class="detail-value">${duration} minutes</div>
-          </div>
-          ${price ? `
-          <div class="detail-row">
-            <div class="detail-label">Price:</div>
-            <div class="detail-value">$${price.toFixed(2)}</div>
-          </div>
-          ` : ''}
-        </div>
-
-        ${cancellationReason ? `
-        <div class="cancellation-info">
-          <strong>Reason for cancellation:</strong><br>
-          ${cancellationReason}
-        </div>
-        ` : ''}
-
-        ${notes ? `
-        <div class="note">
-          <strong>Original Notes:</strong> ${notes}
-        </div>
-        ` : ''}
-
-        <div style="text-align: center;">
-          <a href="https://buenobrows.com" class="button">Book a New Appointment</a>
-        </div>
-
-        <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
-          <strong>Need to reschedule?</strong><br>
-          We'd love to help you find a new time that works for you. Please call us or book online.
-        </p>
-      </div>
-      
-      <div class="footer">
-        <p style="margin: 0 0 10px 0;">
-          <span class="logo-bueno" style="font-size: 18px;">BUENO</span>
-          <span class="logo-brows" style="font-size: 18px; margin-left: 4px;">BROWS</span>
-        </p>
-        <p style="margin: 5px 0;">📍 315 9th Ave, San Mateo, CA 94401</p>
-        <p style="margin: 5px 0;">📞 Phone: <a href="tel:+16507663918" style="color: #dc2626; text-decoration: none;">(650) 766-3918</a></p>
-        <p style="margin: 5px 0;">✉️ Email: hello@buenobrows.com</p>
-        <p style="margin: 5px 0;">🌐 Website: <a href="https://buenobrows.com" style="color: #dc2626; text-decoration: none;">buenobrows.com</a></p>
-        <p class="footer-text" style="margin: 15px 0 0 0; font-size: 12px;">
-          You're receiving this email because your appointment was cancelled.<br>
-          <strong>Bueno Brows</strong> - Filipino-inspired beauty studio specializing in brows & lashes
-        </p>
-      </div>
-    </body>
-    </html>
-  `;
+      ${cancellationReason ? `<div style="background: #3a3a3a; border-left: 4px solid #dc2626; padding: 15px; margin: 20px 0; border-radius: 4px; color: #ffffff;"><strong>Reason for cancellation:</strong><br>${cancellationReason}</div>` : ''}
+      <p style="margin-top: 20px;">We apologize for any inconvenience. Please contact us at (650) 766-3918 to reschedule your appointment.</p>
+      <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="cta-button">Book a New Appointment</a></div>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule? We'd love to help you find a new time that works for you.</p>
+    </div>
+    <div class="footer">
+      <p><strong style="color: #dc2626;">Bueno Brows</strong></p>
+      <p>📍 315 9th Ave, San Mateo, CA 94401</p>
+      <p>📞 (650) 766-3918</p>
+      <p>✉️ hello@buenobrows.com</p>
+    </div>
+  </div>
+</body>
+</html>`;
 
   const textContent = `
 Appointment Cancelled - Bueno Brows
