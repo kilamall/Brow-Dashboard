@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface TrainingStats {
   messagesAnalyzed: number;
@@ -30,6 +31,9 @@ export default function AITrainingPanel() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loadingFlagged, setLoadingFlagged] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; uploadedAt: Date }[]>([]);
+  const [file, setFile] = useState<File | null>(null);
 
   // Load current training stats
   useEffect(() => {
@@ -110,6 +114,41 @@ export default function AITrainingPanel() {
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const storage = getStorage();
+      const path = `ai_training/manual/${Date.now()}-${file.name}`;
+      const ref = storageRef(storage, path);
+      await uploadBytes(ref, file, { contentType: file.type || 'application/octet-stream' });
+      const url = await getDownloadURL(ref);
+      await addDoc(collection(db, 'ai_training_uploads'), {
+        name: file.name,
+        path,
+        url,
+        type: file.type,
+        size: file.size,
+        uploadedAt: serverTimestamp(),
+      });
+      setUploadedFiles(prev => [{ name: file.name, url, uploadedAt: new Date() }, ...prev]);
+      setFile(null);
+      setSuccess('Training material uploaded successfully.');
+    } catch (e: any) {
+      console.error('Upload failed:', e);
+      setError(e.message || 'Failed to upload training material');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="mb-6">
@@ -117,6 +156,32 @@ export default function AITrainingPanel() {
         <p className="text-sm text-gray-600">
           Train the AI to respond to customer messages in your style based on your past SMS conversations.
         </p>
+      </div>
+
+      {/* Manual Training Materials Upload */}
+      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <h3 className="font-semibold text-slate-900 mb-2">Upload Training Materials (PDF or ZIP)</h3>
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+          <div className="flex-1 w-full">
+            <label htmlFor="ai-training-upload" className="block text-sm font-medium text-slate-700 mb-1">Select file</label>
+            <input
+              id="ai-training-upload"
+              name="ai-training-upload"
+              type="file"
+              accept=".pdf,.zip,application/pdf,application/zip,application/x-zip-compressed"
+              onChange={handleFileChange}
+              className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+            />
+          </div>
+          <button
+            onClick={handleUpload}
+            disabled={!file || uploading}
+            className="px-4 py-2 bg-slate-800 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {uploading ? 'Uploading…' : 'Upload'}
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mt-2">Supported: .pdf, .zip. Files are stored under ai_training/manual/ and can be referenced for future retraining.</p>
       </div>
 
       {/* Training Stats */}
@@ -175,6 +240,21 @@ export default function AITrainingPanel() {
       {error && (
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
           <p className="text-red-800">❌ {error}</p>
+        </div>
+      )}
+
+      {/* Recently Uploaded Materials */}
+      {uploadedFiles.length > 0 && (
+        <div className="mt-6">
+          <h4 className="font-semibold text-gray-900 mb-2">Recently Uploaded</h4>
+          <ul className="text-sm list-disc list-inside text-slate-700 space-y-1">
+            {uploadedFiles.map((f, i) => (
+              <li key={i}>
+                <a className="text-terracotta underline" href={f.url} target="_blank" rel="noreferrer">{f.name}</a>
+                <span className="text-xs text-slate-500 ml-2">{f.uploadedAt.toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

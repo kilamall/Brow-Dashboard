@@ -327,7 +327,9 @@ export const trainAIFromAdminMessages = onCall(
  */
 export const quarterlyAIRetraining = onSchedule(
   {
-    schedule: 'every 3 months',
+    // Run at 9:00 AM PT on the 1st day every 3rd month
+    schedule: '0 9 1 */3 *',
+    timeZone: 'America/Los_Angeles',
     region: 'us-central1',
     memory: '1GiB',
     timeoutSeconds: 540
