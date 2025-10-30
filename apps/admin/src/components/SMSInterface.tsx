@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { collection, query, orderBy, limit, onSnapshot, addDoc, where, getDocs, updateDoc, doc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface SMSConversation {
   id: string;
@@ -11,6 +12,7 @@ interface SMSConversation {
   timestamp: any;
   messageType?: string;
   sentBy?: string;
+  read?: boolean;
 }
 
 interface Customer {
@@ -19,6 +21,7 @@ interface Customer {
   phone: string;
   email?: string;
   status: string;
+  profilePictureUrl?: string;
 }
 
 interface SMSInterfaceProps {
@@ -29,11 +32,12 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
   const [conversations, setConversations] = useState<SMSConversation[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
-  const { db, functions } = useFirebase();
+  const { db } = useFirebase();
 
   useEffect(() => {
     // Subscribe to SMS conversations
@@ -94,13 +98,14 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
   };
 
   const markThreadAsRead = async () => {
-    if (!selectedCustomer) return;
+    if (!selectedCustomer && !selectedPhone) return;
     try {
       const customer = customers.find(c => c.id === selectedCustomer);
-      if (!customer?.phone) return;
+      const phoneToUse = customer?.phone || selectedPhone;
+      if (!phoneToUse) return;
       const q = query(
         collection(db, 'sms_conversations'),
-        where('phoneNumber', '==', customer.phone),
+        where('phoneNumber', '==', phoneToUse),
         where('direction', '==', 'inbound')
       );
       const snap = await getDocs(q);
@@ -117,18 +122,20 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
   };
 
   const deleteThread = async () => {
-    if (!selectedCustomer) return;
+    if (!selectedCustomer && !selectedPhone) return;
     const confirmDelete = confirm('Delete this entire SMS thread? This will remove all SMS messages for this number.');
     if (!confirmDelete) return;
     try {
       const customer = customers.find(c => c.id === selectedCustomer);
-      if (!customer?.phone) return;
-      const q = query(collection(db, 'sms_conversations'), where('phoneNumber', '==', customer.phone));
+      const phoneToUse = customer?.phone || selectedPhone;
+      if (!phoneToUse) return;
+      const q = query(collection(db, 'sms_conversations'), where('phoneNumber', '==', phoneToUse));
       const snap = await getDocs(q);
       const batch = writeBatch(db);
       snap.docs.forEach(d => batch.delete(doc(db, 'sms_conversations', d.id)));
       await batch.commit();
       setSelectedCustomer(null);
+      setSelectedPhone(null);
     } catch (e) {
       console.error('Failed to delete SMS thread:', e);
       alert('Failed to delete SMS thread.');
@@ -146,14 +153,15 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
       }
 
       // Call Cloud Function to send SMS
-      const sendSMSFunction = functions.httpsCallable('sendSMSToCustomer');
-      const result = await sendSMSFunction({
+      const fns = getFunctions();
+      const sendSMSFunction = httpsCallable(fns, 'sendSMSToCustomer');
+      const result: any = await sendSMSFunction({
         phoneNumber: customer.phone,
         message: newMessage.trim(),
         customerId: selectedCustomer
       });
 
-      if (result.data.success) {
+      if (result.data && (result.data as any).success) {
         setNewMessage('');
         // The conversation will be updated automatically via the real-time listener
       } else {
@@ -219,9 +227,9 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
               return (
                 <div
                   key={phoneNumber}
-                  onClick={() => setSelectedCustomer(customer?.id || null)}
+                  onClick={() => { setSelectedCustomer(customer?.id || null); setSelectedPhone(phoneNumber); }}
                   className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                    selectedCustomer === customer?.id ? 'bg-blue-50 border-blue-200' : ''
+                    (selectedCustomer === customer?.id || selectedPhone === phoneNumber) ? 'bg-blue-50 border-blue-200' : ''
                   }`}
                 >
                   <div className="flex items-start gap-3">
@@ -302,7 +310,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
 
       {/* Messages Area */}
       <div className="flex-1 flex flex-col">
-        {selectedCustomer ? (
+        {selectedCustomer || selectedPhone ? (
           <>
             {/* Messages Header */}
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
@@ -315,7 +323,14 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                     </h3>
                     <p className="text-sm text-gray-500">{customer.phone}</p>
                   </div>
-                ) : null;
+                ) : (
+                  selectedPhone ? (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">SMS Customer</h3>
+                      <p className="text-sm text-gray-500">{selectedPhone}</p>
+                    </div>
+                  ) : null
+                );
               })()}
               <div className="flex gap-2">
                 <button onClick={markThreadAsRead} className="px-3 py-1 rounded-md text-sm bg-gray-200 text-gray-700 hover:bg-gray-300">Mark Read</button>
@@ -327,9 +342,9 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {(() => {
                 const customer = customers.find(c => c.id === selectedCustomer);
-                if (!customer) return null;
-                
-                const customerConversations = getConversationForPhone(customer.phone);
+                const phone = customer?.phone || selectedPhone || '';
+                if (!phone) return null;
+                const customerConversations = getConversationForPhone(phone);
                 
                 if (customerConversations.length === 0) {
                   return (
@@ -406,7 +421,7 @@ export default function SMSInterface({ className = '' }: SMSInterfaceProps) {
                 />
                 <button
                   onClick={handleSendSMS}
-                  disabled={!newMessage.trim() || sending}
+                  disabled={!newMessage.trim() || sending || !customers.find(c => c.id === selectedCustomer)?.phone}
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {sending ? 'Sending...' : 'Send SMS'}
