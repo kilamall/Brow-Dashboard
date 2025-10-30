@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { format, startOfWeek, addDays, isSameDay, addHours, startOfDay } from 'date-fns';
 import type { Appointment, Service, ServiceCategory, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
@@ -21,6 +21,11 @@ export default function CalendarWeekView({
   onTimeSlotClick 
 }: Props) {
   const { db } = useFirebase();
+  // Measured layout for precise placement
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [hourHeightPx, setHourHeightPx] = useState(64);
+  const [overlayTopPx, setOverlayTopPx] = useState(64);
+  const [timeColWidthPx, setTimeColWidthPx] = useState(64);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [businessHours, setBusinessHours] = useState<BusinessHours | null>(null);
   const [closures, setClosures] = useState<DayClosure[]>([]);
@@ -54,6 +59,37 @@ export default function CalendarWeekView({
 
   // Generate hourly time slots (6 AM to 10 PM)
   const timeSlots = Array.from({ length: 17 }, (_, i) => addHours(startOfDay(new Date()), i + 6));
+
+  // Measure table geometry to avoid hardcoded px assumptions
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+
+    const measure = () => {
+      const tbody = table.querySelector('tbody');
+      const firstRow = tbody?.querySelector('tr');
+      const timeTh = table.querySelector('thead th');
+      const timeTd = tbody?.querySelector('td');
+
+      if (firstRow) {
+        const rect = firstRow.getBoundingClientRect();
+        if (rect.height > 0) setHourHeightPx(rect.height);
+        const tableTop = table.getBoundingClientRect().top;
+        const off = rect.top - tableTop;
+        if (off >= 0) setOverlayTopPx(off);
+      }
+
+      const tdW = timeTd?.getBoundingClientRect().width;
+      const thW = timeTh?.getBoundingClientRect().width;
+      const w = (tdW && tdW > 0 ? tdW : thW && thW > 0 ? thW : 64);
+      setTimeColWidthPx(Math.round(w));
+    };
+
+    measure();
+    const onResize = () => requestAnimationFrame(measure);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Check if a day is open
   const isDayOpen = (date: Date): boolean => {
@@ -89,18 +125,24 @@ export default function CalendarWeekView({
       if (isNaN(start.getTime())) {
         return { top: 0, height: 20 };
       }
-      
+
+      const end = new Date(start.getTime() + appointment.duration * 60000);
+
       const startHour = start.getHours();
       const startMinute = start.getMinutes();
-      
-      // Calculate position (top offset from 6 AM)
-      const topOffset = ((startHour - 6) * 60 + startMinute) * (64 / 60); // 64px per hour
-      const height = appointment.duration * (64 / 60);
-      
-      return {
-        top: Math.max(0, topOffset),
-        height: Math.max(20, height), // Minimum height of 20px
-      };
+      const endHour = end.getHours();
+      const endMinute = end.getMinutes();
+
+      const minutesFromStart = ((startHour - 6) * 60) + startMinute;
+      const minutesDuration = ((endHour - startHour) * 60) + (endMinute - startMinute);
+      const pxPerMinute = hourHeightPx / 60;
+      const topRaw = minutesFromStart * pxPerMinute;
+      const heightRaw = minutesDuration * pxPerMinute;
+
+      const top = Math.max(0, Math.round(topRaw));
+      const height = Math.max(20, Math.round(heightRaw));
+
+      return { top, height };
     } catch {
       return { top: 0, height: 20 };
     }
@@ -120,7 +162,7 @@ export default function CalendarWeekView({
 
       {/* Calendar Grid - Fixed Width Table */}
       <div className="overflow-x-auto relative">
-        <table className="w-full min-w-[1200px]">
+        <table ref={tableRef} className="w-full min-w-[1200px]">
           {/* Day Headers */}
           <thead>
             <tr className="border-b bg-slate-50">
@@ -203,9 +245,8 @@ export default function CalendarWeekView({
           </tbody>
         </table>
 
-        {/* Appointments Overlay - Positioned relative to table body */}
-        {/* Note: The header is approximately 64px tall. If appointments appear offset, adjust this value. */}
-        <div className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ top: '63.5px' }}>
+        {/* Appointments Overlay - uses measured overlayTopPx */}
+        <div className="absolute left-0 w-full h-full pointer-events-none" style={{ top: `${overlayTopPx}px` }}>
           {weekDays.map((day, dayIndex) => {
             const dayAppointments = getAppointmentsForDay(day);
             
@@ -214,8 +255,8 @@ export default function CalendarWeekView({
                 key={dayIndex}
                 className="absolute top-0"
                 style={{
-                  left: `calc(64px + ${dayIndex * (100 / 7)}%)`,
-                  width: `calc(100% / 7)`,
+                  left: `calc(${timeColWidthPx}px + ${dayIndex} * ((100% - ${timeColWidthPx}px) / 7))`,
+                  width: `calc((100% - ${timeColWidthPx}px) / 7)`,
                   height: '100%',
                   pointerEvents: 'none',
                 }}
@@ -294,15 +335,15 @@ export default function CalendarWeekView({
             
             if (currentHour < 6 || currentHour >= 23) return null;
             
-            const topOffset = ((currentHour - 6) * 60 + currentMinute) * (64 / 60);
+            const topOffset = ((currentHour - 6) * 60 + currentMinute) * (hourHeightPx / 60);
             
             return (
               <div
                 className="absolute h-0.5 bg-red-500 z-20"
                 style={{
                   top: `${topOffset}px`,
-                  left: `calc(64px + ${todayIndex * (100 / 7)}%)`,
-                  width: `calc(100% / 7)`,
+                  left: `calc(${timeColWidthPx}px + ${todayIndex} * ((100% - ${timeColWidthPx}px) / 7))`,
+                  width: `calc((100% - ${timeColWidthPx}px) / 7)`,
                 }}
               >
                 <div className="absolute left-0 top-0 w-2 h-2 bg-red-500 rounded-full transform -translate-x-1 -translate-y-0.5" />
