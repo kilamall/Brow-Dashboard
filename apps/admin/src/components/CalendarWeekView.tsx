@@ -72,9 +72,16 @@ export default function CalendarWeekView({
     if (!table || !overlay) return;
 
     const measure = () => {
+      if (!table || !overlay) return false;
+      
       const tbody = table.querySelector('tbody');
+      if (!tbody) return false;
+      
       const tableRect = table.getBoundingClientRect();
       const overlayRect = overlay.getBoundingClientRect();
+      
+      // Validate measurements are ready (avoid zero-width measurements on refresh)
+      if (tableRect.width === 0 || overlayRect.width === 0) return false;
 
       // Measure hour height from first two rows
       const r1c2 = tbody?.querySelector('tr:nth-child(1) td:nth-child(2)');
@@ -94,41 +101,70 @@ export default function CalendarWeekView({
 
       // Measure each day column individually (columns 2-8, skip time column)
       const measuredColumns: Array<{ left: number; width: number }> = [];
+      let allValid = true;
+      
       for (let i = 2; i <= 8; i++) {
-        const cell = tbody?.querySelector(`tr:nth-child(1) td:nth-child(${i})`);
+        const cell = tbody.querySelector(`tr:nth-child(1) td:nth-child(${i})`);
         if (cell) {
           const rect = cell.getBoundingClientRect();
-          // Position relative to overlay container
-          const left = rect.left - overlayRect.left;
-          const width = rect.width;
-          measuredColumns.push({ left: Math.round(left), width: Math.round(width) });
+          if (rect.width > 0) {
+            // Position relative to overlay container
+            const left = rect.left - overlayRect.left;
+            const width = rect.width;
+            measuredColumns.push({ left: Math.round(left), width: Math.round(width) });
+          } else {
+            allValid = false;
+            break;
+          }
         } else {
-          // Fallback if cell doesn't exist yet
-          measuredColumns.push({ left: 64 + (i - 2) * 150, width: 150 });
+          allValid = false;
+          break;
         }
       }
       
-      if (measuredColumns.length === 7) {
+      // Only set measurements if all columns were successfully measured
+      if (allValid && measuredColumns.length === 7) {
         setDayColumns(measuredColumns);
+        // Time column width
+        const timeTh = table.querySelector('thead th');
+        const timeTd = tbody.querySelector('td');
+        const tdW = timeTd?.getBoundingClientRect().width;
+        const thW = timeTh?.getBoundingClientRect().width;
+        const w = (tdW && tdW > 0 ? tdW : thW && thW > 0 ? thW : 64);
+        setTimeColWidthPx(Math.round(w));
+        return true;
       }
-
-      // Time column width
-      const timeTh = table.querySelector('thead th');
-      const timeTd = tbody?.querySelector('td');
-      const tdW = timeTd?.getBoundingClientRect().width;
-      const thW = timeTh?.getBoundingClientRect().width;
-      const w = (tdW && tdW > 0 ? tdW : thW && thW > 0 ? thW : 64);
-      setTimeColWidthPx(Math.round(w));
+      
+      return false;
     };
 
-    measure();
+    // Retry logic for page refreshes - measurements may not be ready immediately
+    const attemptMeasure = (retryCount = 0) => {
+      const success = measure();
+      if (!success && retryCount < 5) {
+        // Retry with increasing delays: 50ms, 100ms, 150ms, 200ms, 250ms
+        setTimeout(() => attemptMeasure(retryCount + 1), 50 * (retryCount + 1));
+      }
+    };
+    
+    // Initial measurement with retries
+    attemptMeasure();
+    
+    // Also measure after fonts load
     if ((document as any).fonts?.ready) {
-      (document as any).fonts.ready.then(() => requestAnimationFrame(measure)).catch(() => {});
+      (document as any).fonts.ready.then(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => attemptMeasure(0), 0);
+        });
+      }).catch(() => {});
     }
+    
+    // Re-measure on resize
     const onResize = () => requestAnimationFrame(measure);
     window.addEventListener('resize', onResize);
+    
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, [weekStartDate]); // Re-measure when week changes
 
   // Check if a day is open
   const isDayOpen = (date: Date): boolean => {
