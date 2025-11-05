@@ -16,7 +16,6 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import ProfilePictureUpload from '../components/ProfilePictureUpload';
 
 // Extend Window interface for reCAPTCHA
 declare global {
@@ -45,7 +44,6 @@ export default function Login() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
-  const [profilePictureUrl, setProfilePictureUrl] = useState('');
   const [birthday, setBirthday] = useState('');
 
   // Format phone number as user types
@@ -99,11 +97,10 @@ export default function Login() {
     try {
       if (isSignUp) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        // Update display name and photo URL if provided
+        // Update display name if provided
         if (userCredential.user) {
           const profileUpdates: any = {};
           if (name) profileUpdates.displayName = name;
-          if (profilePictureUrl) profileUpdates.photoURL = profilePictureUrl;
           
           if (Object.keys(profileUpdates).length > 0) {
             await updateProfile(userCredential.user, profileUpdates);
@@ -120,7 +117,7 @@ export default function Login() {
               email: email,
               phone: phone || null,
               name: name || 'Customer',
-              profilePictureUrl: profilePictureUrl || null,
+              profilePictureUrl: null, // Profile picture can be added after signup from Profile page
               authUid: userCredential.user.uid,
               birthday: birthday || null
             }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
@@ -134,8 +131,12 @@ export default function Login() {
             // Non-critical error - continue with sign up
           }
 
-          // Send verification without custom URL - Firebase will use default
-          await sendEmailVerification(userCredential.user);
+          // Send verification email with proper action code settings
+          const actionCodeSettings = {
+            url: `${window.location.origin}/verify`,
+            handleCodeInApp: false,
+          };
+          await sendEmailVerification(userCredential.user, actionCodeSettings);
           setError(''); // Clear any errors
           alert('Account created! Please check your email to verify your account.');
         }
@@ -433,8 +434,12 @@ export default function Login() {
       if (tempUser.user) {
         console.log('Sending verification email to:', unverifiedEmail);
         
-        // Send verification without custom URL - Firebase will use default
-        await sendEmailVerification(tempUser.user);
+        // Send verification email with proper action code settings
+        const actionCodeSettings = {
+          url: `${window.location.origin}/verify`,
+          handleCodeInApp: false,
+        };
+        await sendEmailVerification(tempUser.user, actionCodeSettings);
         
         console.log('Verification email sent successfully');
         
@@ -561,13 +566,21 @@ export default function Login() {
                 />
               </div>
               
-              {/* Profile Picture Upload */}
-              <ProfilePictureUpload
-                userId={auth.currentUser?.uid}
-                onUploadComplete={(url) => setProfilePictureUrl(url)}
-                currentImageUrl={profilePictureUrl}
-                compact={true}
-              />
+              {/* Profile Picture Notice - Cannot upload during sign-up */}
+              <div className="rounded-md bg-blue-50 border border-blue-200 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-blue-700">
+                      You can add a profile picture after creating your account from your profile page.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               <div>
                 <label htmlFor="birthday" className="block text-sm font-medium text-slate-700">

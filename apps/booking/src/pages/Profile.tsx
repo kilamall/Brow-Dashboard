@@ -326,7 +326,11 @@ export default function Profile() {
     setSuccess('');
     
     try {
-      await sendEmailVerification(user);
+      const actionCodeSettings = {
+        url: `${window.location.origin}/verify`,
+        handleCodeInApp: false,
+      };
+      await sendEmailVerification(user, actionCodeSettings);
       setSuccess('Verification email sent! Please check your inbox and click the verification link.');
     } catch (err: any) {
       if (err.code === 'auth/too-many-requests') {
