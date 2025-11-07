@@ -13,6 +13,7 @@ import {
 import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
+import { fromZonedTime } from 'date-fns-tz';
 import { collection, getDocs, limit, query, where, type Firestore } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -254,11 +255,19 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         }
       }
 
-      // Compose ISO from selectedDate + time
+      // Compose ISO from selectedDate + time in business timezone
+      // This ensures appointments are created in the business timezone, 
+      // not the admin's local timezone (critical for traveling admins)
+      const businessTimezone = bh?.timezone || 'America/Los_Angeles';
       const timeString = typeof timeHHMM === 'string' ? timeHHMM : '10:00';
       const [hh, mm] = (timeString && typeof timeString === 'string') ? timeString.split(':').map(Number) : [10, 0];
-      const start = new Date(selectedDate + 'T00:00:00'); 
-      start.setHours(hh, mm, 0, 0);
+      
+      // Create a date string in the format expected by the business timezone
+      // The time entered by admin is interpreted as business time, not their local time
+      const localTimeStr = `${selectedDate}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+      
+      // Convert from business timezone to UTC for storage
+      const start = fromZonedTime(localTimeStr, businessTimezone);
 
       const id = await createAppointmentTx(db, {
         customerId,
@@ -318,7 +327,26 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           <div className="mx-auto max-w-2xl">
             <Transition.Child as={Fragment} enter="ease-out duration-200" enterFrom="opacity-0 translate-y-2" enterTo="opacity-100 translate-y-0" leave="ease-in duration-150" leaveFrom="opacity-100 translate-y-0" leaveTo="opacity-0 translate-y-2">
               <Dialog.Panel className="bg-white rounded-xl shadow-xl p-4">
-                <Dialog.Title className="font-serif text-xl mb-2">Add appointment — {format(date, 'PP')}</Dialog.Title>
+                <Dialog.Title className="font-serif text-xl mb-2">
+                  Add appointment — {format(date, 'PP')}
+                </Dialog.Title>
+                
+                {/* Timezone indicator - critical for traveling admins */}
+                {bh?.timezone && (
+                  <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="text-blue-800">
+                      <strong>Business Timezone:</strong> {bh.timezone}
+                      {Intl.DateTimeFormat().resolvedOptions().timeZone !== bh.timezone && (
+                        <span className="ml-2 text-blue-600">
+                          (Your timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
 
                 <div className="grid gap-4">
                   {/* Customer search/create */}

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import type { AnalyticsTargets, Appointment, Service } from '@buenobrows/shared/types';
+import type { AnalyticsTargets, Appointment, Service, BusinessHours } from '@buenobrows/shared/types';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isSameMonth, parseISO, differenceInDays, } from 'date-fns';
+import { formatInBusinessTZ, formatAppointmentTimeRange, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
+import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import AppointmentDetailModal from '@/components/AppointmentDetailModal';
 import EditAppointmentModal from '@/components/EditAppointmentModal';
 import DraggableKPIGrid from '@/components/DraggableKPIGrid';
@@ -26,10 +28,18 @@ export default function AnalyticsHome() {
   const [detailedModeKpiOrder, setDetailedModeKpiOrder] = useState<string[]>([]); // Store the order of Detailed Mode KPIs
   const [kpiOrdersLoaded, setKpiOrdersLoaded] = useState(false); // Track if KPI orders have been loaded
   const [sectionOrder, setSectionOrder] = useState<string[]>([]); // Store the order of sections
+  const [bh, setBh] = useState<BusinessHours | null>(null); // Business hours for timezone-aware formatting
 
   // Get memoized Firebase instance
   const { db, app } = useFirebase();
   const functions = getFunctions(app, 'us-central1');
+
+  // Load business hours for timezone-aware formatting
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = watchBusinessHours(db, setBh);
+    return unsubscribe;
+  }, [db]);
 
   // Watch targets
   useEffect(() => {
@@ -297,7 +307,7 @@ export default function AnalyticsHome() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm">
-                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                    {format(parseISO(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration, getBusinessTimezone(bh))}
                   </div>
                   <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
                   {a.customerName && (
@@ -334,7 +344,7 @@ export default function AnalyticsHome() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm">
-                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                    {format(parseISO(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration, getBusinessTimezone(bh))}
                   </div>
                   <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
                   {a.customerName && (
@@ -414,7 +424,7 @@ export default function AnalyticsHome() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm">
-                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                    {format(parseISO(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration, getBusinessTimezone(bh))}
                   </div>
                   <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
                   {a.customerName && (
@@ -451,7 +461,7 @@ export default function AnalyticsHome() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm">
-                    {format(parseISO(a.start), 'MMM d')}: {format(parseISO(a.start), 'h:mm a')} - {format(new Date(new Date(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                    {format(parseISO(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration, getBusinessTimezone(bh))}
                   </div>
                   <div className="text-xs text-slate-600 truncate">{services[a.serviceId]?.name || 'Service'}</div>
                   {a.customerName && (

@@ -4,6 +4,8 @@ import { updateDoc, doc, getDoc, collection, query, where, onSnapshot, getDocs, 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Appointment, Service, Customer } from '@buenobrows/shared/types';
 import { format, parseISO, addWeeks } from 'date-fns';
+import { formatInBusinessTZ, formatAppointmentTimeRange, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
+import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { addCustomerNote, updateCustomerNote, deleteCustomerNote } from '@buenobrows/shared/firestoreActions';
 
@@ -21,6 +23,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState(false);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [showAddNote, setShowAddNote] = useState(false);
   const [newNote, setNewNote] = useState({ category: 'general' as const, content: '' });
@@ -33,6 +36,14 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [tipAmount, setTipAmount] = useState('');
   const [savingPrice, setSavingPrice] = useState(false);
   const functions = getFunctions();
+
+  // Load business hours for timezone-aware formatting
+  const [bh, setBh] = useState<import('@buenobrows/shared/types').BusinessHours | null>(null);
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = watchBusinessHours(db, setBh);
+    return unsubscribe;
+  }, [db]);
 
   const handleChangeAttendanceFromModal = async (appointmentId: string, newAttendance: 'attended' | 'no-show') => {
     const currentStatus = appointment.attendance || 'pending';
@@ -303,6 +314,23 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     onClose();
   };
 
+  const handleSendReminder = async () => {
+    const customerName = appointment.customerName || 'Customer';
+    if (!confirm(`Send appointment reminder to ${customerName}?`)) return;
+    
+    setSendingReminder(true);
+    try {
+      const sendReminder = httpsCallable(functions, 'sendManualReminder');
+      await sendReminder({ appointmentId: appointment.id });
+      alert(`✅ Reminder sent to ${customerName}!`);
+    } catch (error: any) {
+      console.error('Error sending reminder:', error);
+      alert(`Failed to send reminder: ${error.message}`);
+    } finally {
+      setSendingReminder(false);
+    }
+  };
+
   const handleResendConfirmation = async () => {
     if (!confirm('Resend confirmation email to customer?')) return;
     
@@ -540,10 +568,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-slate-800">
-                      {format(parseISO(appointment.start), 'h:mm a')}
-                    </div>
-                    <div className="text-sm text-slate-600">
-                      {format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a')}
+                      {formatAppointmentTimeRange(appointment.start, appointment.duration, getBusinessTimezone(bh))}
                     </div>
                   </div>
                 </div>
@@ -888,7 +913,7 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
                               <div className="font-medium text-slate-800">
-                                {format(parseISO(relatedAppt.start), 'h:mm a')} - {format(new Date(parseISO(relatedAppt.start).getTime() + relatedAppt.duration * 60000), 'h:mm a')}
+                                {formatAppointmentTimeRange(relatedAppt.start, relatedAppt.duration, getBusinessTimezone(bh))}
                               </div>
                               <div className="text-sm text-slate-600">
                                 {relatedService?.name || 'Service'}
@@ -1171,6 +1196,19 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     >
                       <span className="text-lg">📧</span>
                       <span>{resending ? 'Sending...' : 'Resend Email'}</span>
+                    </button>
+                  )}
+                  
+                  {/* Send Reminder - show for confirmed or pending appointments */}
+                  {(appointment.status === 'confirmed' || appointment.status === 'pending') && (
+                    <button
+                      onClick={handleSendReminder}
+                      disabled={sendingReminder}
+                      className="w-full border border-yellow-300 text-yellow-700 rounded-lg px-4 py-3 hover:bg-yellow-50 transition-colors text-left flex items-center gap-3 disabled:opacity-50"
+                      title="Send appointment reminder with details"
+                    >
+                      <span className="text-lg">🔔</span>
+                      <span>{sendingReminder ? 'Sending...' : 'Send Reminder'}</span>
                     </button>
                   )}
                   

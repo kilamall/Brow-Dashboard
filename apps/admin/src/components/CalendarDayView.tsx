@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { format, startOfDay, addHours, isSameHour, isWithinInterval } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import type { Appointment, Service, ServiceCategory, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchServiceCategories } from '@buenobrows/shared/firestoreActions';
+import { formatInBusinessTZ, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
 
 interface Props {
   date: Date;
@@ -56,10 +58,16 @@ export default function CalendarDayView({ date, appointments, services, business
       }
       const end = new Date(start.getTime() + appointment.duration * 60000);
     
-    const startHour = start.getHours();
-    const startMinute = start.getMinutes();
-    const endHour = end.getHours();
-    const endMinute = end.getMinutes();
+      // CRITICAL: Convert to business timezone for position calculation
+      // Otherwise appointments show at wrong position when admin is traveling
+      const businessTZ = getBusinessTimezone(businessHours);
+      const startInBusinessTZ = toZonedTime(start, businessTZ);
+      const endInBusinessTZ = toZonedTime(end, businessTZ);
+    
+    const startHour = startInBusinessTZ.getHours();
+    const startMinute = startInBusinessTZ.getMinutes();
+    const endHour = endInBusinessTZ.getHours();
+    const endMinute = endInBusinessTZ.getMinutes();
     
     // Calculate position (top offset)
     const topOffset = ((startHour - 6) * 60 + startMinute) * (80 / 60); // 80px per hour
@@ -213,7 +221,7 @@ export default function CalendarDayView({ date, appointments, services, business
                     {(() => {
                       try {
                         const startDate = new Date(appointment.start);
-                        return !isNaN(startDate.getTime()) ? format(startDate, 'h:mm a') : 'Invalid time';
+                        return !isNaN(startDate.getTime()) ? formatInBusinessTZ(startDate, 'h:mm a', getBusinessTimezone(businessHours)) : 'Invalid time';
                       } catch {
                         return 'Invalid time';
                       }

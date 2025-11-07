@@ -5,6 +5,8 @@ import { onSnapshot, collection, query, where, orderBy, updateDoc, doc, getDocs,
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { createStaff, updateStaff, deleteStaff, watchStaff, watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
 import type { Appointment, Service, Staff, AppointmentEditRequest, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
+import { formatInBusinessTZ, formatAppointmentTimeRange as formatTimeRangeInBusinessTZ, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
+import { toZonedTime } from 'date-fns-tz';
 import AddAppointmentModal from '@/components/AddAppointmentModal';
 import EnhancedAppointmentDetailModal from '@/components/EnhancedAppointmentDetailModal';
 import EditAppointmentModal from '@/components/EditAppointmentModal';
@@ -40,17 +42,6 @@ function safeParseDate(dateString: string): Date {
   }
 }
 
-// Helper function to safely format appointment time range
-function formatAppointmentTimeRange(start: string, duration: number): string {
-  try {
-    const startDate = safeParseDate(start);
-    const endDate = new Date(startDate.getTime() + duration * 60000);
-    return `${format(startDate, 'h:mm a')} - ${format(endDate, 'h:mm a')}`;
-  } catch {
-    return 'Time TBD';
-  }
-}
-
 export default function Schedule() {
   const { db, auth } = useFirebase();
   const navigate = useNavigate();
@@ -69,6 +60,7 @@ export default function Schedule() {
     appointment: Appointment | null;
     service: Service | null;
   }>({ open: false, appointment: null, service: null });
+  const [sendingReminderIds, setSendingReminderIds] = useState<Set<string>>(new Set());
 
   const handleMarkAttended = (appointmentId: string) => {
     const appointment = appts.find(a => a.id === appointmentId);
@@ -128,6 +120,36 @@ export default function Schedule() {
         return next;
       });
       setNoShowModal({ open: false, appointment: null, service: null });
+    }
+  };
+
+  const handleSendReminder = async (appointmentId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    
+    // Find appointment in either allAppts or appts array
+    const appointment = (allAppts || appts).find((a: Appointment) => a.id === appointmentId);
+    if (!appointment) return;
+    
+    const customerName = appointment.customerName || 'Customer';
+    
+    if (!confirm(`Send appointment reminder to ${customerName}?`)) return;
+    
+    setSendingReminderIds(prev => new Set(prev).add(appointmentId));
+    try {
+      const sendReminderFn = httpsCallable(functions, 'sendManualReminder');
+      await sendReminderFn({ appointmentId });
+      alert(`✅ Reminder sent to ${customerName}!`);
+    } catch (error: any) {
+      console.error('Error sending reminder:', error);
+      alert(`Failed to send reminder: ${error.message}`);
+    } finally {
+      setSendingReminderIds(prev => {
+        const next = new Set(prev);
+        next.delete(appointmentId);
+        return next;
+      });
     }
   };
 
@@ -356,6 +378,14 @@ export default function Schedule() {
     }
   }, [queryStart, queryEnd, db]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Business hours for timezone-aware formatting
+  const [bh, setBh] = useState<BusinessHours | null>(null);
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = watchBusinessHours(db, setBh);
+    return unsubscribe;
+  }, [db]);
+
   // Services map for names
   const [services, setServices] = useState<Record<string, Service>>({});
   const [servicesError, setServicesError] = useState<string | null>(null);
@@ -428,6 +458,7 @@ export default function Schedule() {
 
   const [hoverDate, setHoverDate] = useState<Date | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number; position: 'above' | 'below' } | null>(null);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [openAdd, setOpenAdd] = useState<{ open: boolean; date: Date | null; prefillData?: any }>({ open: false, date: null });
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
@@ -828,7 +859,7 @@ export default function Schedule() {
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm">
-                        {format(safeParseDate(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration)}
+                        {format(safeParseDate(a.start), 'MMM d')}: {formatTimeRangeInBusinessTZ(a.start, a.duration, getBusinessTimezone(bh))}
                       </div>
                       <div className="text-xs text-slate-600 truncate">
                         {(() => {
@@ -872,8 +903,24 @@ export default function Schedule() {
                         </div>
                       )}
                     </div>
-                    <div className="text-sm font-semibold text-terracotta">
-                      {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
+                    <div className="flex items-center gap-2">
+                      {(a.status === 'confirmed' || a.status === 'pending') && (
+                        <button
+                          onClick={(e) => handleSendReminder(a.id, e)}
+                          disabled={sendingReminderIds.has(a.id)}
+                          className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          title="Send reminder"
+                        >
+                          {sendingReminderIds.has(a.id) ? (
+                            <span className="text-xs">⏳</span>
+                          ) : (
+                            <span>🔔</span>
+                          )}
+                        </button>
+                      )}
+                      <div className="text-sm font-semibold text-terracotta">
+                        {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -917,7 +964,7 @@ export default function Schedule() {
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm">
-                        {format(safeParseDate(a.start), 'MMM d')}: {formatAppointmentTimeRange(a.start, a.duration)}
+                        {format(safeParseDate(a.start), 'MMM d')}: {formatTimeRangeInBusinessTZ(a.start, a.duration, getBusinessTimezone(bh))}
                       </div>
                       <div className="text-xs text-slate-600 truncate">
                         {(() => {
@@ -986,8 +1033,24 @@ export default function Schedule() {
                         </div>
                       )}
                     </div>
-                    <div className="text-sm font-semibold text-terracotta">
-                      {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
+                    <div className="flex items-center gap-2">
+                      {(a.status === 'confirmed' || a.status === 'pending') && safeParseDate(a.start) > new Date() && (
+                        <button
+                          onClick={(e) => handleSendReminder(a.id, e)}
+                          disabled={sendingReminderIds.has(a.id)}
+                          className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          title="Send reminder"
+                        >
+                          {sendingReminderIds.has(a.id) ? (
+                            <span className="text-xs">⏳</span>
+                          ) : (
+                            <span>🔔</span>
+                          )}
+                        </button>
+                      )}
+                      <div className="text-sm font-semibold text-terracotta">
+                        {fmtCurrency(a.bookedPrice ?? a.totalPrice ?? services[a.serviceId]?.price ?? 0)}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1031,13 +1094,13 @@ export default function Schedule() {
                       {appointment?.customerName || 'Unknown Customer'}
                     </div>
                     <div className="text-sm text-slate-500">
-                      {appointment ? format(safeParseDate(appointment.start), 'MMM d, h:mm a') : 'Unknown Date'}
+                      {appointment ? formatInBusinessTZ(appointment.start, 'MMM d, h:mm a', getBusinessTimezone(bh)) : 'Unknown Date'}
                     </div>
                   </div>
                   <div className="text-sm text-slate-600 mb-3">
                     <div>Service: {services[appointment?.serviceId || '']?.name || 'Unknown Service'}</div>
                     {request.requestedChanges.start && (
-                      <div>Time: {format(safeParseDate(request.requestedChanges.start), 'MMM d, h:mm a')}</div>
+                      <div>Time: {formatInBusinessTZ(request.requestedChanges.start, 'MMM d, h:mm a', getBusinessTimezone(bh))}</div>
                     )}
                     {request.requestedChanges.serviceIds && request.requestedChanges.serviceIds.length > 0 && (
                       <div>New Service: {request.requestedChanges.serviceIds.map(id => services[id]?.name).join(', ')}</div>
@@ -1174,7 +1237,12 @@ export default function Schedule() {
           const todaysAppts = appts.filter((a) => {
             try {
               const appointmentDate = safeParseDate(a.start);
-              return isSameDay(appointmentDate, d) && a.status !== 'cancelled';
+              // Convert both dates to business timezone for accurate day comparison
+              // when admin is traveling (prevents Hawaii admin from missing appointments)
+              const businessTZ = getBusinessTimezone(bh);
+              const appointmentInBusinessTZ = toZonedTime(appointmentDate, businessTZ);
+              const targetDateInBusinessTZ = toZonedTime(d, businessTZ);
+              return isSameDay(appointmentInBusinessTZ, targetDateInBusinessTZ) && a.status !== 'cancelled';
             } catch (error) {
               console.error('Error filtering appointment for date:', {
                 appointmentId: a.id,
@@ -1193,6 +1261,11 @@ export default function Schedule() {
             >
               <div
                 onMouseEnter={(e) => {
+                  // Clear any pending timeout
+                  if (hoverTimeoutRef.current) {
+                    clearTimeout(hoverTimeoutRef.current);
+                    hoverTimeoutRef.current = null;
+                  }
                   setHoverDate(d);
                   if (todaysAppts.length > 0) {
                     const position = calculateHoverPosition(e.currentTarget);
@@ -1200,8 +1273,11 @@ export default function Schedule() {
                   }
                 }}
                 onMouseLeave={() => {
-                  setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev));
-                  setHoverPosition(null);
+                  // Add small delay before closing to allow mouse to move to popup
+                  hoverTimeoutRef.current = setTimeout(() => {
+                    setHoverDate((prev) => (prev && isSameDay(prev, d) ? null : prev));
+                    setHoverPosition(null);
+                  }, 150);
                 }}
                 onClick={() => setOpenAdd({ open: true, date: d })}
               >
@@ -1262,7 +1338,7 @@ export default function Schedule() {
                               >
                                 <div className="flex items-center gap-1">
                                   <span className="text-slate-500">
-                                    {format(safeParseDate(a.start), 'h:mma')}-{format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mma')}
+                                    {formatTimeRangeInBusinessTZ(a.start, a.duration, getBusinessTimezone(bh)).replace(' ', '').replace('-', '-').replace(' ', '')}
                                   </span>
                                   {hasMultipleServices && (
                                     <span className="text-blue-600 font-medium">+</span>
@@ -1318,15 +1394,29 @@ export default function Schedule() {
             transform: hoverPosition.position === 'above' ? 'translateY(-100%)' : 'none'
           }}
           onMouseEnter={() => {
+            // Clear any pending timeout to keep popup visible
+            if (hoverTimeoutRef.current) {
+              clearTimeout(hoverTimeoutRef.current);
+              hoverTimeoutRef.current = null;
+            }
             // Keep the popup visible when hovering over it
             setHoverDate(hoverDate);
+          }}
+          onMouseLeave={() => {
+            // Close popup when mouse leaves
+            setHoverDate(null);
+            setHoverPosition(null);
           }}
         >
           {(() => {
             const todaysAppts = appts.filter((a) => {
               try {
                 const appointmentDate = safeParseDate(a.start);
-                return isSameDay(appointmentDate, hoverDate) && a.status !== 'cancelled';
+                // Convert both dates to business timezone for accurate day comparison
+                const businessTZ = getBusinessTimezone(bh);
+                const appointmentInBusinessTZ = toZonedTime(appointmentDate, businessTZ);
+                const hoverDateInBusinessTZ = toZonedTime(hoverDate, businessTZ);
+                return isSameDay(appointmentInBusinessTZ, hoverDateInBusinessTZ) && a.status !== 'cancelled';
               } catch (error) {
                 console.error('Error filtering appointment in hover popup:', {
                   appointmentId: a.id,
@@ -1389,7 +1479,7 @@ export default function Schedule() {
                             >
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium truncate">
-                                  {format(safeParseDate(a.start), 'h:mm a')} - {format(new Date(safeParseDate(a.start).getTime() + a.duration * 60000), 'h:mm a')}
+                                  {formatTimeRangeInBusinessTZ(a.start, a.duration, getBusinessTimezone(bh))}
                                 </div>
                                 <div className="text-slate-600 truncate text-left">
                                   {hasMultipleServices ? (
@@ -1585,7 +1675,7 @@ export default function Schedule() {
                   className="flex items-center justify-between p-4 bg-yellow-50 border border-yellow-200 rounded-lg"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm">{format(safeParseDate(a.start), 'MMM d, h:mm a')}</div>
+                    <div className="font-medium text-sm">{formatInBusinessTZ(a.start, 'MMM d, h:mm a', getBusinessTimezone(bh))}</div>
                     <span className="text-xs text-slate-600 truncate text-left">
                       {services[a.serviceId]?.name || 'Service'}
                     </span>

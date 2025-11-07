@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { updateDoc, doc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import type { Appointment, Service } from '@buenobrows/shared/types';
+import type { Appointment, Service, BusinessHours } from '@buenobrows/shared/types';
 import { format, parseISO, addWeeks } from 'date-fns';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { formatInBusinessTZ, formatAppointmentTimeRange, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
+import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
 import EditRequestsModal from './EditRequestsModal';
 
 interface Props {
@@ -25,6 +27,14 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
   const [savingPrice, setSavingPrice] = useState(false);
   const [showEditRequestsModal, setShowEditRequestsModal] = useState(false);
   const functions = getFunctions();
+
+  // Load business hours for timezone-aware formatting
+  const [bh, setBh] = useState<BusinessHours | null>(null);
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = watchBusinessHours(db, setBh);
+    return unsubscribe;
+  }, [db]);
 
   // Initialize price and tip values when appointment changes
   useEffect(() => {
@@ -188,7 +198,7 @@ export default function AppointmentDetailModal({ appointment, service, onClose, 
             <div className="text-sm text-slate-500 mb-1">Date & Time</div>
             <div className="font-semibold text-lg">{format(parseISO(appointment.start), 'EEEE, MMMM d, yyyy')}</div>
             <div className="text-slate-600">
-              {format(parseISO(appointment.start), 'h:mm a')} - {format(new Date(new Date(appointment.start).getTime() + appointment.duration * 60000), 'h:mm a')}
+              {formatAppointmentTimeRange(appointment.start, appointment.duration, getBusinessTimezone(bh))}
             </div>
             <div className="text-xs text-slate-500 mt-1">Duration: {appointment.duration} minutes</div>
           </div>

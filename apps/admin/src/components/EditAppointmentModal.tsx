@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { updateDoc, doc, collection, query, where, getDocs } from 'firebase/firestore';
-import type { Appointment, Service, Customer } from '@buenobrows/shared/types';
+import type { Appointment, Service, Customer, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { format, parseISO } from 'date-fns';
+import { fromZonedTime } from 'date-fns-tz';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
+import { watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
+import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 
 interface Props {
   appointment: Appointment | null;
@@ -16,6 +19,11 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
   const [loading, setLoading] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  
+  // Business hours and timezone data
+  const [bh, setBh] = useState<BusinessHours | null>(null);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
   
   // Form state
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
@@ -76,6 +84,11 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
       return newSet;
     });
   };
+
+  // Load business hours, closures, and special hours
+  useEffect(() => watchBusinessHours(db, setBh), [db]);
+  useEffect(() => watchDayClosures(db, setClosures), [db]);
+  useEffect(() => watchSpecialHours(db, setSpecialHours), [db]);
 
   // Load services and customers
   useEffect(() => {
@@ -166,7 +179,12 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
     setLoading(true);
     try {
       const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-      const newStart = new Date(`${date}T${time}`);
+      
+      // Convert date/time to UTC using business timezone
+      // This ensures edits are in business time, not admin's local time
+      const businessTimezone = bh?.timezone || 'America/Los_Angeles';
+      const localTimeStr = `${date}T${time}:00`;
+      const newStart = fromZonedTime(localTimeStr, businessTimezone);
       
       // Calculate service prices based on whether we're using defaults or edited prices
       let servicePricesData: Record<string, number>;
@@ -230,6 +248,23 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
             </svg>
           </button>
         </div>
+
+        {/* Timezone indicator - critical for traveling admins */}
+        {bh?.timezone && (
+          <div className="mx-6 mt-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
+            <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-blue-800">
+              <strong>Business Timezone:</strong> {bh.timezone}
+              {Intl.DateTimeFormat().resolvedOptions().timeZone !== bh.timezone && (
+                <span className="ml-2 text-blue-600">
+                  (Your timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                </span>
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Content */}
         <div className="p-6 space-y-4">

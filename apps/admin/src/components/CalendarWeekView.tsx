@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { format, startOfWeek, addDays, isSameDay, addHours, startOfDay } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import type { Appointment, Service, ServiceCategory, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchServiceCategories, watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
 import { getEffectiveHoursForDate } from '@buenobrows/shared/slotUtils';
+import { formatInBusinessTZ, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
 
 interface Props {
   weekStartDate: Date;
@@ -203,10 +205,16 @@ export default function CalendarWeekView({
 
       const end = new Date(start.getTime() + appointment.duration * 60000);
 
-      const startHour = start.getHours();
-      const startMinute = start.getMinutes();
-      const endHour = end.getHours();
-      const endMinute = end.getMinutes();
+      // CRITICAL: Convert to business timezone for position calculation
+      // Otherwise appointments show at wrong position when admin is traveling
+      const businessTZ = getBusinessTimezone(businessHours);
+      const startInBusinessTZ = toZonedTime(start, businessTZ);
+      const endInBusinessTZ = toZonedTime(end, businessTZ);
+
+      const startHour = startInBusinessTZ.getHours();
+      const startMinute = startInBusinessTZ.getMinutes();
+      const endHour = endInBusinessTZ.getHours();
+      const endMinute = endInBusinessTZ.getMinutes();
 
       const minutesFromStart = ((startHour - 6) * 60) + startMinute;
       const minutesDuration = ((endHour - startHour) * 60) + (endMinute - startMinute);
@@ -372,7 +380,7 @@ export default function CalendarWeekView({
                             try {
                               const startDate = new Date(appointment.start);
                               return !isNaN(startDate.getTime()) 
-                                ? format(startDate, 'h:mm a') 
+                                ? formatInBusinessTZ(startDate, 'h:mm a', getBusinessTimezone(businessHours)) 
                                 : 'Invalid';
                             } catch {
                               return 'Invalid';
