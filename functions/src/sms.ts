@@ -1364,9 +1364,66 @@ export const smsWebhook = onRequest(
           break;
           
         case 'booking_request':
-          // For now, provide instructions for booking
-          responseMessage = "To complete your booking, please call us at (650) 613-8455 or visit our website. We'll need to confirm your details. - Bueno Brows" + A2P_FOOTER;
-          await clearConversationState(from);
+          // User sent "BOOK [date] [time]" - process the booking
+          if (parsed.data.date && parsed.data.time) {
+            // Parse the date
+            let bookingDate: Date | null = null;
+            const dateStr = parsed.data.date.replace(/[\/\-]/g, '/');
+            const dateParts = dateStr.split('/');
+            
+            if (dateParts.length === 2) {
+              // Format: MM/DD (assume current year or next year if past)
+              const month = parseInt(dateParts[0]) - 1;
+              const day = parseInt(dateParts[1]);
+              bookingDate = new Date();
+              bookingDate.setMonth(month);
+              bookingDate.setDate(day);
+              // If date is in the past, assume next year
+              if (bookingDate < new Date()) {
+                bookingDate.setFullYear(bookingDate.getFullYear() + 1);
+              }
+            }
+            
+            if (!bookingDate) {
+              responseMessage = `Sorry, I couldn't understand the date "${parsed.data.date}". 😕\n\nPlease try: "What's available on the 9th?" or "AVAILABLE" to see open slots. - Bueno Brows` + A2P_FOOTER;
+              break;
+            }
+            
+            // Check availability for this date
+            const availableTimes = await getAvailableSlotsForDate(bookingDate);
+            
+            if (availableTimes.length === 0) {
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              responseMessage = `Sorry, we don't have availability on ${dateDisplay}. 😕\n\nReply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              break;
+            }
+            
+            // Check if their requested time is available
+            const requestedTime = parsed.data.time.toUpperCase();
+            const timeAvailable = availableTimes.some(t => t.toUpperCase().includes(requestedTime.replace(/[:\s]/g, '')));
+            
+            if (timeAvailable) {
+              // Time is available - ask for service
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const categories = await getServiceCategories();
+              responseMessage = SMS_TEMPLATES.categorySelection(categories);
+              
+              await saveConversationState(from, {
+                type: 'awaiting_category',
+                date: bookingDate.toISOString(),
+                dateStr: dateDisplay,
+                time: requestedTime,
+                pendingTimes: [requestedTime],
+                awaitingCategory: true
+              });
+            } else {
+              // Time not available - show what IS available
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              responseMessage = `${requestedTime} isn't available on ${dateDisplay}. Here's what we have:\n\n${availableTimes.slice(0, 5).join('\n')}\n\nReply with a time to continue booking! - Bueno Brows` + A2P_FOOTER;
+            }
+          } else {
+            responseMessage = SMS_TEMPLATES.booking_instructions();
+          }
           break;
           
         default:
