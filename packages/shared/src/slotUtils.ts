@@ -69,7 +69,8 @@ export function availableSlotsForDay(
   for (const [startHHMM, endHHMM] of ranges) {
     const start = wallToDate(date, startHHMM, tz);
     const end = wallToDate(date, endHHMM, tz);
-    for (let t = start.getTime(); t + durationMin * 60_000 <= end.getTime(); t += step * 60_000) {
+    // Allow appointments to START before closing, even if they extend past closing time
+    for (let t = start.getTime(); t < end.getTime(); t += step * 60_000) {
       const sIso = new Date(t).toISOString();
       const eMs = t + durationMin * 60_000;
       if (!overlapsAnyBookedSlot(t, eMs, bookedSlots)) slots.push(sIso);
@@ -136,14 +137,39 @@ function overlapsAnyBookedSlot(startMs: number, endMs: number, bookedSlots: Book
 // Convert a wall-clock HH:MM in a timezone on a given date to a Date UTC
 function wallToDate(base: Date, hhmm: string, timeZone: string): Date {
   const [hh, mm] = hhmm.split(':').map((n) => parseInt(n, 10));
-  // Build the parts in the target TZ, then reconstruct a local Date from them
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-  }).formatToParts(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hh, mm, 0));
-  const get = (t: string) => Number(parts.find(p => p.type === t)?.value || '0');
-  return new Date(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+  
+  // Get the calendar date (year, month, day) from base using UTC methods
+  // This ensures we get the intended date regardless of the user's local timezone
+  const year = base.getUTCFullYear();
+  const month = base.getUTCMonth();
+  const day = base.getUTCDate();
+  
+  // For America/Los_Angeles timezone:
+  // PST (Nov-Mar): UTC-8, PDT (Mar-Nov): UTC-7
+  // Determine DST: DST ends first Sunday of November
+  let offsetHours = 8; // Default to PST
+  if (month === 10) { // November (0-indexed)
+    const nov1 = new Date(Date.UTC(year, 10, 1));
+    const firstSunday = 1 + ((7 - nov1.getUTCDay()) % 7);
+    if (day < firstSunday) {
+      offsetHours = 7; // Still in PDT
+    }
+  } else if (month >= 3 && month <= 9) {
+    // April through October are always PDT
+    offsetHours = 7;
+  } else if (month === 2) {
+    // March - DST starts second Sunday
+    const mar1 = new Date(Date.UTC(year, 2, 1));
+    const firstSunday = 1 + ((7 - mar1.getUTCDay()) % 7);
+    const secondSunday = firstSunday + 7;
+    if (day >= secondSunday) {
+      offsetHours = 7;
+    }
+  }
+  
+  // Create UTC date: Pacific time + offset = UTC
+  // Example: 4 PM Pacific + 8 hours = midnight UTC (next day)
+  return new Date(Date.UTC(year, month, day, hh + offsetHours, mm, 0));
 }
 
 /**

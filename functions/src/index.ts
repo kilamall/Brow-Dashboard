@@ -88,6 +88,7 @@ export * from './delete-customer-data.js';
 export * from './admin-purge-data.js';
 export * from './update-customer-stats.js';
 export * from './sync-customer-visits.js';
+export * from './cleanup-stats.js';
 // export * from './clear-cancelled-appointments.js';
 // export * from './auto-cleanup.js';
 // export * from './manual-cleanup.js';
@@ -104,6 +105,9 @@ export * from './generate-receipt.js';
 export * from './close-shop.js';
 // export * from './cleanup-edit-requests.js';
 export * from './cost-monitoring.js';
+export * from './event-inquiries.js';
+export * from './check-new-customer.js';
+export * from './fix-total-visits.js';
 
 // SECURITY FIX: Disable test functions in production
 // These functions are now secured with authentication but should not be used in production

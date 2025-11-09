@@ -1,4 +1,5 @@
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
@@ -6,6 +7,12 @@ import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limite
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
+
+// Define secrets for Twilio
+const twilioAccountSid = defineSecret('TWILIO_ACCOUNT_SID');
+const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
+const twilioPhoneNumber = defineString('TWILIO_PHONE_NUMBER', { default: '+16506839181' });
+const twilioMessagingServiceSid = defineString('TWILIO_MESSAGING_SERVICE_SID', { default: '' });
 
 // SMS Service Integration
 interface SMSMessage {
@@ -26,19 +33,32 @@ interface CustomerSMS {
   status: 'active' | 'blocked' | 'unsubscribed';
 }
 
-// AWS SNS configuration
+// SMS Provider Configuration (Twilio preferred if available, AWS SNS as fallback)
+// These will be accessed from secrets in function context
+// For A2P 10DLC compliance, use Messaging Service SID instead of phone number
+const getTwilioConfig = () => ({
+  accountSid: twilioAccountSid.value(),
+  authToken: twilioAuthToken.value(),
+  phoneNumber: twilioPhoneNumber.value(),
+  messagingServiceSid: twilioMessagingServiceSid.value() || undefined
+});
+
+// AWS SNS configuration (fallback)
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
-const BUSINESS_PHONE_NUMBER = process.env.BUSINESS_PHONE_NUMBER; // Your existing phone number
 
 // SMS Response Templates
 const PRIVACY_URL = 'https://bueno-brows-7cce7.web.app/privacy';
 const A2P_FOOTER = `\n\nReply STOP to opt out, HELP for help. Msg&data rates may apply. Privacy: ${PRIVACY_URL}`;
 const SMS_TEMPLATES = {
+  greeting: () => {
+    return `Hi! 👋 Welcome to Bueno Brows!\n\nI'm your booking assistant. I can help you:\n• Book appointments\n• Check availability\n• Answer questions about our services\n\nReply "AVAILABLE" to see open slots\nReply "HELP" for more options\nOr just ask me a question!\n\nCall us: (650) 613-8455\n- Bueno Brows` + A2P_FOOTER;
+  },
+  
   availability: (availableSlots: string[]) => {
     if (availableSlots.length === 0) {
-      return "Hi! We don't have any available slots for the next 7 days. Please call us at (555) 123-4567 to discuss other options. - Bueno Brows" + A2P_FOOTER;
+      return "Hi! We don't have any available slots for the next 7 days. Please call us at (650) 613-8455 to discuss other options. - Bueno Brows" + A2P_FOOTER;
     }
     return `Hi! Here are our available slots:\n\n${availableSlots.slice(0, 5).join('\n')}\n\nReply with "BOOK [date] [time]" to reserve (e.g., "BOOK 12/15 2:00 PM"). - Bueno Brows` + A2P_FOOTER;
   },
@@ -48,15 +68,72 @@ const SMS_TEMPLATES = {
   },
   
   faq: (question: string, answer: string) => {
-    return `${answer}\n\nNeed more help? Reply with your question or call (555) 123-4567. - Bueno Brows` + A2P_FOOTER;
+    return `${answer}\n\nNeed more help? Reply with your question or call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
   },
   
   booking_instructions: () => {
     return `To book an appointment, reply with:\n"BOOK [date] [time]"\n\nExample: "BOOK 12/15 2:00 PM"\n\nFor availability, reply "AVAILABLE"\nFor questions, just ask! - Bueno Brows` + A2P_FOOTER;
   },
   
+  specificAvailable: (date: string, times: string[]) => {
+    if (times.length === 0) {
+      return `Sorry, we don't have any availability on ${date}. 😕\n\nWould you like to see other dates? Reply "AVAILABLE" or call us at (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+    }
+    if (times.length === 1) {
+      return `Yes! We have ${times[0]} available on ${date}. ✨\n\nWould you like me to book this for you? Reply "YES" to confirm or "NO" to see other times. - Bueno Brows` + A2P_FOOTER;
+    }
+    return `Yes! We have these times available on ${date}: ✨\n\n${times.join('\n')}\n\nReply with the time you'd like (e.g., "${times[0]}") and I'll book it for you! - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  bookingConfirm: (date: string, time: string) => {
+    return `Perfect! I'm booking ${time} on ${date} for you. 📅\n\nWhat's your name? Reply with your full name (e.g., "Jane Smith"). - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  bookingComplete: (name: string, date: string, time: string) => {
+    return `✅ All set, ${name}! Your appointment is confirmed for ${date} at ${time}.\n\nWe'll send you a reminder. Looking forward to seeing you!\n\nNeed to change anything? Call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  bookingCancelled: () => {
+    return `No problem! Feel free to ask about other dates or call us at (650) 613-8455 if you'd like to discuss options. - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  categorySelection: (categories: string[]) => {
+    if (categories.length === 0) {
+      return `What service are you interested in?\n\nReply with the service name, or visit https://bueno-brows-7cce7.web.app/services to browse.\n\nNeed help? Call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+    }
+    const categoryList = categories.map((c, i) => `${i + 1}. ${c}`).join('\n');
+    return `What type of service are you looking for? 💅\n\n${categoryList}\n\nReply with the number or category name (e.g., "1" or "Brows"). - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  serviceListInCategory: (category: string, services: any[], hasMore: boolean) => {
+    const serviceList = services.map((s, i) => `${i + 1}. ${s.name} - $${s.price} (${s.duration} min)`).join('\n');
+    const moreText = hasMore ? '\n\nReply "MORE" to see more services in this category.' : '';
+    return `Great choice! Here are our ${category} services:\n\n${serviceList}${moreText}\n\nReply with the number or service name (e.g., "1" or "${services[0]?.name}"). - Bueno Brows` + A2P_FOOTER;
+  },
+
+  serviceConfirm: (service: any, date: string, time: string) => {
+    return `Perfect! ${service.name} (${service.duration} min) for ${date} at ${time}.\n\nThis will take ${service.duration} minutes. Confirming availability...\n- Bueno Brows` + A2P_FOOTER;
+  },
+
+  serviceTooLong: (service: any, time: string, nextAvailable: string) => {
+    return `Sorry, ${time} doesn't have ${service.duration} min available for ${service.name}. 😕\n\nNext available: ${nextAvailable}\n\nReply with a different time or "AVAILABLE" for more options. - Bueno Brows` + A2P_FOOTER;
+  },
+
+  serviceNotFound: (searchTerm: string) => {
+    return `Hmm, I don't see "${searchTerm}" in our services at the moment. 🤔\n\nWould you like to try a different service? You can browse our full menu at https://bueno-brows-7cce7.web.app/services\n\nOr give us a call at (650) 613-8455 and we'll help you find the perfect service! - Bueno Brows` + A2P_FOOTER;
+  },
+
+  serviceNotFoundWithSuggestions: (searchTerm: string, suggestions: any[]) => {
+    const suggestionList = suggestions.map((s, i) => `${i + 1}. ${s.name} - $${s.price} (${s.duration} min)`).join('\n');
+    return `Hmm, I don't see "${searchTerm}" exactly. 🤔\n\nDid you mean one of these?\n\n${suggestionList}\n\nReply with the number or try a different service. Browse all at https://bueno-brows-7cce7.web.app/services\n\nCall (650) 613-8455 for help! - Bueno Brows` + A2P_FOOTER;
+  },
+
+  bookingCompleteWithEmail: (name: string, service: string, date: string, time: string) => {
+    return `✅ All set, ${name}! Your ${service} appointment is confirmed for ${date} at ${time}.\n\nCheck your email for confirmation details. We'll also send a reminder.\n\nQuestions? Call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+  },
+  
   error: () => {
-    return "Sorry, I didn't understand that. Reply 'HELP' for instructions or call (555) 123-4567. - Bueno Brows" + A2P_FOOTER;
+    return "Sorry, I didn't understand that. Reply 'HELP' for instructions or call (650) 613-8455. - Bueno Brows" + A2P_FOOTER;
   }
 };
 
@@ -74,9 +151,277 @@ const FAQ_DATABASE = {
   'payment': 'We accept cash, credit cards, and Venmo. Payment is due at time of service.'
 };
 
+// Parse specific date from natural language
+function parseSpecificDate(text: string): Date | null {
+  const today = new Date();
+  const lowerText = text.toLowerCase();
+  
+  // Handle "tomorrow"
+  if (lowerText.includes('tomorrow')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow;
+  }
+  
+  // Handle "today"
+  if (lowerText.includes('today')) {
+    return today;
+  }
+  
+  // Handle "the [number]th/st/nd/rd" OR just "[number]th/st/nd/rd" (e.g., "the 9th", "9th", "15th")
+  const dayMatch = lowerText.match(/(?:the\s+)?(\d{1,2})(st|nd|rd|th)/);
+  if (dayMatch) {
+    const day = parseInt(dayMatch[1]);
+    const targetDate = new Date(today);
+    targetDate.setDate(day);
+    // If the day has passed this month, assume next month
+    if (targetDate < today) {
+      targetDate.setMonth(targetDate.getMonth() + 1);
+    }
+    return targetDate;
+  }
+  
+  // Handle just a number (e.g., "on 9", "the 10") when context suggests a date
+  if (lowerText.match(/\bon\s+(?:the\s+)?(\d{1,2})\b/) || lowerText.match(/\bthe\s+(\d{1,2})\b/)) {
+    const numMatch = lowerText.match(/\b(\d{1,2})\b/);
+    if (numMatch) {
+      const day = parseInt(numMatch[1]);
+      if (day >= 1 && day <= 31) {
+        const targetDate = new Date(today);
+        targetDate.setDate(day);
+        if (targetDate < today) {
+          targetDate.setMonth(targetDate.getMonth() + 1);
+        }
+        return targetDate;
+      }
+    }
+  }
+  
+  // Handle month names (Dec 15, December 15, 12/15, etc.)
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  for (let i = 0; i < months.length; i++) {
+    if (lowerText.includes(months[i])) {
+      const dayNumMatch = lowerText.match(/\d{1,2}/);
+      if (dayNumMatch) {
+        const day = parseInt(dayNumMatch[0]);
+        const targetDate = new Date(today.getFullYear(), i, day);
+        if (targetDate < today) {
+          targetDate.setFullYear(targetDate.getFullYear() + 1);
+        }
+        return targetDate;
+      }
+    }
+  }
+  
+  // Handle MM/DD or M/D format
+  const dateMatch = lowerText.match(/(\d{1,2})\/(\d{1,2})/);
+  if (dateMatch) {
+    const month = parseInt(dateMatch[1]) - 1;
+    const day = parseInt(dateMatch[2]);
+    const targetDate = new Date(today.getFullYear(), month, day);
+    if (targetDate < today) {
+      targetDate.setFullYear(targetDate.getFullYear() + 1);
+    }
+    return targetDate;
+  }
+  
+  return null;
+}
+
+// Get or create conversation state
+async function getConversationState(phoneNumber: string): Promise<any> {
+  const stateDoc = await db.collection('sms_conversation_state').doc(phoneNumber).get();
+  return stateDoc.exists ? stateDoc.data() : null;
+}
+
+// Save conversation state
+async function saveConversationState(phoneNumber: string, state: any): Promise<void> {
+  await db.collection('sms_conversation_state').doc(phoneNumber).set({
+    ...state,
+    lastUpdated: new Date().toISOString()
+  });
+}
+
+// Clear conversation state
+async function clearConversationState(phoneNumber: string): Promise<void> {
+  await db.collection('sms_conversation_state').doc(phoneNumber).delete();
+}
+
+// Get active services with categories
+async function getActiveServices(): Promise<{ id: string; name: string; duration: number; price: number; category: string | null }[]> {
+  const servicesQuery = db.collection('services').where('active', '==', true).orderBy('name');
+  const snapshot = await servicesQuery.get();
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    name: doc.data().name,
+    duration: doc.data().duration,
+    price: doc.data().price,
+    category: doc.data().category || null
+  }));
+}
+
+// Get unique categories
+async function getServiceCategories(): Promise<string[]> {
+  const services = await getActiveServices();
+  const categories = new Set<string>();
+  services.forEach(s => {
+    if (s.category) categories.add(s.category);
+  });
+  return Array.from(categories).sort();
+}
+
+// Get services grouped by category
+async function getServicesByCategory(categoryName: string): Promise<any[]> {
+  const services = await getActiveServices();
+  return services.filter(s => s.category === categoryName).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Calculate Levenshtein distance (measures typo similarity)
+function levenshteinDistance(a: string, b: string): number {
+  const matrix = [];
+  const aLen = a.length;
+  const bLen = b.length;
+
+  for (let i = 0; i <= bLen; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= aLen; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= bLen; i++) {
+    for (let j = 1; j <= aLen; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+  return matrix[bLen][aLen];
+}
+
+// Find category by name or number
+function findCategory(categories: string[], searchTerm: string): string | null {
+  const trimmed = searchTerm.trim();
+  
+  // Check if it's a number
+  const num = parseInt(trimmed);
+  if (!isNaN(num) && num >= 1 && num <= categories.length) {
+    return categories[num - 1];
+  }
+  
+  // Check for exact or partial match
+  const lower = trimmed.toLowerCase();
+  let match = categories.find(c => c.toLowerCase() === lower);
+  if (match) return match;
+  
+  match = categories.find(c => c.toLowerCase().includes(lower));
+  return match || null;
+}
+
+// Find service by name or number (from a list)
+function findServiceByNameOrNumber(
+  services: any[], 
+  searchTerm: string
+): { match: any | null; suggestions: any[] } {
+  const trimmed = searchTerm.trim();
+  
+  // Check if it's a number
+  const num = parseInt(trimmed);
+  if (!isNaN(num) && num >= 1 && num <= services.length) {
+    return { match: services[num - 1], suggestions: [] };
+  }
+  
+  // Fuzzy name matching
+  const lower = trimmed.toLowerCase();
+  
+  // Exact match first
+  let match = services.find(s => s.name.toLowerCase() === lower);
+  if (match) return { match, suggestions: [] };
+  
+  // Partial match (contains)
+  match = services.find(s => s.name.toLowerCase().includes(lower));
+  if (match) return { match, suggestions: [] };
+  
+  // Very fuzzy match (contains any word)
+  const words = lower.split(/\s+/);
+  match = services.find(s => words.some(w => s.name.toLowerCase().includes(w)));
+  if (match) return { match, suggestions: [] };
+  
+  // No match found - calculate similarity scores for suggestions
+  const withScores = services.map(s => ({
+    service: s,
+    distance: levenshteinDistance(lower, s.name.toLowerCase()),
+    // Bonus for word matches
+    wordBonus: words.some(w => s.name.toLowerCase().includes(w)) ? -5 : 0
+  }));
+  
+  // Sort by similarity (lower distance = more similar)
+  withScores.sort((a, b) => (a.distance + a.wordBonus) - (b.distance + b.wordBonus));
+  
+  // Return top 3 suggestions if they're reasonably close (distance < length of search term)
+  const suggestions = withScores
+    .filter(s => s.distance <= lower.length) // Not too different
+    .slice(0, 3)
+    .map(s => s.service);
+  
+  return { match: null, suggestions };
+}
+
 // Parse incoming SMS and determine response
-function parseSMSMessage(message: string): { type: string; data: any } {
+function parseSMSMessage(message: string, conversationState: any = null): { type: string; data: any } {
   const text = message.toLowerCase().trim();
+  
+  // Check for YES/NO confirmations (when in conversation state)
+  if (conversationState) {
+    if (text === 'yes' || text === 'y' || text === 'yeah' || text === 'yep' || text === 'sure') {
+      return { type: 'confirm_yes', data: conversationState };
+    }
+    if (text === 'no' || text === 'n' || text === 'nope' || text === 'nah') {
+      return { type: 'confirm_no', data: null };
+    }
+    
+    // Check if they're selecting a time from the available options
+    const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)/i);
+    if (timeMatch && conversationState.pendingTimes) {
+      return { type: 'time_selection', data: { time: message.trim() } };
+    }
+    
+    // Check if they're providing their name (in name collection state)
+    if (conversationState.awaitingName) {
+      // Simple name validation (at least 2 words or 3+ chars)
+      const words = message.trim().split(/\s+/);
+      if (words.length >= 2 || message.trim().length >= 3) {
+        return { type: 'provide_name', data: { name: message.trim() } };
+      }
+    }
+    
+    // Check if they're providing a category (in category selection state)
+    if (conversationState.awaitingCategory) {
+      return { type: 'provide_category', data: { categoryInput: message.trim() } };
+    }
+    
+    // Check if they're providing a service name (in service selection state)
+    if (conversationState.awaitingService) {
+      return { type: 'provide_service', data: { serviceInput: message.trim() } };
+    }
+  }
+  
+  // Check for greetings first
+  const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
+  const isGreeting = greetings.some(greeting => {
+    const words = text.split(/\s+/);
+    return words.length <= 3 && words.some(word => word === greeting || word.startsWith(greeting));
+  });
+  
+  if (isGreeting) {
+    return { type: 'greeting', data: null };
+  }
   
   // Check for booking requests
   if (text.includes('book') || text.includes('schedule') || text.includes('appointment')) {
@@ -95,8 +440,15 @@ function parseSMSMessage(message: string): { type: string; data: any } {
     return { type: 'booking_help', data: null };
   }
   
-  // Check for availability requests
-  if (text.includes('available') || text.includes('open') || text.includes('free')) {
+  // Check for availability requests with specific date
+  if (text.includes('available') || text.includes('open') || text.includes('free') || text.includes('availability')) {
+    const specificDate = parseSpecificDate(text);
+    if (specificDate) {
+      return { 
+        type: 'specific_availability_request', 
+        data: { date: specificDate }
+      };
+    }
     return { type: 'availability_request', data: null };
   }
   
@@ -115,113 +467,437 @@ function parseSMSMessage(message: string): { type: string; data: any } {
     return { type: 'help', data: null };
   }
   
+  // Check if message contains a date without explicit availability keywords
+  // This catches messages like "9th?", "tomorrow?", "Dec 15?"
+  const implicitDate = parseSpecificDate(text);
+  if (implicitDate) {
+    return { 
+      type: 'specific_availability_request', 
+      data: { date: implicitDate }
+    };
+  }
+  
   // Default to error
   return { type: 'error', data: null };
 }
 
-// Get available appointment slots
-async function getAvailableSlots(days: number = 7): Promise<string[]> {
+// Get available appointment slots - searches up to 30 days or until we find enough slots
+async function getAvailableSlots(minSlots: number = 5, maxDays: number = 30): Promise<string[]> {
   try {
     // Get business hours
     const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
     const businessHours = businessHoursDoc.data();
     
     if (!businessHours) {
-      return ['Please call (555) 123-4567 for availability'];
+      return ['Please call (650) 613-8455 for availability'];
     }
     
-    // Get existing appointments for the next 7 days
     const now = new Date();
-    const endDate = new Date(now.getTime() + (days * 24 * 60 * 60 * 1000));
+    const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+    const endDate = new Date(now.getTime() + (maxDays * 24 * 60 * 60 * 1000));
     
+    // Get existing appointments for the search period (filter status in memory)
     const appointmentsQuery = db.collection('appointments')
       .where('start', '>=', now.toISOString())
-      .where('start', '<=', endDate.toISOString())
-      .where('status', 'in', ['confirmed', 'pending']);
+      .where('start', '<=', endDate.toISOString());
     
     const appointments = await appointmentsQuery.get();
-    const existingAppointments = appointments.docs.map(doc => ({
-      start: doc.data().start,
-      duration: doc.data().duration || 60
-    }));
+    const existingAppointments = appointments.docs
+      .filter(doc => {
+        const status = doc.data().status;
+        return status === 'confirmed' || status === 'pending';
+      })
+      .map(doc => ({
+        start: doc.data().start,
+        duration: doc.data().duration || 60
+      }));
     
-    // Get available services
-    const servicesQuery = db.collection('services').where('active', '==', true);
-    const services = await servicesQuery.get();
-    const availableServices = services.docs.map(doc => ({
-      id: doc.id,
-      name: doc.data().name,
-      duration: doc.data().duration || 60,
-      price: doc.data().price
-    }));
-    
-    // Generate available slots (simplified logic)
+    // Generate available slots (stop when we have enough)
     const availableSlots: string[] = [];
     const currentDate = new Date();
     
-    for (let i = 1; i <= days; i++) {
+    for (let i = 0; i <= maxDays && availableSlots.length < minSlots; i++) {
       const checkDate = new Date(currentDate.getTime() + (i * 24 * 60 * 60 * 1000));
-      const dayOfWeek = checkDate.getDay();
       
-      // Skip if closed (assuming closed on Mondays, day 1)
-      if (dayOfWeek === 1) continue;
+      // Check if this date has available times (respects closures and special hours)
+      const dayTimes = await getAvailableSlotsForDate(checkDate);
       
-      // Generate time slots (9 AM to 5 PM, every hour)
-      for (let hour = 9; hour <= 17; hour++) {
-        const slotTime = new Date(checkDate);
-        slotTime.setHours(hour, 0, 0, 0);
+      if (dayTimes.length === 0) continue; // Closed or no availability
+      
+      // Add each available time to our results
+      const dateStr = checkDate.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric' 
+      });
+      
+      for (const timeStr of dayTimes) {
+        availableSlots.push(`${dateStr} at ${timeStr}`);
         
-        // Check if slot is available
-        const slotEnd = new Date(slotTime.getTime() + (60 * 60 * 1000)); // 1 hour duration
-        
-        const isConflict = existingAppointments.some(apt => {
-          const aptStart = new Date(apt.start);
-          const aptEnd = new Date(aptStart.getTime() + (apt.duration * 60 * 1000));
-          return (slotTime < aptEnd && slotEnd > aptStart);
-        });
-        
-        if (!isConflict) {
-          const dateStr = checkDate.toLocaleDateString('en-US', { 
-            month: 'short', 
-            day: 'numeric' 
-          });
-          const timeStr = slotTime.toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit',
-            hour12: true 
-          });
-          availableSlots.push(`${dateStr} at ${timeStr}`);
-        }
+        // Stop early if we have enough slots
+        if (availableSlots.length >= minSlots) break;
       }
     }
     
-    return availableSlots.slice(0, 10); // Limit to 10 slots
+    // If no slots found after searching max days, return helpful message
+    if (availableSlots.length === 0) {
+      return ['No availability in next 30 days. Please call (650) 613-8455 to discuss options.'];
+    }
+    
+    return availableSlots.slice(0, 10); // Limit to 10 slots for display
   } catch (error) {
     console.error('Error getting available slots:', error);
-    return ['Please call (555) 123-4567 for availability'];
+    return ['Please call (650) 613-8455 for availability'];
   }
 }
 
-// Send SMS via AWS SNS
-async function sendSMS(message: SMSMessage): Promise<boolean> {
+// Get available times for a specific date
+async function getAvailableSlotsForDate(targetDate: Date): Promise<string[]> {
   try {
-    if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
-      console.log('AWS SNS not configured, logging SMS instead:', {
-        to: message.to,
-        body: message.body
+    // Get business hours
+    const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
+    const businessHours = businessHoursDoc.data();
+    
+    console.log('🔍 Checking availability for date:', targetDate.toISOString());
+    
+    if (!businessHours) {
+      console.log('❌ No business hours found');
+      return [];
+    }
+    
+    const businessTimezone = businessHours.timezone || 'America/Los_Angeles';
+    console.log('🌍 Business timezone:', businessTimezone);
+    
+    // Format date as YYYY-MM-DD for comparison (using UTC date)
+    const dateStr = `${targetDate.getUTCFullYear()}-${String(targetDate.getUTCMonth() + 1).padStart(2, '0')}-${String(targetDate.getUTCDate()).padStart(2, '0')}`;
+    console.log('📅 Formatted date (UTC):', dateStr);
+    
+    // Check if shop is closed on this specific date
+    const closuresSnapshot = await db.collection('dayClosures').where('date', '==', dateStr).get();
+    if (!closuresSnapshot.empty) {
+      console.log('🚫 Date is marked as closed');
+      return []; // Closed on this date
+    }
+    
+    // Check for special hours on this date
+    const specialHoursSnapshot = await db.collection('specialHours').where('date', '==', dateStr).get();
+    let hoursRanges: [string, string][] = [];
+    
+    console.log(`🔎 Checking special hours for ${dateStr}. Found ${specialHoursSnapshot.size} special hour entries`);
+    
+    if (!specialHoursSnapshot.empty) {
+      // Use special hours
+      const specialData = specialHoursSnapshot.docs[0].data();
+      hoursRanges = Array.isArray(specialData.ranges) ? specialData.ranges : [];
+      console.log('⏰ Using special hours:', hoursRanges);
+    } else {
+      // Use regular business hours
+      // Use UTC day of week to get correct day
+      const dayOfWeek = targetDate.getUTCDay();
+      const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][dayOfWeek];
+      const daySlots = businessHours.slots?.[dayKey];
+      // Business hours are stored as { ranges: [[start, end], ...] }
+      hoursRanges = Array.isArray(daySlots?.ranges) ? daySlots.ranges : (Array.isArray(daySlots) ? daySlots : []);
+      console.log(`⏰ Using regular ${dayKey} hours:`, hoursRanges);
+    }
+    
+    // If no hours for this day, it's closed
+    if (!Array.isArray(hoursRanges) || hoursRanges.length === 0) {
+      console.log('🚫 No hours configured for this day');
+      return [];
+    }
+    
+    // Get existing appointments for the target date
+    // IMPORTANT: Use UTC methods to avoid timezone interference
+    // Query ±12 hours to catch appointments across UTC day boundaries
+    const year = targetDate.getUTCFullYear();
+    const month = targetDate.getUTCMonth();
+    const day = targetDate.getUTCDate();
+    
+    const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+    const queryStart = new Date(startOfDay.getTime() - (12 * 60 * 60 * 1000)); // 12 hours before
+    
+    const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+    const queryEnd = new Date(endOfDay.getTime() + (12 * 60 * 60 * 1000)); // 12 hours after
+    
+    console.log(`🔎 Querying appointments from ${queryStart.toISOString()} to ${queryEnd.toISOString()}`);
+    
+    const appointmentsQuery = db.collection('appointments')
+      .where('start', '>=', queryStart.toISOString())
+      .where('start', '<=', queryEnd.toISOString());
+    
+    const appointments = await appointmentsQuery.get();
+    console.log(`🔎 Total appointments in query range: ${appointments.size}`);
+    
+    const existingAppointments = appointments.docs
+      .filter(doc => {
+        const data = doc.data();
+        const status = data.status;
+        if (status !== 'confirmed' && status !== 'pending') {
+          console.log(`  ⏭️ Skipping appointment (status: ${status})`);
+          return false;
+        }
+        
+        // Also check if appointment actually falls on target date in business timezone
+        // (since we query wider range for timezone safety)
+        const aptDate = new Date(data.start);
+        // Format the appointment date in business timezone
+        const aptDateInBusinessTZ = aptDate.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit',
+          timeZone: businessTimezone 
+        });
+        // Convert MM/DD/YYYY to YYYY-MM-DD
+        const [month, day, year] = aptDateInBusinessTZ.split('/');
+        const aptDay = `${year}-${month}-${day}`;
+        const matches = aptDay === dateStr;
+        console.log(`  🔍 ${data.start} → ${aptDay} (target: ${dateStr}) - ${matches ? 'MATCH ✅' : 'SKIP'}`);
+        return matches;
+      })
+      .map(doc => ({
+        start: doc.data().start,
+        duration: doc.data().duration || 60
+      }));
+    
+    console.log(`📊 Found ${existingAppointments.length} existing appointments for ${dateStr} in ${businessTimezone}`);
+    if (existingAppointments.length > 0) {
+      existingAppointments.forEach(apt => {
+        const aptDate = new Date(apt.start);
+        const time = aptDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: businessTimezone });
+        console.log(`  - ${apt.start} → ${time} (${apt.duration} min)`);
       });
+    } else {
+      console.log('  (No appointments found for this day)');
+    }
+    
+    const availableTimes: string[] = [];
+    const now = new Date();
+    const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+    
+    // Generate time slots based on actual business hours
+    for (const range of hoursRanges) {
+      // Handle both object format { start, end } and array format [start, end]
+      const startStr: string = (typeof range === 'object' && 'start' in range) ? (range as any).start : (range as any)[0];
+      const endStr: string = (typeof range === 'object' && 'end' in range) ? (range as any).end : (range as any)[1];
+      
+      // Parse start time (format: "09:00" or "9:00")
+      const [startHour, startMin] = startStr.split(':').map(Number);
+      const [endHour, endMin] = endStr.split(':').map(Number);
+      
+      // Determine DST offset for this date (same logic as booking site)
+      const year = targetDate.getUTCFullYear();
+      const month = targetDate.getUTCMonth();
+      const dayNum = targetDate.getUTCDate();
+      
+      let offsetHours = 8; // Default PST (UTC-8)
+      if (month === 10) { // November
+        const nov1 = new Date(Date.UTC(year, 10, 1));
+        const firstSunday = 1 + ((7 - nov1.getUTCDay()) % 7);
+        if (dayNum < firstSunday) offsetHours = 7; // Still PDT
+      } else if (month >= 3 && month <= 9) {
+        offsetHours = 7; // PDT months
+      } else if (month === 2) { // March
+        const mar1 = new Date(Date.UTC(year, 2, 1));
+        const firstSunday = 1 + ((7 - mar1.getUTCDay()) % 7);
+        const secondSunday = firstSunday + 7;
+        if (dayNum >= secondSunday) offsetHours = 7; // DST started
+      }
+      
+      // Generate hourly slots within the range
+      let currentHour = startHour;
+      while (currentHour < endHour) {
+        // Convert Pacific time to UTC using manual offset
+        // Example: 4 PM PST + 8 hours = midnight UTC (next day)
+        const slotStartMs = Date.UTC(year, month, dayNum, currentHour + offsetHours, 0, 0);
+        const slotEndMs = slotStartMs + (60 * 60 * 1000); // 1 hour duration
+        
+        const slotDisplayTime = new Date(slotStartMs).toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: '2-digit',
+          hour12: true,
+          timeZone: businessTimezone
+        });
+        
+        // Skip slots that are less than 2 hours from now
+        const now = new Date();
+        if (slotStartMs < now.getTime() + (2 * 60 * 60 * 1000)) {
+          console.log(`  ⏭️ Skipping ${slotDisplayTime} (too soon - less than 2 hours)`);
+          currentHour++;
+          continue;
+        }
+        
+        // Check if slot conflicts with any existing appointment
+        const isConflict = existingAppointments.some(apt => {
+          const aptStartMs = new Date(apt.start).getTime();
+          const aptEndMs = aptStartMs + (apt.duration * 60 * 1000);
+          const hasOverlap = (slotStartMs < aptEndMs && slotEndMs > aptStartMs);
+          if (hasOverlap) {
+            const aptDisplayTime = new Date(apt.start).toLocaleTimeString('en-US', { 
+              hour: 'numeric', 
+              minute: '2-digit', 
+              hour12: true, 
+              timeZone: businessTimezone 
+            });
+            console.log(`  ❌ ${slotDisplayTime} (slot ${slotStartMs}) conflicts with appointment at ${aptDisplayTime} (apt ${aptStartMs}-${aptEndMs})`);
+          }
+          return hasOverlap;
+        });
+        
+        if (!isConflict) {
+          console.log(`  ✅ ${slotDisplayTime} is AVAILABLE`);
+          availableTimes.push(slotDisplayTime);
+        }
+        
+        currentHour++;
+      }
+    }
+    
+    console.log(`✅ Found ${availableTimes.length} available times:`, availableTimes);
+    return availableTimes;
+  } catch (error) {
+    console.error('Error getting slots for specific date:', error);
+    return [];
+  }
+}
+
+// Simple checker: returns true/false if a time slot can fit the duration
+// This function does NOT search for alternatives (no recursion)
+async function isSlotAvailableForDuration(
+  startTime: Date,
+  durationMinutes: number
+): Promise<boolean> {
+  const endTime = new Date(startTime.getTime() + (durationMinutes * 60 * 1000));
+  
+  // Check 2-hour advance booking requirement
+  const now = new Date();
+  const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
+  if (startTime < minBookingTime) {
+    return false;
+  }
+  
+  // Get all appointments for the day (filter status in memory to avoid complex index)
+  // Use UTC methods to query ±12 hours to catch appointments across day boundaries
+  const year = startTime.getUTCFullYear();
+  const month = startTime.getUTCMonth();
+  const day = startTime.getUTCDate();
+  
+  const startOfDay = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const queryStart = new Date(startOfDay.getTime() - (12 * 60 * 60 * 1000));
+  
+  const endOfDay = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+  const queryEnd = new Date(endOfDay.getTime() + (12 * 60 * 60 * 1000));
+  
+  const appointmentsQuery = db.collection('appointments')
+    .where('start', '>=', queryStart.toISOString())
+    .where('start', '<=', queryEnd.toISOString());
+  
+  const appointments = await appointmentsQuery.get();
+  
+  // Check for overlaps (filter status in memory)
+  const hasConflict = appointments.docs.some(doc => {
+    const apt = doc.data();
+    
+    // Skip cancelled appointments
+    if (apt.status === 'cancelled' || apt.status === 'no-show' || apt.status === 'completed') {
+      return false;
+    }
+    
+    const aptStart = new Date(apt.start);
+    const aptEnd = new Date(aptStart.getTime() + (apt.duration * 60 * 1000));
+    
+    // Conflict if new appointment overlaps with existing one
+    return (startTime < aptEnd && endTime > aptStart);
+  });
+  
+  return !hasConflict; // Return true if NO conflict
+}
+
+// Smart checker: checks if requested slot is available AND finds next available if not
+// Uses isSlotAvailableForDuration() to avoid recursion
+async function checkSlotAvailableForDuration(
+  startTime: Date,
+  durationMinutes: number
+): Promise<{ available: boolean; nextAvailable: string | null }> {
+  
+  // First, check if the requested time works
+  const isAvailable = await isSlotAvailableForDuration(startTime, durationMinutes);
+  
+  if (isAvailable) {
+    return { available: true, nextAvailable: null };
+  }
+  
+  // If not available, search for next slot that can fit this duration
+  const availableTimes = await getAvailableSlotsForDate(startTime);
+  
+  for (const timeStr of availableTimes) {
+    const testTime = new Date(startTime);
+    const [time, period] = timeStr.split(' ');
+    const [hours, minutes] = time.split(':').map(Number);
+    let hour24 = hours;
+    if (period?.toLowerCase() === 'pm' && hours !== 12) hour24 += 12;
+    if (period?.toLowerCase() === 'am' && hours === 12) hour24 = 0;
+    testTime.setHours(hour24, minutes || 0, 0, 0);
+    
+    // Use simple checker here (NOT calling checkSlotAvailableForDuration - no recursion!)
+    const fits = await isSlotAvailableForDuration(testTime, durationMinutes);
+    if (fits) {
+      return { available: false, nextAvailable: timeStr };
+    }
+  }
+  
+  return { available: false, nextAvailable: null };
+}
+
+// Send SMS (prioritizes Twilio if configured, falls back to AWS SNS)
+async function sendSMS(message: SMSMessage, twilioConfig?: { accountSid: string; authToken: string; phoneNumber: string; messagingServiceSid?: string }): Promise<boolean> {
+  try {
+    // Option 1: Use Twilio (preferred - A2P approved)
+    if (twilioConfig?.accountSid && twilioConfig?.authToken) {
+      try {
+        const twilio = await import('twilio');
+        const client = twilio.default(twilioConfig.accountSid, twilioConfig.authToken);
+        
+        // For A2P 10DLC compliance, use Messaging Service SID if available
+        // Otherwise fall back to phone number
+        const messageParams: any = {
+          body: message.body,
+          to: message.to
+        };
+        
+        if (twilioConfig.messagingServiceSid) {
+          // Use Messaging Service SID for A2P compliance
+          messageParams.messagingServiceSid = twilioConfig.messagingServiceSid;
+          console.log('📱 Using Messaging Service SID for A2P compliance');
+        } else if (twilioConfig.phoneNumber) {
+          // Fallback to phone number if Messaging Service not configured
+          messageParams.from = twilioConfig.phoneNumber;
+          console.log('📱 Using phone number directly (not A2P optimized)');
+        } else {
+          throw new Error('Either messagingServiceSid or phoneNumber must be provided');
+        }
+        
+        const result = await client.messages.create(messageParams);
+        
+        console.log('✅ SMS sent via Twilio (A2P approved):', result.sid);
       
       // Store SMS in database for tracking
       await db.collection('sms_logs').add({
         ...message,
         timestamp: new Date().toISOString(),
-        status: 'logged_only'
+          status: 'sent',
+          twilioMessageId: result.sid,
+          provider: 'twilio'
       });
       
       return true;
+      } catch (error) {
+        console.error('Error sending SMS via Twilio:', error);
+        throw error;
+      }
     }
 
-    // Use AWS SDK to send SMS
+    // Option 2: Use AWS SNS (fallback)
+    if (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY) {
     const AWS = require('aws-sdk');
     const sns = new AWS.SNS({
       accessKeyId: AWS_ACCESS_KEY_ID,
@@ -235,19 +911,37 @@ async function sendSMS(message: SMSMessage): Promise<boolean> {
     };
 
     const result = await sns.publish(params).promise();
-    console.log('SMS sent via AWS SNS:', result.MessageId);
+      console.log('✅ SMS sent via AWS SNS:', result.MessageId);
+      
+      // Store SMS in database for tracking
+      await db.collection('sms_logs').add({
+        ...message,
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        awsMessageId: result.MessageId,
+        provider: 'aws_sns'
+      });
+      
+      return true;
+    }
+    
+    // Option 3: No SMS provider configured
+    console.log('⚠️ No SMS provider configured, logging SMS instead:', {
+      to: message.to,
+      body: message.body
+    });
     
     // Store SMS in database for tracking
     await db.collection('sms_logs').add({
       ...message,
       timestamp: new Date().toISOString(),
-      status: 'sent',
-      awsMessageId: result.MessageId
+      status: 'logged_only',
+      provider: 'none'
     });
     
     return true;
   } catch (error) {
-    console.error('Error sending SMS via AWS SNS:', error);
+    console.error('❌ Error sending SMS:', error);
     
     // Store failed SMS attempt
     await db.collection('sms_logs').add({
@@ -263,7 +957,11 @@ async function sendSMS(message: SMSMessage): Promise<boolean> {
 
 // Handle incoming SMS webhook (HTTP function for Twilio)
 export const smsWebhook = onRequest(
-  { region: 'us-central1', cors: true },
+  { 
+    region: 'us-central1', 
+    cors: true,
+    secrets: [twilioAccountSid, twilioAuthToken]
+  },
   async (req, res) => {
     console.log('SMS webhook received:', req.method, req.body);
     
@@ -286,8 +984,11 @@ export const smsWebhook = onRequest(
     console.log('Processing SMS:', { from, body, to });
     
     try {
-      // Parse the incoming message
-      const parsed = parseSMSMessage(body);
+      // Get conversation state (if any)
+      const conversationState = await getConversationState(from);
+      
+      // Parse the incoming message with conversation context
+      const parsed = parseSMSMessage(body, conversationState);
       
       // Get or create customer record
       let customer = await db.collection('customers').where('phone', '==', from).limit(1).get();
@@ -322,42 +1023,337 @@ export const smsWebhook = onRequest(
       
       // Generate response based on parsed message
       switch (parsed.type) {
+        case 'greeting':
+          responseMessage = SMS_TEMPLATES.greeting();
+          await clearConversationState(from);
+          break;
+          
         case 'availability_request':
           const availableSlots = await getAvailableSlots();
           responseMessage = SMS_TEMPLATES.availability(availableSlots);
+          await clearConversationState(from);
+          break;
+          
+        case 'specific_availability_request':
+          const targetDate = parsed.data.date;
+          const availableTimes = await getAvailableSlotsForDate(targetDate);
+          const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          responseMessage = SMS_TEMPLATES.specificAvailable(dateStr, availableTimes);
+          
+          // Save conversation state if there are times available
+          if (availableTimes.length > 0) {
+            await saveConversationState(from, {
+              type: 'awaiting_time_selection',
+              date: targetDate.toISOString(),
+              dateStr,
+              availableTimes,
+              pendingTimes: true,
+              singleTime: availableTimes.length === 1 ? availableTimes[0] : null
+            });
+          } else {
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'confirm_yes':
+          // User confirmed a single time slot - now ask for category
+          if (conversationState && conversationState.singleTime) {
+            const categories = await getServiceCategories();
+            responseMessage = SMS_TEMPLATES.categorySelection(categories);
+            
+            await saveConversationState(from, {
+              type: 'awaiting_category',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: conversationState.singleTime,
+              awaitingCategory: true,
+              availableCategories: categories
+            });
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'confirm_no':
+          responseMessage = SMS_TEMPLATES.bookingCancelled();
+          await clearConversationState(from);
+          break;
+          
+        case 'time_selection':
+          // User selected a time - now ask for category
+          if (conversationState && conversationState.pendingTimes) {
+            const selectedTime = parsed.data.time;
+            const categories = await getServiceCategories();
+            responseMessage = SMS_TEMPLATES.categorySelection(categories);
+            
+            await saveConversationState(from, {
+              type: 'awaiting_category',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: selectedTime,
+              awaitingCategory: true,
+              availableCategories: categories
+            });
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'provide_category':
+          // User selected a category - show services in that category
+          console.log('🔍 Category selection:', parsed.data.categoryInput);
+          
+          if (conversationState && conversationState.awaitingCategory) {
+            const categories = conversationState.availableCategories || await getServiceCategories();
+            const selectedCategory = findCategory(categories, parsed.data.categoryInput);
+            
+            if (!selectedCategory) {
+              console.log('❌ Category not found:', parsed.data.categoryInput);
+              responseMessage = `I didn't recognize that category. Please reply with a number (1-${categories.length}) or category name. - Bueno Brows` + A2P_FOOTER;
+              // Keep state for retry
+              break;
+            }
+            
+            console.log('✅ Found category:', selectedCategory);
+            const servicesInCategory = await getServicesByCategory(selectedCategory);
+            const top5 = servicesInCategory.slice(0, 5);
+            const hasMore = servicesInCategory.length > 5;
+            
+            responseMessage = SMS_TEMPLATES.serviceListInCategory(selectedCategory, top5, hasMore);
+            
+            await saveConversationState(from, {
+              type: 'awaiting_service',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: conversationState.time,
+              selectedCategory,
+              availableServices: top5,
+              allServicesInCategory: servicesInCategory,
+              awaitingService: true
+            });
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'provide_service':
+          // User provided service name - validate and check duration fit
+          console.log('🔍 Service selection:', parsed.data.serviceInput);
+          
+          if (conversationState && conversationState.awaitingService) {
+            const serviceList = conversationState.availableServices || await getActiveServices();
+            console.log(`📋 Checking ${serviceList.length} services`);
+            
+            const serviceResult = findServiceByNameOrNumber(serviceList, parsed.data.serviceInput);
+            
+            if (!serviceResult.match) {
+              console.log('❌ Service not found:', parsed.data.serviceInput);
+              if (serviceResult.suggestions.length > 0) {
+                console.log('💡 Suggesting:', serviceResult.suggestions.map(s => s.name));
+                responseMessage = SMS_TEMPLATES.serviceNotFoundWithSuggestions(
+                  parsed.data.serviceInput, 
+                  serviceResult.suggestions
+                );
+              } else {
+                responseMessage = SMS_TEMPLATES.serviceNotFound(parsed.data.serviceInput);
+              }
+              // Keep state for retry
+              break;
+            }
+            
+            const service = serviceResult.match;
+            console.log('✅ Found service:', service.name, `(${service.duration} min)`);
+            
+            // Parse the time and check if service duration fits
+            const appointmentDate = new Date(conversationState.date);
+            const [time, period] = conversationState.time.split(' ');
+            const [hours, minutes] = time.split(':').map(Number);
+            let hour24 = hours;
+            if (period?.toLowerCase() === 'pm' && hours !== 12) hour24 += 12;
+            if (period?.toLowerCase() === 'am' && hours === 12) hour24 = 0;
+            appointmentDate.setHours(hour24, minutes || 0, 0, 0);
+            
+            const availabilityCheck = await checkSlotAvailableForDuration(appointmentDate, service.duration);
+            
+            if (!availabilityCheck.available) {
+              if (availabilityCheck.nextAvailable) {
+                responseMessage = SMS_TEMPLATES.serviceTooLong(service, conversationState.time, availabilityCheck.nextAvailable);
+              } else {
+                responseMessage = `Sorry, ${conversationState.dateStr} doesn't have enough time for ${service.name}.\n\nReply "AVAILABLE" to see other dates. - Bueno Brows` + A2P_FOOTER;
+              }
+              await clearConversationState(from);
+              break;
+            }
+            
+            // Service fits! Ask for name
+            responseMessage = SMS_TEMPLATES.bookingConfirm(conversationState.dateStr, conversationState.time);
+            await saveConversationState(from, {
+              type: 'awaiting_name',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: conversationState.time,
+              serviceId: service.id,
+              serviceName: service.name,
+              serviceDuration: service.duration,
+              servicePrice: service.price,
+              awaitingName: true
+            });
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'provide_name':
+          // User provided name - create the appointment!
+          if (conversationState && conversationState.awaitingName) {
+            const customerName = parsed.data.name;
+            
+            // Parse appointment date/time
+            const appointmentDate = new Date(conversationState.date);
+            const [time, period] = conversationState.time.split(' ');
+            const [hours, minutes] = time.split(':').map(Number);
+            let hour24 = hours;
+            if (period?.toLowerCase() === 'pm' && hours !== 12) hour24 += 12;
+            if (period?.toLowerCase() === 'am' && hours === 12) hour24 = 0;
+            appointmentDate.setHours(hour24, minutes || 0, 0, 0);
+            
+            // Double-check availability (race condition protection)
+            const finalCheck = await isSlotAvailableForDuration(appointmentDate, conversationState.serviceDuration);
+            
+            if (!finalCheck) {
+              responseMessage = `Oops! That time was just taken. 😕\n\nReply "AVAILABLE" to see current openings. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            try {
+              // Update customer name if needed
+              if (customer.docs[0]?.data()?.name === 'SMS Customer') {
+                await db.collection('customers').doc(customerId).update({ 
+                  name: customerName,
+                  updatedAt: new Date().toISOString()
+                });
+              }
+              
+              // Create the appointment directly using admin SDK with transaction
+              const appointmentRef = db.collection('appointments').doc();
+              const startISO = appointmentDate.toISOString();
+              const endMs = appointmentDate.getTime() + (conversationState.serviceDuration * 60 * 1000);
+              const endISO = new Date(endMs).toISOString();
+              
+              await db.runTransaction(async (transaction) => {
+                // Check for conflicts within transaction
+                const windowStartISO = new Date(appointmentDate.getTime() - (conversationState.serviceDuration * 60 * 1000)).toISOString();
+                
+                const conflictQuery = await db.collection('appointments')
+                  .where('start', '>=', windowStartISO)
+                  .where('start', '<', endISO)
+                  .get();
+                
+                // Check for overlaps (filter status in memory)
+                for (const doc of conflictQuery.docs) {
+                  const apt = doc.data();
+                  
+                  // Skip cancelled/completed appointments
+                  if (apt.status === 'cancelled' || apt.status === 'no-show' || apt.status === 'completed') {
+                    continue;
+                  }
+                  const aptStart = new Date(apt.start);
+                  const aptEnd = new Date(aptStart.getTime() + (apt.duration * 60 * 1000));
+                  const newStart = appointmentDate;
+                  const newEnd = new Date(endMs);
+                  
+                  if (newStart < aptEnd && newEnd > aptStart) {
+                    throw new Error('OVERLAP');
+                  }
+                }
+                
+                // No conflicts - create appointment
+                transaction.set(appointmentRef, {
+                  customerId: customerId,
+                  serviceId: conversationState.serviceId,
+                  serviceIds: [conversationState.serviceId],
+                  start: startISO,
+                  end: endISO,
+                  duration: conversationState.serviceDuration,
+                  status: 'confirmed',
+                  notes: `Booked via SMS by ${customerName}`,
+                  bookedPrice: conversationState.servicePrice,
+                  servicePrices: { [conversationState.serviceId]: conversationState.servicePrice },
+                  attendance: 'pending',
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                });
+              });
+              
+              console.log('✅ Appointment created via SMS:', appointmentRef.id);
+              
+              // Email will be automatically triggered by onAppointmentConfirmedSendEmail
+              responseMessage = SMS_TEMPLATES.bookingCompleteWithEmail(
+                customerName, 
+                conversationState.serviceName,
+                conversationState.dateStr, 
+                conversationState.time
+              );
+              
+            } catch (error: any) {
+              console.error('Error creating appointment:', error);
+              
+              if (error.message === 'OVERLAP') {
+                responseMessage = `That slot was just taken! 😕\n\nReply "AVAILABLE" for current openings. - Bueno Brows` + A2P_FOOTER;
+              } else {
+                responseMessage = `Something went wrong creating your booking. Please call us at (650) 613-8455 to complete your appointment. - Bueno Brows` + A2P_FOOTER;
+              }
+            }
+            
+            await clearConversationState(from);
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
           break;
           
         case 'faq':
           responseMessage = SMS_TEMPLATES.faq(parsed.data.question, parsed.data.answer);
+          await clearConversationState(from);
           break;
           
         case 'booking_help':
           responseMessage = SMS_TEMPLATES.booking_instructions();
+          await clearConversationState(from);
           break;
           
         case 'help':
           responseMessage = SMS_TEMPLATES.booking_instructions();
+          await clearConversationState(from);
           break;
           
         case 'booking_request':
           // For now, provide instructions for booking
-          responseMessage = "To complete your booking, please call us at (555) 123-4567 or visit our website. We'll need to confirm your details. - Bueno Brows" + A2P_FOOTER;
+          responseMessage = "To complete your booking, please call us at (650) 613-8455 or visit our website. We'll need to confirm your details. - Bueno Brows" + A2P_FOOTER;
+          await clearConversationState(from);
           break;
           
         default:
           responseMessage = SMS_TEMPLATES.error();
+          await clearConversationState(from);
       }
       
       // Send response
+      const twilioConfig = getTwilioConfig();
       const smsMessage: SMSMessage = {
         to: from,
-        from: to || BUSINESS_PHONE_NUMBER || '+15551234567',
+        from: to || twilioConfig.phoneNumber || '+16506839181',
         body: responseMessage,
         customerId,
         type: parsed.type as any
       };
       
-      const sent = await sendSMS(smsMessage);
+      const sent = await sendSMS(smsMessage, twilioConfig);
       
       // Store outgoing message
       if (sent) {
@@ -387,7 +1383,12 @@ export const smsWebhook = onRequest(
 
 // Send SMS to customer (admin function)
 export const sendSMSToCustomer = onCall(
-  { region: 'us-central1', cors: true, enforceAppCheck: true },
+  { 
+    region: 'us-central1', 
+    cors: true, 
+    enforceAppCheck: true,
+    secrets: [twilioAccountSid, twilioAuthToken]
+  },
   async (req) => {
     const { phoneNumber, message, customerId } = req.data || {};
     const userId = req.auth?.uid;
@@ -410,15 +1411,16 @@ export const sendSMSToCustomer = onCall(
     await consumeRateLimit(rateLimiters.sendSMS, `phone:${phoneNumber}`);
     
     try {
+      const twilioConfig = getTwilioConfig();
       const smsMessage: SMSMessage = {
         to: phoneNumber,
-        from: BUSINESS_PHONE_NUMBER || '+15551234567',
+        from: twilioConfig.phoneNumber || '+16506839181',
         body: message,
         customerId,
         type: 'admin_message'
       };
       
-      const sent = await sendSMS(smsMessage);
+      const sent = await sendSMS(smsMessage, twilioConfig);
       
       if (sent) {
         // Store in conversation log
@@ -444,7 +1446,11 @@ export const sendSMSToCustomer = onCall(
 
 // Test SMS function (for testing AWS SNS)
 export const testSMS = onCall(
-  { region: 'us-central1', cors: true },
+  { 
+    region: 'us-central1', 
+    cors: true,
+    secrets: [twilioAccountSid, twilioAuthToken]
+  },
   async (req) => {
     const { phoneNumber, message } = req.data || {};
     
@@ -453,14 +1459,15 @@ export const testSMS = onCall(
     }
     
     try {
+      const twilioConfig = getTwilioConfig();
       const smsMessage: SMSMessage = {
         to: phoneNumber,
-        from: BUSINESS_PHONE_NUMBER || '+15551234567',
+        from: twilioConfig.phoneNumber || '+16506839181',
         body: message,
         type: 'admin_message'
       };
       
-      const sent = await sendSMS(smsMessage);
+      const sent = await sendSMS(smsMessage, twilioConfig);
       return { success: sent, message: 'Test SMS sent' };
       
     } catch (error) {
@@ -513,3 +1520,4 @@ export const getSMSConversation = onCall(
     }
   }
 );
+

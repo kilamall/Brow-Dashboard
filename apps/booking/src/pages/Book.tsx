@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import SEO from '../components/SEO';
-import type { Appointment, BusinessHours, Service, ConsentFormTemplate, DayClosure, SpecialHours } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Service, ConsentFormTemplate, DayClosure, SpecialHours, Promotion, Customer } from '@buenobrows/shared/types';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 import {
   watchServices,
@@ -13,7 +13,9 @@ import {
   findCustomerByEmail,
   createCustomer,
   updateCustomer,
+  watchPromotions,
 } from '@buenobrows/shared/firestoreActions';
+import { findApplicablePromotions, calculateDiscount } from '@buenobrows/shared/promotionUtils';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { watchAvailabilityByDay } from '@buenobrows/shared/availabilityHelpers';
 import { isValidBookingDate, isValidBookingDateWithSpecialHours, getNextValidBookingDate, getNextValidBookingDateAfter, formatNextAvailableDate } from '@buenobrows/shared/businessHoursUtils';
@@ -36,11 +38,10 @@ import {
 
 import { format } from 'date-fns';
 import { getAuth, onAuthStateChanged, type User, RecaptchaVerifier, signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
-import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
 import ConsentForm from '../components/ConsentForm';
-import type { Customer } from '@buenobrows/shared/types';
 
 type Slot = { startISO: string; endISO?: string; resourceId?: string | null };
 type Hold = { id: string; expiresAt: string; status?: string }; // from Cloud Function
@@ -82,6 +83,36 @@ export default function Book() {
   const [bhError, setBhError] = useState<string | null>(null);
   const [closures, setClosures] = useState<DayClosure[]>([]);
   const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  
+  // Restore promo code from sessionStorage on mount
+  const [enteredPromoCode, setEnteredPromoCode] = useState<string>(() => {
+    try {
+      const saved = sessionStorage.getItem('bb_booking_cart');
+      if (saved) {
+        const cart = JSON.parse(saved);
+        return cart.enteredPromoCode || '';
+      }
+    } catch (e) {
+      console.error('Failed to restore promo code:', e);
+    }
+    return '';
+  });
+  
+  const [promoCodeError, setPromoCodeError] = useState<string | null>(null);
+  
+  // Save promo code to sessionStorage whenever it changes
+  useEffect(() => {
+    const saved = sessionStorage.getItem('bb_booking_cart');
+    try {
+      const cart = saved ? JSON.parse(saved) : {};
+      cart.enteredPromoCode = enteredPromoCode;
+      sessionStorage.setItem('bb_booking_cart', JSON.stringify(cart));
+    } catch (e) {
+      console.error('Failed to save promo code:', e);
+    }
+  }, [enteredPromoCode]);
   
   // Verification settings
   const [verificationSettings, setVerificationSettings] = useState<{
@@ -98,7 +129,11 @@ export default function Book() {
     }
     try {
       const unsubscribe = watchServices(db, { activeOnly: true }, (servicesList) => {
-        setServices(servicesList || []);
+        // Filter out "Events" category services from the Book page
+        const bookableServices = (servicesList || []).filter(
+          (s) => !s.category || s.category.toLowerCase() !== 'events'
+        );
+        setServices(bookableServices);
         setServicesError(null);
       });
       return () => {
@@ -206,9 +241,32 @@ export default function Book() {
     () => selectedServices.reduce((sum, service) => sum + service.duration, 0),
     [selectedServices]
   );
-  const totalPrice = useMemo(
+  const subtotalPrice = useMemo(
     () => selectedServices.reduce((sum, service) => sum + service.price, 0),
     [selectedServices]
+  );
+
+  // Watch promotions
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = watchPromotions(db, setPromotions);
+    return unsubscribe;
+  }, [db]);
+
+  // Calculate applicable promotions (state only, useEffect moved below after gEmail/gPhone declared)
+  const [appliedPromotions, setAppliedPromotions] = useState<Promotion[]>([]);
+
+  // Calculate total discount
+  const totalDiscount = useMemo(() => {
+    return appliedPromotions.reduce((sum, promo) => {
+      const discount = calculateDiscount(promo, subtotalPrice, selectedServices);
+      return sum + discount;
+    }, 0);
+  }, [appliedPromotions, subtotalPrice, selectedServices]);
+
+  const totalPrice = useMemo(
+    () => Math.max(0, subtotalPrice - totalDiscount),
+    [subtotalPrice, totalDiscount]
   );
 
   // Helper function to truncate description for mobile
@@ -262,7 +320,8 @@ export default function Book() {
     return today;
   });
   
-  const dayDate = useMemo(() => new Date(dateStr + 'T00:00:00'), [dateStr]);
+  // Create date as UTC noon to ensure consistent date regardless of viewer's timezone
+  const dayDate = useMemo(() => new Date(dateStr + 'T12:00:00Z'), [dateStr]);
   
   // Track if we've initialized the date from business hours
   const [hasInitializedDate, setHasInitializedDate] = useState(() => {
@@ -282,14 +341,19 @@ export default function Book() {
   // Update to next valid date when business hours are loaded (only once, and only if not restored from storage)
   useEffect(() => {
     if (bh && selectedServices.length > 0 && !hasInitializedDate) {
-      const nextValidDate = getNextValidBookingDate(bh);
+      // Use getNextValidBookingDateAfter starting from today/of yesterday to respect special hours
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const nextValidDate = getNextValidBookingDateAfter(yesterday, bh, closures, specialHours);
       if (nextValidDate) {
         const nextValidDateStr = nextValidDate.toISOString().slice(0, 10);
         setDateStr(nextValidDateStr);
         setHasInitializedDate(true);
       }
     }
-  }, [bh, selectedServices, hasInitializedDate]); // Now we track initialization
+  }, [bh, selectedServices, hasInitializedDate, closures, specialHours]); // Now we track initialization
 
   // Use availability collection instead of appointments for privacy
   const [bookedSlots, setBookedSlots] = useState<AvailabilitySlot[]>([]);
@@ -623,7 +687,8 @@ export default function Book() {
           const age = Date.now() - ts;
           if (age >= (HOLD_TTL_MS - RESTORE_GRACE_MS)) {
             console.log('⏱️ Saved booking cart is stale; skipping hold restoration');
-            setError('Your previous hold expired while you were away. Please select the time again.');
+            setError('Your previous hold expired while you were away. Please select the time again. Your promotion code will still apply.');
+            // Keep promotions intact - don't clear them when hold expires
             setChosen(null);
             setIsRestoringHold(false);
             const updatedCart = { ...cart, chosenSlot: null, hold: null };
@@ -751,6 +816,29 @@ export default function Book() {
     }
   }, [user?.uid, user?.email, user?.phoneNumber, user?.displayName]); // More specific dependencies
 
+  // Get customer data for promotions (real-time listener)
+  useEffect(() => {
+    if (!db || !user) {
+      setCustomer(null);
+      return;
+    }
+    
+    const customerRef = doc(db, 'customers', user.uid);
+    const unsubscribe = onSnapshot(customerRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const customerData = { id: snapshot.id, ...snapshot.data() } as Customer;
+        setCustomer(customerData);
+      } else {
+        setCustomer(null);
+      }
+    }, (error) => {
+      console.error('Error watching customer:', error);
+      setCustomer(null);
+    });
+    
+    return unsubscribe;
+  }, [db, user]);
+
   // Check if customer profile is complete and show prompt if missing fields
   useEffect(() => {
     if (!customerId || !db || !user) return;
@@ -812,6 +900,59 @@ export default function Book() {
   const [gEmail, setGEmail] = useState(locationState?.prefillCustomer?.email || '');
   const [gPhone, setGPhone] = useState(locationState?.prefillCustomer?.phone || '');
   const [smsConsent, setSmsConsent] = useState(false);
+
+  // Check if there are new customer promotions available (for messaging)
+  const hasNewCustomerPromo = useMemo(() => {
+    return promotions.some(p => 
+      p.status === 'active' && 
+      p.customerSegment === 'new_customers' &&
+      p.applicationMethod === 'auto_apply'
+    );
+  }, [promotions]);
+
+  // Calculate applicable promotions (moved here after gEmail/gPhone declared)
+  useEffect(() => {
+    if (!db || selectedServices.length === 0 || promotions.length === 0) {
+      setAppliedPromotions([]);
+      // Clear saved promotions if no services selected
+      const saved = sessionStorage.getItem('bb_booking_cart');
+      if (saved) {
+        try {
+          const cart = JSON.parse(saved);
+          delete cart.appliedPromotionIds;
+          sessionStorage.setItem('bb_booking_cart', JSON.stringify(cart));
+        } catch (e) {
+          console.error('Failed to clear saved promotions:', e);
+        }
+      }
+      return;
+    }
+    
+    findApplicablePromotions(
+      db,
+      promotions,
+      customer,
+      selectedServices,
+      subtotalPrice,
+      enteredPromoCode || undefined,
+      gEmail || undefined,
+      gPhone || undefined
+    ).then((applicable) => {
+      setAppliedPromotions(applicable);
+      // Save applied promotion IDs to sessionStorage so they persist across hold expiration
+      const saved = sessionStorage.getItem('bb_booking_cart');
+      try {
+        const cart = saved ? JSON.parse(saved) : {};
+        cart.appliedPromotionIds = applicable.map(p => p.id);
+        sessionStorage.setItem('bb_booking_cart', JSON.stringify(cart));
+      } catch (e) {
+        console.error('Failed to save applied promotions:', e);
+      }
+    }).catch((err) => {
+      console.error('Error calculating promotions:', err);
+      setAppliedPromotions([]);
+    });
+  }, [db, promotions, customer, selectedServices, subtotalPrice, enteredPromoCode, gEmail, gPhone]);
   
   // Verification state for guest bookings
   const [emailVerified, setEmailVerified] = useState(false);
@@ -1295,6 +1436,13 @@ export default function Book() {
         price: totalPrice,
       });
       
+      // Calculate discount per promotion for tracking
+      const promotionDiscounts = appliedPromotions.map(promo => ({
+        promotionId: promo.id,
+        promoCode: promo.promoCode || undefined,
+        discountAmount: calculateDiscount(promo, subtotalPrice, selectedServices),
+      }));
+
       const out = await finalizeBookingFromHoldClient({
         holdId: hold.id,
         customerId,
@@ -1303,13 +1451,17 @@ export default function Book() {
           email: user?.email || gEmail || undefined,
           phone: gPhone || undefined,
         },
-        price: totalPrice,
+        price: totalPrice, // Already discounted price
         autoConfirm: true,
         serviceIds: selectedServiceIds, // Pass multi-service data
         servicePrices: selectedServices.reduce((acc, service) => {
           acc[service.id] = service.price;
           return acc;
         }, {} as Record<string, number>),
+        // Pass promotion data for tracking
+        appliedPromotions: promotionDiscounts,
+        originalSubtotal: subtotalPrice, // Original price before discount
+        totalDiscount: totalDiscount, // Total discount applied
       });
       
       console.log('Booking finalized successfully:', out);
@@ -1413,7 +1565,15 @@ export default function Book() {
     }
   }
 
-  const prettyTime = (iso: string) => format(new Date(iso), 'h:mm a');
+  const prettyTime = (iso: string) => {
+    const date = new Date(iso);
+    return date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true,
+      timeZone: bh?.timezone || 'America/Los_Angeles'
+    });
+  };
   const holdExpired = hold ? new Date(hold.expiresAt).getTime() <= Date.now() : false;
 
   // ---------- UI ----------
@@ -1633,14 +1793,128 @@ export default function Book() {
               ))}
             </div>
             
-            <div className="rounded-xl bg-white/90 p-4 border border-slate-200">
-              <div className="flex items-center justify-between mb-3">
+            <div className="rounded-xl bg-white/90 p-4 border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
                 <span className="text-slate-600 font-medium">Total Duration:</span>
                 <span className="font-bold text-slate-800 text-lg">{totalDuration} minutes</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-300 pt-3">
-                <span className="font-bold text-slate-800 text-lg">Total Price:</span>
-                <span className="text-3xl font-bold text-terracotta">${totalPrice.toFixed(2)}</span>
+              
+              {/* Promo Code Input */}
+              {selectedServices.length > 0 && (
+                <div className="border-t border-slate-200 pt-3">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Have a promo code?
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={enteredPromoCode}
+                      onChange={(e) => {
+                        setEnteredPromoCode(e.target.value.toUpperCase());
+                        setPromoCodeError(null);
+                      }}
+                      placeholder="Enter code"
+                      className="flex-1 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent uppercase"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!enteredPromoCode.trim()) return;
+                        // Check if code exists
+                        const codePromo = promotions.find(
+                          p => p.promoCode?.toUpperCase() === enteredPromoCode.toUpperCase()
+                        );
+                        if (!codePromo) {
+                          setPromoCodeError('Invalid promo code');
+                          return;
+                        }
+                        // Eligibility check happens automatically via useMemo
+                        setPromoCodeError(null);
+                      }}
+                      className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors font-medium"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  {promoCodeError && (
+                    <p className="text-red-600 text-sm mt-1">{promoCodeError}</p>
+                  )}
+                  {!user && hasNewCustomerPromo && appliedPromotions.length === 0 && selectedServices.length > 0 && (
+                    <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-blue-900">
+                            🎉 First-time customers save! Create an account to unlock your discount.
+                          </p>
+                          <button
+                            onClick={() => {
+                              // Save current booking state
+                              const bookingState = {
+                                selectedServiceIds,
+                                dateStr,
+                                gName,
+                                gEmail,
+                                gPhone,
+                              };
+                              sessionStorage.setItem('bb_booking_state', JSON.stringify(bookingState));
+                              // Redirect to login/signup
+                              nav('/login?returnTo=/book');
+                            }}
+                            className="mt-2 text-xs text-blue-700 hover:text-blue-900 underline font-medium"
+                          >
+                            Sign up or log in →
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {appliedPromotions.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {appliedPromotions.map(promo => (
+                        <div key={promo.id} className="flex items-center justify-between text-sm text-green-700 bg-green-50 px-2 py-1 rounded">
+                          <span>
+                            {promo.name}
+                            {promo.promoCode && <span className="ml-2 font-mono text-xs">({promo.promoCode})</span>}
+                          </span>
+                          <span className="font-semibold">
+                            -${calculateDiscount(promo, subtotalPrice, selectedServices).toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Price Breakdown */}
+              <div className="space-y-2 border-t border-slate-300 pt-3">
+                <div className="flex items-center justify-between text-slate-600">
+                  <span>Subtotal:</span>
+                  <span>${subtotalPrice.toFixed(2)}</span>
+                </div>
+                {totalDiscount > 0 && (
+                  <div className="flex items-center justify-between text-green-700">
+                    <span>Discount:</span>
+                    <span className="font-semibold">-${totalDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between border-t border-slate-300 pt-2">
+                  <span className="font-bold text-slate-800 text-lg">Total Price:</span>
+                  <span className="text-3xl font-bold text-terracotta">
+                    ${totalPrice.toFixed(2)}
+                  </span>
+                </div>
+                {totalDiscount > 0 && (
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>You saved ${totalDiscount.toFixed(2)}!</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1891,7 +2165,7 @@ export default function Book() {
                      <>
                        <span className="text-red-600">Sorry, we are closed on this date.</span>
                        {(() => {
-                         const nextAvailable = getNextValidBookingDateAfter(dayDate, bh);
+                         const nextAvailable = getNextValidBookingDateAfter(dayDate, bh, closures, specialHours);
                          if (nextAvailable) {
                            const nextDateStr = formatNextAvailableDate(nextAvailable);
                            const nextDateISO = nextAvailable.toISOString().slice(0, 10);
@@ -1914,7 +2188,7 @@ export default function Book() {
                      <>
                        <span className="text-slate-600">No available time slots for this date.</span>
                        {(() => {
-                         const nextAvailable = getNextValidBookingDateAfter(dayDate, bh);
+                         const nextAvailable = getNextValidBookingDateAfter(dayDate, bh, closures, specialHours);
                          if (nextAvailable) {
                            const nextDateStr = formatNextAvailableDate(nextAvailable);
                            const nextDateISO = nextAvailable.toISOString().slice(0, 10);
@@ -1935,7 +2209,7 @@ export default function Book() {
                      </>
                    )}
                 </p>
-                {!isValidBookingDate(dayDate, bh) && (
+                {!isValidBookingDateWithSpecialHours(dayDate, bh, closures, specialHours) && (
                   <p className="text-xs mt-2 text-slate-400">
                     Please select a date when we are open for business
                   </p>

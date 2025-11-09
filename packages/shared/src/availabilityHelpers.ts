@@ -73,10 +73,19 @@ export function watchAvailabilityByDay(
   day: Date,
   cb: (slots: AvailabilitySlot[]) => void
 ): () => void {
-  const start = new Date(day);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(day);
-  end.setHours(23, 59, 59, 999);
+  // Use UTC methods to create the query range
+  // IMPORTANT: Query wider range to catch appointments that span UTC days
+  // e.g., 4 PM PST on Nov 9 = midnight UTC on Nov 10
+  const year = day.getUTCFullYear();
+  const month = day.getUTCMonth();
+  const dayOfMonth = day.getUTCDate();
+  
+  // Query from 12 hours before to 12 hours after to catch all possible timezones
+  const start = new Date(Date.UTC(year, month, dayOfMonth, 0, 0, 0, 0));
+  start.setHours(start.getHours() - 12);
+  
+  const end = new Date(Date.UTC(year, month, dayOfMonth, 23, 59, 59, 999));
+  end.setHours(end.getHours() + 12);
 
   console.log('🔍 Availability query range:', {
     day: day.toISOString(),
@@ -98,16 +107,34 @@ export function watchAvailabilityByDay(
     qy,
     (snap) => {
       const slots: AvailabilitySlot[] = [];
+      const targetDateStr = day.toISOString().slice(0, 10); // e.g., "2025-11-09"
+      
       snap.forEach((d) => {
         const slot = { id: d.id, ...d.data() } as AvailabilitySlot;
+        
         // Filter for 'booked' status in JavaScript to avoid index issues
-        if (slot.status === 'booked') {
+        if (slot.status !== 'booked') return;
+        
+        // Also filter by Pacific timezone date - appointment might be stored on different UTC day
+        const aptDate = new Date(slot.start);
+        const aptDatePST = aptDate.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          timeZone: 'America/Los_Angeles'
+        });
+        // Convert from "MM/DD/YYYY" to "YYYY-MM-DD"
+        const [mo, da, yr] = aptDatePST.split('/');
+        const aptDateStr = `${yr}-${mo}-${da}`;
+        
+        if (aptDateStr === targetDateStr) {
           slots.push(slot);
         }
       });
+      
       // Sort by start time since we removed orderBy from query
       slots.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-      console.log(`Loaded ${slots.length} availability slots for ${day.toISOString().slice(0, 10)}`);
+      console.log(`Loaded ${slots.length} availability slots for ${targetDateStr} (filtered by PST date)`);
       cb(slots);
     },
     (error) => {
