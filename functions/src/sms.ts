@@ -4,6 +4,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
+import { fromZonedTime } from 'date-fns-tz';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -86,7 +87,11 @@ const SMS_TEMPLATES = {
   },
   
   bookingConfirm: (date: string, time: string) => {
-    return `Perfect! I'm booking ${time} on ${date} for you. 📅\n\nWhat's your name? Reply with your full name (e.g., "Jane Smith"). - Bueno Brows` + A2P_FOOTER;
+    return `Perfect! I'm booking ${time} on ${date} for you. 📅\n\nWhat's your email address? (We'll send confirmation there!)\n\nReply with your email (e.g., "jane@example.com"). - Bueno Brows` + A2P_FOOTER;
+  },
+  
+  bookingConfirmName: () => {
+    return `Great! 📧\n\nNow, what's your name? Reply with your full name (e.g., "Jane Smith"). - Bueno Brows` + A2P_FOOTER;
   },
   
   bookingComplete: (name: string, date: string, time: string) => {
@@ -223,6 +228,51 @@ function parseSpecificDate(text: string): Date | null {
       targetDate.setFullYear(targetDate.getFullYear() + 1);
     }
     return targetDate;
+  }
+  
+  return null;
+}
+
+/**
+ * Parse time string into 24-hour format
+ * Handles: "7pm", "7 pm", "7:00", "7:00 PM", "19:00", etc.
+ */
+function parseTimeString(timeStr: string): { hours: number; minutes: number } | null {
+  const text = timeStr.trim().toUpperCase();
+  
+  // Try matching "7PM", "7 PM", "07PM", etc.
+  const simpleMatch = text.match(/^(\d{1,2})\s*(AM|PM)$/);
+  if (simpleMatch) {
+    let hours = parseInt(simpleMatch[1]);
+    const period = simpleMatch[2];
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    return { hours, minutes: 0 };
+  }
+  
+  // Try matching "7:00 PM", "7:30PM", "07:15 AM", etc.
+  const colonMatch = text.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (colonMatch) {
+    let hours = parseInt(colonMatch[1]);
+    const minutes = parseInt(colonMatch[2]);
+    const period = colonMatch[3];
+    
+    if (period) {
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+    }
+    
+    return { hours, minutes };
+  }
+  
+  // Try 24-hour format "19:00", "7", etc.
+  const twentyFourMatch = text.match(/^(\d{1,2})(:(\d{2}))?$/);
+  if (twentyFourMatch) {
+    const hours = parseInt(twentyFourMatch[1]);
+    const minutes = twentyFourMatch[3] ? parseInt(twentyFourMatch[3]) : 0;
+    if (hours >= 0 && hours <= 23) {
+      return { hours, minutes };
+    }
   }
   
   return null;
@@ -434,6 +484,16 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
       return { type: 'time_selection', data: { time: message.trim() } };
     }
     
+    // Check if they're providing their email (in email collection state)
+    if (conversationState.awaitingEmail) {
+      // Simple email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const email = message.trim().toLowerCase();
+      if (emailRegex.test(email)) {
+        return { type: 'provide_email', data: { email } };
+      }
+    }
+    
     // Check if they're providing their name (in name collection state)
     if (conversationState.awaitingName) {
       // Simple name validation (at least 2 words or 3+ chars)
@@ -534,9 +594,9 @@ async function getAvailableSlots(minSlots: number = 5, maxDays: number = 30): Pr
         return status === 'confirmed' || status === 'pending';
       })
       .map(doc => ({
-        start: doc.data().start,
-        duration: doc.data().duration || 60
-      }));
+      start: doc.data().start,
+      duration: doc.data().duration || 60
+    }));
     
     // Generate available slots (stop when we have enough)
     const availableSlots: string[] = [];
@@ -551,10 +611,10 @@ async function getAvailableSlots(minSlots: number = 5, maxDays: number = 30): Pr
       if (dayTimes.length === 0) continue; // Closed or no availability
       
       // Add each available time to our results
-      const dateStr = checkDate.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
-      });
+          const dateStr = checkDate.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric' 
+          });
       
       for (const timeStr of dayTimes) {
         availableSlots.push(`${dateStr} at ${timeStr}`);
@@ -738,8 +798,8 @@ async function getAvailableSlotsForDate(targetDate: Date): Promise<string[]> {
         const slotEndMs = slotStartMs + (60 * 60 * 1000); // 1 hour duration
         
         const slotDisplayTime = new Date(slotStartMs).toLocaleTimeString('en-US', { 
-          hour: 'numeric', 
-          minute: '2-digit',
+            hour: 'numeric', 
+            minute: '2-digit',
           hour12: true,
           timeZone: businessTimezone
         });
@@ -1198,14 +1258,19 @@ export const smsWebhook = onRequest(
             const service = serviceResult.match;
             console.log('✅ Found service:', service.name, `(${service.duration} min)`);
             
-            // Parse the time and check if service duration fits
-            const appointmentDate = new Date(conversationState.date);
-            const [time, period] = conversationState.time.split(' ');
-            const [hours, minutes] = time.split(':').map(Number);
-            let hour24 = hours;
-            if (period?.toLowerCase() === 'pm' && hours !== 12) hour24 += 12;
-            if (period?.toLowerCase() === 'am' && hours === 12) hour24 = 0;
-            appointmentDate.setHours(hour24, minutes || 0, 0, 0);
+            // Parse the time and check if service duration fits (in Pacific timezone)
+            const businessTimezone = 'America/Los_Angeles';
+            const dateISO = conversationState.date.split('T')[0];
+            const parsedTime = parseTimeString(conversationState.time);
+            
+            if (!parsedTime) {
+              responseMessage = `Sorry, I couldn't understand the time "${conversationState.time}". Please start over or call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+            const appointmentDate = fromZonedTime(localTimeStr, businessTimezone);
             
             const availabilityCheck = await checkSlotAvailableForDuration(appointmentDate, service.duration);
             
@@ -1219,10 +1284,10 @@ export const smsWebhook = onRequest(
               break;
             }
             
-            // Service fits! Ask for name
+            // Service fits! Ask for email first
             responseMessage = SMS_TEMPLATES.bookingConfirm(conversationState.dateStr, conversationState.time);
             await saveConversationState(from, {
-              type: 'awaiting_name',
+              type: 'awaiting_email',
               date: conversationState.date,
               dateStr: conversationState.dateStr,
               time: conversationState.time,
@@ -1230,6 +1295,30 @@ export const smsWebhook = onRequest(
               serviceName: service.name,
               serviceDuration: service.duration,
               servicePrice: service.price,
+              awaitingEmail: true
+            });
+          } else {
+            responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+        
+        case 'provide_email':
+          // User provided email - now ask for name
+          if (conversationState && conversationState.awaitingEmail) {
+            const customerEmail = parsed.data.email;
+            
+            responseMessage = SMS_TEMPLATES.bookingConfirmName();
+            await saveConversationState(from, {
+              type: 'awaiting_name',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: conversationState.time,
+              serviceId: conversationState.serviceId,
+              serviceName: conversationState.serviceName,
+              serviceDuration: conversationState.serviceDuration,
+              servicePrice: conversationState.servicePrice,
+              customerEmail, // Save email for later
               awaitingName: true
             });
           } else {
@@ -1243,14 +1332,21 @@ export const smsWebhook = onRequest(
           if (conversationState && conversationState.awaitingName) {
             const customerName = parsed.data.name;
             
-            // Parse appointment date/time
-            const appointmentDate = new Date(conversationState.date);
-            const [time, period] = conversationState.time.split(' ');
-            const [hours, minutes] = time.split(':').map(Number);
-            let hour24 = hours;
-            if (period?.toLowerCase() === 'pm' && hours !== 12) hour24 += 12;
-            if (period?.toLowerCase() === 'am' && hours === 12) hour24 = 0;
-            appointmentDate.setHours(hour24, minutes || 0, 0, 0);
+            // Parse appointment date/time in BUSINESS TIMEZONE (Pacific)
+            const businessTimezone = 'America/Los_Angeles';
+            const dateISO = conversationState.date.split('T')[0]; // Extract YYYY-MM-DD
+            
+            // Parse the time string using our helper
+            const parsedTime = parseTimeString(conversationState.time);
+            if (!parsedTime) {
+              responseMessage = `Sorry, I couldn't understand the time "${conversationState.time}". Please try again or call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            // Create appointment in Pacific timezone
+            const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+            const appointmentDate = fromZonedTime(localTimeStr, businessTimezone);
             
             // Double-check availability (race condition protection)
             const finalCheck = await isSlotAvailableForDuration(appointmentDate, conversationState.serviceDuration);
@@ -1262,12 +1358,20 @@ export const smsWebhook = onRequest(
             }
             
             try {
-              // Update customer name if needed
-              if (customer.docs[0]?.data()?.name === 'SMS Customer') {
-                await db.collection('customers').doc(customerId).update({ 
-                  name: customerName,
-                  updatedAt: new Date().toISOString()
-                });
+              // Update customer name and email if needed
+              const customerData = customer.docs[0]?.data();
+              const updateData: any = { updatedAt: new Date().toISOString() };
+              
+              if (customerData?.name === 'SMS Customer') {
+                updateData.name = customerName;
+              }
+              
+              if (conversationState.customerEmail && !customerData?.email) {
+                updateData.email = conversationState.customerEmail;
+              }
+              
+              if (Object.keys(updateData).length > 1) { // More than just updatedAt
+                await db.collection('customers').doc(customerId).update(updateData);
               }
               
               // Create the appointment directly using admin SDK with transaction
@@ -1366,7 +1470,7 @@ export const smsWebhook = onRequest(
         case 'booking_request':
           // User sent "BOOK [date] [time]" - process the booking
           if (parsed.data.date && parsed.data.time) {
-            // Parse the date
+            // Parse the date (create at UTC noon to avoid timezone issues)
             let bookingDate: Date | null = null;
             const dateStr = parsed.data.date.replace(/[\/\-]/g, '/');
             const dateParts = dateStr.split('/');
@@ -1375,12 +1479,14 @@ export const smsWebhook = onRequest(
               // Format: MM/DD (assume current year or next year if past)
               const month = parseInt(dateParts[0]) - 1;
               const day = parseInt(dateParts[1]);
-              bookingDate = new Date();
-              bookingDate.setMonth(month);
-              bookingDate.setDate(day);
+              const currentYear = new Date().getFullYear();
+              
+              // Create date at UTC noon for consistent date handling
+              bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
+              
               // If date is in the past, assume next year
               if (bookingDate < new Date()) {
-                bookingDate.setFullYear(bookingDate.getFullYear() + 1);
+                bookingDate = new Date(Date.UTC(currentYear + 1, month, day, 12, 0, 0));
               }
             }
             
