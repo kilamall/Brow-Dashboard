@@ -26,10 +26,10 @@ export const rateLimiters = {
     blockDuration: 60, // block for 60 seconds if exceeded
   }),
 
-  // SMS sending: 5 per 5 minutes per phone number
+  // SMS sending: 15 per 10 minutes per phone number (allows conversational flow with retries)
   sendSMS: new RateLimiterMemory({
-    points: 5,
-    duration: 300, // per 5 minutes
+    points: 15,
+    duration: 600, // per 10 minutes
     blockDuration: 600, // block for 10 minutes if exceeded
   }),
 

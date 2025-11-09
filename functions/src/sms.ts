@@ -231,14 +231,27 @@ function parseSpecificDate(text: string): Date | null {
 // Get or create conversation state
 async function getConversationState(phoneNumber: string): Promise<any> {
   const stateDoc = await db.collection('sms_conversation_state').doc(phoneNumber).get();
-  return stateDoc.exists ? stateDoc.data() : null;
+  if (!stateDoc.exists) return null;
+  
+  const state = stateDoc.data();
+  if (!state) return null;
+  
+  // Check if conversation has expired (30 minutes of inactivity)
+  if (state.expiresAt && new Date(state.expiresAt) < new Date()) {
+    console.log('🕐 Conversation expired, clearing state');
+    await clearConversationState(phoneNumber);
+    return null;
+  }
+  
+  return state;
 }
 
-// Save conversation state
+// Save conversation state with 30-minute expiration
 async function saveConversationState(phoneNumber: string, state: any): Promise<void> {
   await db.collection('sms_conversation_state').doc(phoneNumber).set({
     ...state,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 minutes from now
   });
 }
 
