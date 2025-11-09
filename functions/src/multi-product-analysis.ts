@@ -19,7 +19,7 @@ const MAX_ANALYSES_PER_DAY = 5; // Maximum analyses per user per day
 const MAX_ANALYSES_PER_HOUR = 2; // Maximum analyses per user per hour
 
 // Gemini AI Configuration
-const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent';
+const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // Cache configuration
 const CACHE_COLLECTION = 'ai_analysis_cache';

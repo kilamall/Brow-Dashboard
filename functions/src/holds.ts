@@ -138,9 +138,23 @@ export const finalizeBookingFromHold = onCall(
       // SECURITY: Rate limit booking finalization (5 per minute per IP/user)
       await consumeRateLimit(rateLimiters.finalizeBooking, getUserIdentifier(req));
 
-      const { holdId, customer, customerId, price, autoConfirm = true, serviceIds, servicePrices } = req.data || {};
+      const { 
+        holdId, 
+        customer, 
+        customerId, 
+        price, 
+        autoConfirm = true, 
+        serviceIds, 
+        servicePrices,
+        appliedPromotions,
+        originalSubtotal,
+        totalDiscount
+      } = req.data || {};
       // Your Appointment schema requires customerId; enforce it here
       assert(holdId && customer && customerId, 'Missing holdId/customer/customerId');
+
+      // Store finalCustomerId for use outside transaction
+      let finalCustomerIdForPromos: string | null = null;
 
       console.log('📋 Finalizing booking for hold:', holdId);
 
@@ -184,6 +198,7 @@ export const finalizeBookingFromHold = onCall(
 
       // ✅ FIXED: Use userId from hold if available, otherwise use client-provided customerId
       const finalCustomerId = hold.userId || customerId as string;
+      finalCustomerIdForPromos = finalCustomerId; // Store for use outside transaction
       
       console.log('🔍 Finalizing booking with customer ID:', {
         holdUserId: hold.userId,
@@ -220,6 +235,10 @@ export const finalizeBookingFromHold = onCall(
         finalBookedPrice = Object.values(servicePrices).reduce((sum, price) => (sum as number) + (price as number), 0);
       }
       
+      // Use discounted price if promotions were applied
+      // The client sends the already-discounted price, so use that directly
+      const finalPrice = typeof price === 'number' ? price : finalBookedPrice;
+      
       const appt = {
         serviceId: hold.serviceId, // Keep first service for backward compatibility
         serviceIds: finalServiceIds, // Multi-service support
@@ -228,11 +247,15 @@ export const finalizeBookingFromHold = onCall(
         start: hold.start,
         duration: finalDuration,
         status: 'pending', // Always create as pending, admin must confirm
-        bookedPrice: finalBookedPrice,
+        bookedPrice: finalPrice, // Use discounted price if promotions applied
         servicePrices: finalServicePrices, // Individual service prices
-        totalPrice: finalBookedPrice, // Initially same as bookedPrice, can be updated with tips
+        totalPrice: finalPrice, // Initially same as bookedPrice, can be updated with tips
         tip: 0, // Default tip amount
         isPriceEdited: false, // Not edited initially
+        // Promotion tracking
+        appliedPromotions: appliedPromotions || undefined,
+        originalSubtotal: originalSubtotal || finalBookedPrice, // Original price before discount
+        totalDiscount: totalDiscount || 0, // Total discount applied
         // Small snapshot for convenience (optional)
         customerName: customer.name || null,
         customerEmail: customer.email || null,
@@ -254,10 +277,64 @@ export const finalizeBookingFromHold = onCall(
       tx.set(availRef, availSlot); // Add availability slot
       tx.update(holdRef, { status: 'finalized', expiresAt: nowISO() });
 
-      return { appointmentId: apptRef.id };
+      return { appointmentId: apptRef.id, appliedPromotions };
     });
 
     console.log('✅ Booking finalized successfully (PENDING admin confirmation):', result.appointmentId);
+    
+    // Record promotion usage after appointment is created (outside transaction for performance)
+    if (appliedPromotions && Array.isArray(appliedPromotions) && appliedPromotions.length > 0 && finalCustomerIdForPromos) {
+      try {
+        const customerDoc = await db.collection('customers').doc(finalCustomerIdForPromos).get();
+        const customerData = customerDoc.exists ? customerDoc.data() : null;
+        const currentYear = new Date().getFullYear();
+
+        for (const promoData of appliedPromotions) {
+          const { promotionId, promoCode, discountAmount } = promoData;
+          if (!promotionId) continue;
+
+          // Record usage
+          const usageRef = db.collection('promotionUsage').doc();
+          await usageRef.set({
+            promotionId,
+            customerId: finalCustomerIdForPromos,
+            appointmentId: result.appointmentId,
+            appliedAt: nowISO(),
+            discountAmount: discountAmount || 0,
+            promoCodeUsed: promoCode || null,
+          });
+
+          // Update promotion statistics (use transaction for atomic updates)
+          const promoRef = db.collection('promotions').doc(promotionId);
+          const promoDoc = await promoRef.get();
+          if (promoDoc.exists) {
+            const promoData = promoDoc.data();
+            await promoRef.update({
+              usedCount: (promoData?.usedCount || 0) + 1,
+              totalDiscountGiven: (promoData?.totalDiscountGiven || 0) + (discountAmount || 0),
+              [`customerUsageCount.${finalCustomerIdForPromos}`]: ((promoData?.customerUsageCount?.[finalCustomerIdForPromos] || 0) + 1),
+            });
+
+            // Handle birthday promotions - record yearly usage
+            if (promoData?.customerSegment === 'birthday' && customerData?.birthday) {
+              const birthdayUsageRef = db.collection('birthdayPromoUsage').doc();
+              await birthdayUsageRef.set({
+                customerId: finalCustomerIdForPromos,
+                promotionId,
+                birthdayYear: currentYear,
+                usedAt: nowISO(),
+                appointmentId: result.appointmentId,
+                discountAmount: discountAmount || 0,
+              });
+            }
+          }
+        }
+        console.log('✅ Promotion usage recorded for', appliedPromotions.length, 'promotions');
+      } catch (promoError) {
+        // Log but don't fail the booking if promotion recording fails
+        console.error('⚠️ Error recording promotion usage (booking still succeeded):', promoError);
+      }
+    }
     
     // NOTE: Confirmation SMS/email will be sent when admin approves the appointment
     // This prevents customers from receiving confirmations for appointments that may be rejected
@@ -312,5 +389,58 @@ export const extendHold = onCall(
     });
 
     return { ok: true };
+  }
+);
+
+// ------------- clearAllHolds -------------
+export const clearAllHolds = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    // SECURITY: Only allow admin users
+    if (!req.auth || !req.auth.token.role || req.auth.token.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Only admin users can clear all holds');
+    }
+
+    try {
+      // Get all active holds
+      const holdsSnapshot = await db.collection('holds')
+        .where('status', '==', 'active')
+        .get();
+
+      if (holdsSnapshot.empty) {
+        return {
+          message: 'No active holds to clear',
+          cleared: 0
+        };
+      }
+
+      // Delete all active holds in batches
+      let cleared = 0;
+      const docs = holdsSnapshot.docs;
+      
+      for (let i = 0; i < docs.length; i += 500) {
+        const batchDocs = docs.slice(i, i + 500);
+        const batch = db.batch();
+        
+        batchDocs.forEach(doc => {
+          batch.update(doc.ref, { 
+            status: 'released', 
+            expiresAt: nowISO(),
+            clearedAt: nowISO()
+          });
+        });
+        
+        await batch.commit();
+        cleared += batchDocs.length;
+      }
+
+      return {
+        message: `Successfully cleared ${cleared} active hold(s)`,
+        cleared
+      };
+    } catch (error: any) {
+      console.error('Error clearing all holds:', error);
+      throw new HttpsError('internal', `Failed to clear holds: ${error.message}`);
+    }
   }
 );

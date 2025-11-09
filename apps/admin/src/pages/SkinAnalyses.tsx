@@ -9,6 +9,9 @@ export default function SkinAnalysesPage() {
   const [selectedAnalysis, setSelectedAnalysis] = useState<SkinAnalysis | null>(null);
   const [filter, setFilter] = useState<'all' | 'skin' | 'products'>('all');
   const [activeTab, setActiveTab] = useState<'analyses' | 'requests'>('analyses');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [aiMetrics, setAiMetrics] = useState({
     completeAnalysisPairs: 0,
     crossReferenceRate: 0,
@@ -110,10 +113,127 @@ export default function SkinAnalysesPage() {
       const db = getFirestore();
       await deleteDoc(doc(db, 'skinAnalyses', id));
       setSelectedAnalysis(null);
+      // Remove from selected if it was selected
+      setSelectedIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
     } catch (error) {
       console.error('Error deleting analysis:', error);
       alert('Failed to delete analysis');
     }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) {
+      alert('Please select at least one analysis to delete');
+      return;
+    }
+
+    const count = selectedIds.size;
+    if (!confirm(`Are you sure you want to delete ${count} selected analysis/analyses?`)) return;
+
+    setBulkDeleting(true);
+    try {
+      const db = getFirestore();
+      const deletePromises = Array.from(selectedIds).map(id => 
+        deleteDoc(doc(db, 'skinAnalyses', id))
+      );
+      
+      await Promise.all(deletePromises);
+      setSelectedIds(new Set());
+      alert(`Successfully deleted ${count} analysis/analyses`);
+    } catch (error) {
+      console.error('Error bulk deleting analyses:', error);
+      alert('Failed to delete some analyses. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const handleBulkDeleteRequests = async () => {
+    if (selectedRequestIds.size === 0) {
+      alert('Please select at least one request to delete');
+      return;
+    }
+
+    const count = selectedRequestIds.size;
+    if (!confirm(`Are you sure you want to delete ${count} selected request(s)?`)) return;
+
+    setBulkDeleting(true);
+    try {
+      const db = getFirestore();
+      const deletePromises = Array.from(selectedRequestIds).map(id => 
+        deleteDoc(doc(db, 'skinAnalysisRequests', id))
+      );
+      
+      await Promise.all(deletePromises);
+      setSelectedRequestIds(new Set());
+      alert(`Successfully deleted ${count} request(s)`);
+    } catch (error) {
+      console.error('Error bulk deleting requests:', error);
+      alert('Failed to delete some requests. Please try again.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredAnalyses.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredAnalyses.map(a => a.id)));
+    }
+  };
+
+  const toggleSelectAllRequests = () => {
+    if (selectedRequestIds.size === requests.length) {
+      setSelectedRequestIds(new Set());
+    } else {
+      setSelectedRequestIds(new Set(requests.map(r => r.id)));
+    }
+  };
+
+  const selectAllErrors = () => {
+    const errorIds = filteredAnalyses
+      .filter(a => a.status === 'error')
+      .map(a => a.id);
+    setSelectedIds(new Set(errorIds));
+  };
+
+  const selectAllMissingAnalyses = () => {
+    const missingIds = filteredAnalyses
+      .filter(a => {
+        const linkStatus = getLinkedAnalysisStatus(a);
+        return linkStatus.status === 'missing-products' || linkStatus.status === 'missing-skin';
+      })
+      .map(a => a.id);
+    setSelectedIds(new Set(missingIds));
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectRequest = (id: string) => {
+    setSelectedRequestIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
   };
 
   const handleApproveRequest = async (request: SkinAnalysisRequest) => {
@@ -415,6 +535,65 @@ export default function SkinAnalysesPage() {
             </div>
           </div>
 
+          {/* Bulk Actions */}
+          {filteredAnalyses.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleSelectAll}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    selectedIds.size === filteredAnalyses.length
+                      ? 'bg-terracotta text-white'
+                      : 'bg-white border border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {selectedIds.size === filteredAnalyses.length ? '✓ Deselect All' : 'Select All'}
+                </button>
+                <button
+                  onClick={selectAllErrors}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={analyses.filter(a => a.status === 'error').length === 0}
+                >
+                  Select All Errors ({analyses.filter(a => a.status === 'error').length})
+                </button>
+                <button
+                  onClick={selectAllMissingAnalyses}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={filteredAnalyses.filter(a => {
+                    const linkStatus = getLinkedAnalysisStatus(a);
+                    return linkStatus.status === 'missing-products' || linkStatus.status === 'missing-skin';
+                  }).length === 0}
+                >
+                  Select All Missing ({filteredAnalyses.filter(a => {
+                    const linkStatus = getLinkedAnalysisStatus(a);
+                    return linkStatus.status === 'missing-products' || linkStatus.status === 'missing-skin';
+                  }).length})
+                </button>
+              </div>
+              
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-3 ml-auto">
+                  <span className="text-sm font-medium text-slate-600">
+                    {selectedIds.size} selected
+                  </span>
+                  <button
+                    onClick={() => setSelectedIds(new Set())}
+                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+                  >
+                    Clear Selection
+                  </button>
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {bulkDeleting ? 'Deleting...' : `Delete Selected (${selectedIds.size})`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Analysis List */}
           <div className="bg-white rounded-lg shadow overflow-hidden">
         {filteredAnalyses.length === 0 ? (
@@ -426,6 +605,14 @@ export default function SkinAnalysesPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-6 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === filteredAnalyses.length && filteredAnalyses.length > 0}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 text-terracotta border-gray-300 rounded focus:ring-terracotta"
+                    />
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Date
                   </th>
@@ -448,7 +635,18 @@ export default function SkinAnalysesPage() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredAnalyses.map((analysis) => (
-                  <tr key={analysis.id} className="hover:bg-gray-50">
+                  <tr 
+                    key={analysis.id} 
+                    className={`hover:bg-gray-50 ${selectedIds.has(analysis.id) ? 'bg-terracotta/5' : ''}`}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(analysis.id)}
+                        onChange={() => toggleSelect(analysis.id)}
+                        className="w-4 h-4 text-terracotta border-gray-300 rounded focus:ring-terracotta"
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {formatDate(analysis.createdAt)}
                     </td>
@@ -543,6 +741,65 @@ export default function SkinAnalysesPage() {
             </div>
           </div>
 
+          {/* Bulk Actions for Requests */}
+          {requests.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleSelectAllRequests}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    selectedRequestIds.size === requests.length
+                      ? 'bg-terracotta text-white'
+                      : 'bg-white border border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {selectedRequestIds.size === requests.length ? '✓ Deselect All' : 'Select All'}
+                </button>
+                <button
+                  onClick={() => {
+                    const approvedIds = requests.filter(r => r.status === 'approved').map(r => r.id);
+                    setSelectedRequestIds(new Set(approvedIds));
+                  }}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={requests.filter(r => r.status === 'approved').length === 0}
+                >
+                  Select All Approved ({requests.filter(r => r.status === 'approved').length})
+                </button>
+                <button
+                  onClick={() => {
+                    const rejectedIds = requests.filter(r => r.status === 'rejected').map(r => r.id);
+                    setSelectedRequestIds(new Set(rejectedIds));
+                  }}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={requests.filter(r => r.status === 'rejected').length === 0}
+                >
+                  Select All Rejected ({requests.filter(r => r.status === 'rejected').length})
+                </button>
+              </div>
+              
+              {selectedRequestIds.size > 0 && (
+                <div className="flex items-center gap-3 ml-auto">
+                  <span className="text-sm font-medium text-slate-600">
+                    {selectedRequestIds.size} selected
+                  </span>
+                  <button
+                    onClick={() => setSelectedRequestIds(new Set())}
+                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+                  >
+                    Clear Selection
+                  </button>
+                  <button
+                    onClick={handleBulkDeleteRequests}
+                    disabled={bulkDeleting}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {bulkDeleting ? 'Deleting...' : `Delete Selected (${selectedRequestIds.size})`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Requests List */}
           <div className="bg-white rounded-lg shadow overflow-hidden">
             {requests.length === 0 ? (
@@ -554,6 +811,14 @@ export default function SkinAnalysesPage() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-6 py-3 text-left">
+                        <input
+                          type="checkbox"
+                          checked={selectedRequestIds.size === requests.length && requests.length > 0}
+                          onChange={toggleSelectAllRequests}
+                          className="w-4 h-4 text-terracotta border-gray-300 rounded focus:ring-terracotta"
+                        />
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                         Date Requested
                       </th>
@@ -573,7 +838,18 @@ export default function SkinAnalysesPage() {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {requests.map((request) => (
-                      <tr key={request.id} className="hover:bg-gray-50">
+                      <tr 
+                        key={request.id} 
+                        className={`hover:bg-gray-50 ${selectedRequestIds.has(request.id) ? 'bg-terracotta/5' : ''}`}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedRequestIds.has(request.id)}
+                            onChange={() => toggleSelectRequest(request.id)}
+                            className="w-4 h-4 text-terracotta border-gray-300 rounded focus:ring-terracotta"
+                          />
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           {formatDate(request.requestedAt)}
                         </td>

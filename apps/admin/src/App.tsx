@@ -19,6 +19,7 @@ import CostMonitoring from './pages/CostMonitoring';
 import MonetizedProducts from './pages/MonetizedProducts';
 import MonetizationAnalytics from './pages/MonetizationAnalytics';
 import Settings from './pages/Settings';
+import Promotions from './pages/Promotions';
 
 export default function App() {
   return (
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="/cost-monitoring" element={<CostMonitoring />} />
               <Route path="/monetized-products" element={<MonetizedProducts />} />
               <Route path="/monetization-analytics" element={<MonetizationAnalytics />} />
+              <Route path="/promotions" element={<Promotions />} />
               <Route path="/settings" element={<Settings />} />
 
               {/* Catch-all */}

@@ -35,8 +35,8 @@ const BUSINESS_CONTEXT = {
     saturday: "9:00 AM - 6:00 PM",
     sunday: "10:00 AM - 4:00 PM"
   },
-  location: "123 Main Street, Downtown",
-  phone: "(650) 613-8455",
+  location: "315 9th Ave, San Mateo, CA 94401",
+  phone: "(650) 766-3918",
   policies: {
     cancellation: "24 hours notice required for cancellations",
     payment: "Cash, credit cards, and Venmo accepted",

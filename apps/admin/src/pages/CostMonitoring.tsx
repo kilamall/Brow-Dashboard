@@ -3,9 +3,31 @@ import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { CostMetrics, UsageStats, CostMonitoringSettings } from '@buenobrows/shared/types';
 
+interface EfficiencyMetrics {
+  totalAppointments: number;
+  completedAppointments: number;
+  totalRevenue: number;
+  costPerAppointment: number;
+  costPerCompletedAppointment: number;
+  costPerCustomer: number;
+  revenueToCostratio: number;
+  efficiencyScore: number;
+  activeCustomers: number;
+}
+
+interface Recommendation {
+  category: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  description: string;
+  potentialSavings?: number;
+}
+
 interface CostData {
   usage: UsageStats;
   costs: Omit<CostMetrics, 'date' | 'createdAt'>;
+  efficiency: EfficiencyMetrics;
+  recommendations: Recommendation[];
   timestamp: string;
 }
 
@@ -64,6 +86,18 @@ export default function CostMonitoring() {
             },
             projectedMonthly: 0
           },
+          efficiency: {
+            totalAppointments: 0,
+            completedAppointments: 0,
+            totalRevenue: 0,
+            costPerAppointment: 0,
+            costPerCompletedAppointment: 0,
+            costPerCustomer: 0,
+            revenueToCostratio: 0,
+            efficiencyScore: 0,
+            activeCustomers: 0
+          },
+          recommendations: [],
           timestamp: new Date().toISOString()
         });
       }
@@ -234,9 +268,15 @@ export default function CostMonitoring() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>
           </div>
-          <div className="text-3xl font-bold text-green-600 mb-2">99%</div>
+          <div className={`text-3xl font-bold mb-2 ${
+            (costData?.efficiency?.efficiencyScore || 0) >= 90 ? 'text-green-600' :
+            (costData?.efficiency?.efficiencyScore || 0) >= 70 ? 'text-yellow-600' :
+            'text-orange-600'
+          }`}>
+            {costData?.efficiency?.efficiencyScore || 0}%
+          </div>
           <div className="text-sm text-slate-600">
-            Cost per booking: {formatCurrency((costData?.costs?.totalCost || 0) / 100)}
+            Cost per appointment: {formatCurrency(costData?.efficiency?.costPerAppointment || 0)}
           </div>
         </div>
 
@@ -256,6 +296,152 @@ export default function CostMonitoring() {
           </div>
         </div>
       </div>
+
+      {/* Business Insights */}
+      {costData?.efficiency && (
+        <div className="bg-gradient-to-br from-terracotta/5 to-terracotta/10 rounded-xl shadow-soft p-6 border border-terracotta/20">
+          <h2 className="font-serif text-xl mb-6 flex items-center gap-2">
+            <svg className="w-6 h-6 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Business Insights (This Month)
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white rounded-lg p-4 border border-slate-200">
+              <div className="text-sm text-slate-600 mb-1">Total Revenue</div>
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(costData.efficiency.totalRevenue)}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {costData.efficiency.completedAppointments} completed appts
+              </div>
+            </div>
+            <div className="bg-white rounded-lg p-4 border border-slate-200">
+              <div className="text-sm text-slate-600 mb-1">Total Costs</div>
+              <div className="text-2xl font-bold text-slate-800">{formatCurrency(costData.costs.totalCost)}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {costData.efficiency.revenueToCostratio.toFixed(2)}% of revenue
+              </div>
+            </div>
+            <div className="bg-white rounded-lg p-4 border border-slate-200">
+              <div className="text-sm text-slate-600 mb-1">Appointments</div>
+              <div className="text-2xl font-bold text-slate-800">{costData.efficiency.totalAppointments}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {formatCurrency(costData.efficiency.costPerAppointment)} per appointment
+              </div>
+            </div>
+            <div className="bg-white rounded-lg p-4 border border-slate-200">
+              <div className="text-sm text-slate-600 mb-1">Active Customers</div>
+              <div className="text-2xl font-bold text-slate-800">{costData.efficiency.activeCustomers}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {formatCurrency(costData.efficiency.costPerCustomer)} per customer
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Optimization Recommendations */}
+      {costData?.recommendations && costData.recommendations.length > 0 && (
+        <div className="bg-white rounded-xl shadow-soft p-6">
+          <h2 className="font-serif text-xl mb-6 flex items-center gap-2">
+            <svg className="w-6 h-6 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            Optimization Recommendations
+          </h2>
+          <div className="space-y-3">
+            {costData.recommendations.map((rec, idx) => (
+              <div
+                key={idx}
+                className={`border-l-4 p-4 rounded-r-lg ${
+                  rec.severity === 'critical' ? 'border-red-500 bg-red-50' :
+                  rec.severity === 'warning' ? 'border-yellow-500 bg-yellow-50' :
+                  'border-blue-500 bg-blue-50'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`px-2 py-1 text-xs font-semibold rounded ${
+                        rec.severity === 'critical' ? 'bg-red-100 text-red-800' :
+                        rec.severity === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-blue-100 text-blue-800'
+                      }`}>
+                        {rec.category}
+                      </span>
+                      <h3 className="font-semibold text-slate-800">{rec.title}</h3>
+                    </div>
+                    <p className="text-sm text-slate-600">{rec.description}</p>
+                  </div>
+                  {rec.potentialSavings && (
+                    <div className="ml-4 text-right">
+                      <div className="text-xs text-slate-500">Potential Savings</div>
+                      <div className="text-lg font-bold text-green-600">
+                        {formatCurrency(rec.potentialSavings)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cost Trends */}
+      {costHistory && costHistory.history.length > 0 && (
+        <div className="bg-white rounded-xl shadow-soft p-6">
+          <h2 className="font-serif text-xl mb-6 flex items-center gap-2">
+            <svg className="w-6 h-6 text-terracotta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+            </svg>
+            Cost Trends (Last 30 Days)
+          </h2>
+          <div className="overflow-x-auto">
+            <div className="min-w-[600px] h-64 flex items-end gap-2 px-4">
+              {costHistory.history.map((day, idx) => {
+                const maxCost = Math.max(...costHistory.history.map(d => d.totalCost), 1);
+                const heightPercent = (day.totalCost / maxCost) * 100;
+                const isToday = idx === costHistory.history.length - 1;
+                
+                return (
+                  <div key={day.date} className="flex-1 flex flex-col items-center gap-2">
+                    <div 
+                      className={`w-full rounded-t transition-all hover:opacity-80 ${
+                        isToday ? 'bg-terracotta' : 'bg-terracotta/60'
+                      }`}
+                      style={{ height: `${Math.max(heightPercent, 5)}%` }}
+                      title={`${day.date}: ${formatCurrency(day.totalCost)}`}
+                    />
+                    <div className="text-xs text-slate-500 transform -rotate-45 origin-top-left mt-8">
+                      {new Date(day.date).getDate()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-600 mb-1">Average Daily Cost</div>
+              <div className="text-lg font-bold text-slate-800">
+                {formatCurrency(costHistory.history.reduce((sum, d) => sum + d.totalCost, 0) / costHistory.history.length)}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-600 mb-1">Highest Daily Cost</div>
+              <div className="text-lg font-bold text-slate-800">
+                {formatCurrency(Math.max(...costHistory.history.map(d => d.totalCost)))}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-600 mb-1">Total This Period</div>
+              <div className="text-lg font-bold text-slate-800">
+                {formatCurrency(costHistory.history.reduce((sum, d) => sum + d.totalCost, 0))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Service Breakdown */}
       <div className="bg-white rounded-xl shadow-soft p-6">

@@ -199,6 +199,8 @@ export const findOrCreateCustomer = onCall(
             phone: phone || existingCustomer.phone,
             name: name || existingCustomer.name,
             profilePictureUrl: profilePictureUrl || existingCustomer.profilePictureUrl,
+            totalVisits: existingCustomer.totalVisits || 0, // Ensure totalVisits is set
+            lastVisit: existingCustomer.lastVisit || null,
             updatedAt: new Date().toISOString()
           });
           
@@ -370,6 +372,8 @@ export const findOrCreateCustomer = onCall(
         authUid: authUid || null,
         identityStatus: authUid ? 'auth' : 'guest',
         status: 'active',
+        totalVisits: 0, // Initialize for new customer promotions
+        lastVisit: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });

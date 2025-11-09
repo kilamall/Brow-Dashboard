@@ -31,6 +31,7 @@ export default function Navbar() {
           <nav className="flex items-center gap-1">
             <NavLink to="/" className={linkCls} end>Home</NavLink>
             <NavLink to="/services" className={linkCls}>Services</NavLink>
+            <NavLink to="/events" className={linkCls}>Events</NavLink>
             <NavLink to="/book" className={linkCls}>Book</NavLink>
             <NavLink to="/skin-analysis" className={linkCls}>Skin Analysis</NavLink>
             <NavLink to="/reviews" className={linkCls}>Reviews</NavLink>
@@ -93,6 +94,7 @@ export default function Navbar() {
               <nav className="py-2">
                 <NavLink to="/" className={mobileLinkCls} end onClick={() => setIsMobileMenuOpen(false)}>Home</NavLink>
                 <NavLink to="/services" className={mobileLinkCls} onClick={() => setIsMobileMenuOpen(false)}>Services</NavLink>
+                <NavLink to="/events" className={mobileLinkCls} onClick={() => setIsMobileMenuOpen(false)}>Events</NavLink>
                 <NavLink to="/book" className={mobileLinkCls} onClick={() => setIsMobileMenuOpen(false)}>Book</NavLink>
                 <NavLink to="/skin-analysis" className={mobileLinkCls} onClick={() => setIsMobileMenuOpen(false)}>Skin Analysis</NavLink>
                 <NavLink to="/reviews" className={mobileLinkCls} onClick={() => setIsMobileMenuOpen(false)}>Reviews</NavLink>

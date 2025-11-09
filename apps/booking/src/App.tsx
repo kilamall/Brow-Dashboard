@@ -10,6 +10,7 @@ import ServiceWorkerUpdate from './components/ServiceWorkerUpdate';
 import Home from '@/pages/Home';
 import Privacy from '@/pages/Privacy';
 import ServicesPage from '@/pages/Services';
+import EventsPage from '@/pages/Events';
 import Book from '@/pages/Book';
 import Reviews from '@/pages/Reviews';
 import ConfirmationPage from '@/pages/Confirmation';
@@ -61,6 +62,11 @@ export default function App() {
           <Route path="/services" element={
             <ErrorBoundary fallback={(error, reset) => <FeatureError error={error} reset={reset} title="Services Error" />} category={ErrorCategory.SERVICE}>
               <ServicesPage />
+            </ErrorBoundary>
+          } />
+          <Route path="/events" element={
+            <ErrorBoundary fallback={(error, reset) => <FeatureError error={error} reset={reset} title="Events Error" />} category={ErrorCategory.SERVICE}>
+              <EventsPage />
             </ErrorBoundary>
           } />
           <Route path="/book" element={

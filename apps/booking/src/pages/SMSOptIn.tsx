@@ -59,8 +59,8 @@ export default function SMSOptIn() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           </div>
-          <h1 className="font-serif text-3xl text-terracotta mb-2">Join Bueno Brows SMS</h1>
-          <p className="text-slate-600">Get appointment reminders & exclusive offers</p>
+          <h1 className="font-serif text-3xl text-terracotta mb-2">Get Exclusive Promotions via Text</h1>
+          <p className="text-slate-600">Sign up to receive special offers, promotions, and appointment reminders</p>
         </div>
 
         {/* Disclosure */}
@@ -69,9 +69,9 @@ export default function SMSOptIn() {
             <strong>Opt-in to SMS messages:</strong> By subscribing, you agree to receive automated text messages from Bueno Brows at <strong>(650) 613-8455</strong> for:
           </p>
           <ul className="text-sm text-slate-700 space-y-1 ml-4">
+            <li>• <strong>Exclusive promotions and special offers</strong></li>
             <li>• Appointment confirmations & reminders</li>
             <li>• Booking assistance via AI-powered assistant</li>
-            <li>• Exclusive offers and promotions</li>
             <li>• Store updates and information</li>
           </ul>
           <p className="text-xs text-slate-600 mt-3">

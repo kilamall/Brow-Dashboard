@@ -1,6 +1,15 @@
 import { PropsWithChildren, useEffect, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, sendPasswordResetEmail } from 'firebase/auth';
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  sendPasswordResetEmail,
+  getMultiFactorResolver,
+  TotpMultiFactorGenerator,
+  type MultiFactorResolver
+} from 'firebase/auth';
 
 type State = 'loading' | 'authed' | 'unauthed' | 'restricted';
 
@@ -54,6 +63,12 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
   const [googleLoading, setGoogleLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  
+  // 2FA state
+  const [needs2FA, setNeeds2FA] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
+  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null);
+  
   const { auth } = useFirebase();
   
   async function onSubmit(e: React.FormEvent) {
@@ -64,6 +79,15 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (e: any) {
+      // Check if 2FA is required
+      if (e.code === 'auth/multi-factor-auth-required') {
+        const resolver = getMultiFactorResolver(auth, e);
+        setMfaResolver(resolver);
+        setNeeds2FA(true);
+        setLoading(false);
+        return;
+      }
+      
       const errorMessage = e?.code === 'auth/invalid-credential' 
         ? 'Invalid email or password' 
         : e?.message || 'Failed to sign in';
@@ -80,12 +104,44 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
     } catch (e: any) {
+      // Check if 2FA is required for Google sign-in
+      if (e.code === 'auth/multi-factor-auth-required') {
+        const resolver = getMultiFactorResolver(auth, e);
+        setMfaResolver(resolver);
+        setNeeds2FA(true);
+        setGoogleLoading(false);
+        return;
+      }
+      
       const errorMessage = e?.code === 'auth/popup-closed-by-user'
         ? 'Sign-in cancelled'
         : e?.message || 'Failed to sign in with Google';
       onError(errorMessage);
     } finally {
       setGoogleLoading(false);
+    }
+  }
+
+  async function verify2FA() {
+    if (!mfaResolver || !totpCode) return;
+    
+    setLoading(true);
+    onError('');
+    
+    try {
+      const multiFactorAssertion = TotpMultiFactorGenerator.assertionForSignIn(
+        mfaResolver.hints[0].uid,
+        totpCode
+      );
+      
+      await mfaResolver.resolveSignIn(multiFactorAssertion);
+      // Success! User will be signed in automatically
+    } catch (e: any) {
+      console.error('2FA verification error:', e);
+      onError(e?.message || 'Invalid verification code');
+      setTotpCode(''); // Clear the code on error
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -117,6 +173,62 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
     } finally {
       setResetLoading(false);
     }
+  }
+
+  // If 2FA is needed, show verification screen
+  if (needs2FA) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-cream">
+        <div className="bg-white shadow-soft rounded-xl p-6 w-[380px]">
+          <div className="flex items-center justify-center mb-4">
+            <svg className="w-12 h-12 text-terracotta" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-serif text-slate-800 mb-2 text-center">Two-Factor Authentication</h1>
+          {error && <p className="text-sm text-red-600 mb-3 p-2 bg-red-50 rounded">{error}</p>}
+          
+          <p className="text-slate-600 text-sm mb-4 text-center">
+            Enter the 6-digit code from your authenticator app
+          </p>
+
+          <input
+            type="text"
+            placeholder="000000"
+            value={totpCode}
+            onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && totpCode.length === 6) {
+                verify2FA();
+              }
+            }}
+            className="w-full border rounded-md p-3 mb-4 text-center text-2xl tracking-widest font-mono focus:ring-2 focus:ring-terracotta focus:border-terracotta"
+            maxLength={6}
+            autoFocus
+          />
+
+          <button
+            onClick={verify2FA}
+            disabled={loading || totpCode.length !== 6}
+            className="w-full bg-terracotta text-white rounded-md py-2.5 hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-medium mb-3"
+          >
+            {loading ? 'Verifying...' : 'Verify'}
+          </button>
+
+          <button
+            onClick={() => {
+              setNeeds2FA(false);
+              setMfaResolver(null);
+              setTotpCode('');
+              onError('');
+            }}
+            className="w-full text-sm text-terracotta hover:text-terracotta/80"
+          >
+            ← Back to sign in
+          </button>
+        </div>
+      </div>
+    );
   }
   
   return (

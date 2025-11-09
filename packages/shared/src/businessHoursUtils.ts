@@ -120,13 +120,36 @@ export function getNextValidBookingDate(businessHours: BusinessHours | null): Da
 }
 
 /**
- * Get the next valid booking date after a specific date
+ * Get the next valid booking date after a specific date, considering special hours and closures
  */
-export function getNextValidBookingDateAfter(date: Date, businessHours: BusinessHours | null): Date | null {
+export function getNextValidBookingDateAfter(
+  date: Date, 
+  businessHours: BusinessHours | null,
+  closures: DayClosure[] = [],
+  specialHours: SpecialHours[] = []
+): Date | null {
   if (!businessHours) return null;
   
-  const validDates = getValidBookingDates(businessHours);
-  return validDates.find(d => d > date) || null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const targetDate = new Date(date);
+  targetDate.setHours(0, 0, 0, 0);
+  
+  const maxDays = getMaximumAdvanceDays();
+  const startDayOffset = Math.max(0, Math.floor((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+  
+  // Start checking from the day after the target date
+  for (let i = startDayOffset; i <= maxDays; i++) {
+    const checkDate = new Date(today);
+    checkDate.setDate(today.getDate() + i);
+    
+    if (isValidBookingDateWithSpecialHours(checkDate, businessHours, closures, specialHours)) {
+      return checkDate;
+    }
+  }
+  
+  return null;
 }
 
 /**

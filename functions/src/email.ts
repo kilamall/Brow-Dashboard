@@ -18,7 +18,7 @@ const FROM_EMAIL = 'hello@buenobrows.com';
 const FROM_NAME = 'Bueno Brows';
 
 // Helper function to load email template from Firestore
-async function getEmailTemplate(templateId: string): Promise<{ subject: string; html: string; variables: string[] } | null> {
+export async function getEmailTemplate(templateId: string): Promise<{ subject: string; html: string; variables: string[] } | null> {
   try {
     const templatesDoc = await db.collection('settings').doc('emailTemplates').get();
     if (!templatesDoc.exists) {
@@ -47,7 +47,7 @@ async function getEmailTemplate(templateId: string): Promise<{ subject: string; 
 }
 
 // Helper function to replace template variables
-function replaceTemplateVariables(template: string, variables: Record<string, string | number>): string {
+export function replaceTemplateVariables(template: string, variables: Record<string, string | number>): string {
   let result = template;
   Object.entries(variables).forEach(([key, value]) => {
     const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
@@ -100,7 +100,7 @@ export async function sendAppointmentConfirmationEmail(
   customerEmail: string,
   customerName: string,
   appointmentDetails: {
-    serviceName: string;
+    serviceNames: string[]; // Array of service names for multi-service support
     date: string;
     time: string;
     duration: number;
@@ -120,7 +120,8 @@ export async function sendAppointmentConfirmationEmail(
     return false;
   }
 
-  const { serviceName, date, time, duration, price, notes } = appointmentDetails;
+  const { serviceNames, date, time, duration, price, notes } = appointmentDetails;
+  const serviceNamesDisplay = serviceNames.join(', ');
 
   // Format the appointment date/time nicely with proper timezone
   const appointmentDate = new Date(date);
@@ -146,14 +147,24 @@ export async function sendAppointmentConfirmationEmail(
     const businessInfo = await db.collection('settings').doc('businessInfo').get();
     const businessData = businessInfo.exists ? businessInfo.data() : {};
     
+    const notesSection = notes 
+      ? `<div style="background: #3a3a3a; border-left: 4px solid #FFC107; padding: 15px; margin: 20px 0; border-radius: 4px; color: #ffffff;"><strong>Note:</strong> ${notes}</div>`
+      : '';
+    
+    const websiteLink = businessData?.website || 'https://bueno-brows-7cce7.web.app';
+    
     const templateVariables: Record<string, string | number> = {
       customerName: customerName,
       businessName: businessData?.name || 'Bueno Brows',
       date: formattedDate,
       time: time,
-      serviceName: serviceName,
+      serviceName: serviceNamesDisplay,
       duration: duration.toString(),
-      businessPhone: businessData?.phone || '(650) 766-3918',
+      notes: notes || '',
+      notesSection: notesSection,
+      businessPhone: businessData?.phone || '(650) 613-8455',
+      businessEmail: businessData?.email || 'hello@buenobrows.com',
+      websiteLink: websiteLink,
       bookingLink: 'https://bueno-brows-7cce7.web.app/dashboard'
     };
     
@@ -195,8 +206,8 @@ export async function sendAppointmentConfirmationEmail(
       <p>Great news! Your appointment at <strong style="color: #FFC107;">Bueno Brows</strong> has been confirmed.</p>
       <div class="appointment-card">
         <div class="appointment-row">
-          <span class="detail-label">Service:</span>
-          <span class="detail-value">${serviceName}</span>
+          <span class="detail-label">Service${serviceNames.length > 1 ? 's' : ''}:</span>
+          <span class="detail-value" style="text-align: right; line-height: 1.8;">${serviceNames.map(name => `<div>${name}</div>`).join('')}</span>
         </div>
         <div class="appointment-row">
           <span class="detail-label">Date:</span>
@@ -213,18 +224,19 @@ export async function sendAppointmentConfirmationEmail(
       </div>
       ${notes ? `<div style="background: #3a3a3a; border-left: 4px solid #FFC107; padding: 15px; margin: 20px 0; border-radius: 4px; color: #ffffff;"><strong>Note:</strong> ${notes}</div>` : ''}
       <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="cta-button">Manage Your Booking</a></div>
-      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at (650) 766-3918</p>
+      <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at (650) 613-8455</p>
     </div>
     <div class="footer">
-      <p><strong style="color: #FFC107;">Bueno Brows</strong></p>
+      <p><strong style="color: #FFC107;"><a href="https://bueno-brows-7cce7.web.app" style="color: #FFC107; text-decoration: none;">Bueno Brows</a></strong></p>
       <p>📍 315 9th Ave, San Mateo, CA 94401</p>
-      <p>📞 (650) 766-3918</p>
-      <p>✉️ hello@buenobrows.com</p>
+      <p>📞 (650) 613-8455</p>
+      <p>✉️ <a href="mailto:hello@buenobrows.com" style="color: #888; text-decoration: none;">hello@buenobrows.com</a></p>
+      <p style="margin-top: 10px;"><a href="https://bueno-brows-7cce7.web.app" style="color: #FFC107; text-decoration: underline;">Visit our website</a></p>
     </div>
   </div>
 </body>
 </html>`;
-    emailSubject = `✨ Appointment Confirmed - ${serviceName} on ${formattedDate}`;
+    emailSubject = `✨ Appointment Confirmed - ${serviceNamesDisplay} on ${formattedDate}`;
   }
 
   const textContent = `
@@ -235,7 +247,7 @@ Hi ${customerName},
 Your appointment at Bueno Brows has been confirmed.
 
 APPOINTMENT DETAILS:
-Service: ${serviceName}
+Service${serviceNames.length > 1 ? 's' : ''}: ${serviceNamesDisplay}
 Date: ${formattedDate}
 Time: ${time}
 Duration: ${duration} minutes
@@ -243,11 +255,11 @@ ${price ? `Price: $${price.toFixed(2)}` : ''}
 
 ${notes ? `Note: ${notes}` : ''}
 
-Need to reschedule or cancel? Please call us at (650) 766-3918
+Need to reschedule or cancel? Please call us at (650) 613-8455
 
 Bueno Brows
 📍 315 9th Ave, San Mateo, CA 94401
-📞 Phone: (650) 766-3918
+📞 Phone: (650) 613-8455
 ✉️ Email: hello@buenobrows.com
 🌐 Website: https://buenobrows.com
 
@@ -384,10 +396,11 @@ export async function sendAppointmentCancellationEmail(
       <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule? We'd love to help you find a new time that works for you.</p>
     </div>
     <div class="footer">
-      <p><strong style="color: #dc2626;">Bueno Brows</strong></p>
+      <p><strong style="color: #dc2626;"><a href="https://bueno-brows-7cce7.web.app" style="color: #dc2626; text-decoration: none;">Bueno Brows</a></strong></p>
       <p>📍 315 9th Ave, San Mateo, CA 94401</p>
-      <p>📞 (650) 766-3918</p>
-      <p>✉️ hello@buenobrows.com</p>
+      <p>📞 (650) 613-8455</p>
+      <p>✉️ <a href="mailto:hello@buenobrows.com" style="color: #888; text-decoration: none;">hello@buenobrows.com</a></p>
+      <p style="margin-top: 10px;"><a href="https://bueno-brows-7cce7.web.app" style="color: #dc2626; text-decoration: underline;">Visit our website</a></p>
     </div>
   </div>
 </body>
@@ -1436,7 +1449,7 @@ export const onAppointmentConfirmedSendEmail = onDocumentUpdated(
 
     // Only send email when status changes from pending to confirmed
     if (beforeData.status === 'pending' && afterData.status === 'confirmed') {
-      const { customerId, start, duration, serviceId, bookedPrice, notes } = afterData;
+      const { customerId, start, duration, serviceId, serviceIds, bookedPrice, notes } = afterData;
 
       try {
         // Get customer details
@@ -1455,18 +1468,32 @@ export const onAppointmentConfirmedSendEmail = onDocumentUpdated(
           return;
         }
 
-        // Get service details
-        const serviceDoc = await db.collection('services').doc(serviceId).get();
-        const serviceData = serviceDoc.data();
-        const serviceName = serviceData?.name || 'Service';
-
         // Get business hours for timezone
         const businessHoursDoc = await db.collection('settings').doc('businessHours').get();
         const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
+        const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
+
+        // Handle multiple services
+        const serviceIdList = serviceIds || (serviceId ? [serviceId] : []);
+        const serviceNames: string[] = [];
+        
+        for (const sid of serviceIdList) {
+          const serviceDoc = await db.collection('services').doc(sid).get();
+          const serviceData = serviceDoc.exists ? serviceDoc.data() : null;
+          if (serviceData?.name) {
+            serviceNames.push(serviceData.name);
+          }
+        }
+
+        // If no services found, fall back to single service
+        if (serviceNames.length === 0 && serviceId) {
+          const serviceDoc = await db.collection('services').doc(serviceId).get();
+          const serviceData = serviceDoc.exists ? serviceDoc.data() : null;
+          serviceNames.push(serviceData?.name || 'Unknown Service');
+        }
 
         // Format date and time with proper timezone
         const appointmentDate = new Date(start);
-        const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
         const time = appointmentDate.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
@@ -1476,7 +1503,7 @@ export const onAppointmentConfirmedSendEmail = onDocumentUpdated(
 
         // Send confirmation email
         await sendAppointmentConfirmationEmail(customerEmail, customerName, {
-          serviceName,
+          serviceNames,
           date: start,
           time,
           duration: duration || 60,
@@ -1524,11 +1551,6 @@ export const resendAppointmentConfirmation = onCall(
       
       const appointment: any = appointmentDoc.data();
       
-      // Get service details
-      const serviceRef = db.collection('services').doc(appointment.serviceId);
-      const serviceDoc = await serviceRef.get();
-      const service: any = serviceDoc.exists ? serviceDoc.data() : { name: 'Service' };
-      
       // Get customer details
       const customerRef = db.collection('customers').doc(appointment.customerId);
       const customerDoc = await customerRef.get();
@@ -1543,6 +1565,25 @@ export const resendAppointmentConfirmation = onCall(
       const businessHours = businessHoursDoc.exists ? businessHoursDoc.data() : null;
       const businessTimezone = businessHours?.timezone || 'America/Los_Angeles';
 
+      // Handle multiple services
+      const serviceIdList = appointment.serviceIds || (appointment.serviceId ? [appointment.serviceId] : []);
+      const serviceNames: string[] = [];
+      
+      for (const serviceId of serviceIdList) {
+        const serviceDoc = await db.collection('services').doc(serviceId).get();
+        const serviceData = serviceDoc.exists ? serviceDoc.data() : null;
+        if (serviceData?.name) {
+          serviceNames.push(serviceData.name);
+        }
+      }
+
+      // If no services found, fall back to single service
+      if (serviceNames.length === 0 && appointment.serviceId) {
+        const serviceDoc = await db.collection('services').doc(appointment.serviceId).get();
+        const serviceData = serviceDoc.exists ? serviceDoc.data() : null;
+        serviceNames.push(serviceData?.name || 'Unknown Service');
+      }
+
       // Format date and time with proper timezone
       const appointmentDate = new Date(appointment.start);
       const time = appointmentDate.toLocaleTimeString('en-US', {
@@ -1554,11 +1595,11 @@ export const resendAppointmentConfirmation = onCall(
 
       // Send confirmation email
       const success = await sendAppointmentConfirmationEmail(customer.email, customer.name || 'Valued Customer', {
-        serviceName: service.name,
+        serviceNames,
         date: appointment.start,
         time,
         duration: appointment.duration || 60,
-        price: appointment.bookedPrice,
+        price: appointment.bookedPrice || appointment.totalPrice,
         notes: appointment.notes,
         businessTimezone,
       });
@@ -1635,9 +1676,14 @@ export const sendAppointmentConfirmation = onCall(
         timeZone: businessTimezone,
       });
 
+      // Convert serviceNames to array if it's a string
+      const serviceNamesArray = Array.isArray(serviceNames) 
+        ? serviceNames 
+        : (serviceNames ? [serviceNames] : ['Service']);
+
       // Send confirmation email
       const success = await sendAppointmentConfirmationEmail(customerEmail, customerName, {
-        serviceName: serviceNames || 'Service',
+        serviceNames: serviceNamesArray,
         date: start,
         time,
         duration: duration || 60,

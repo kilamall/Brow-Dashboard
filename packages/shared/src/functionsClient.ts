@@ -79,6 +79,13 @@ export async function finalizeBookingFromHoldClient(data: {
   autoConfirm?: boolean;
   serviceIds?: string[]; // Multi-service support
   servicePrices?: Record<string, number>; // Individual service prices
+  appliedPromotions?: Array<{
+    promotionId: string;
+    promoCode?: string;
+    discountAmount: number;
+  }>; // Promotion data for tracking
+  originalSubtotal?: number; // Original price before discount
+  totalDiscount?: number; // Total discount applied
 }): Promise<{ appointmentId: string; success: boolean }> {
   const { app } = initFirebase();
   const functions = getFunctions(app, 'us-central1');

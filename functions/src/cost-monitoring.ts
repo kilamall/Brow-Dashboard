@@ -204,12 +204,16 @@ export const getCurrentUsage = onCall(
     try {
       const usageStats = await getCurrentUsageStats();
       const costMetrics = await calculateCosts(usageStats);
+      const efficiency = await calculateEfficiency(costMetrics);
+      const recommendations = await getOptimizationRecommendations(usageStats, costMetrics);
       
       return {
         success: true,
         data: {
           usage: usageStats,
           costs: costMetrics,
+          efficiency,
+          recommendations,
           timestamp: new Date().toISOString()
         }
       };
@@ -373,41 +377,174 @@ export const sendCostAlert = onCall(
 // Helper Functions
 
 async function getCurrentUsageStats(): Promise<UsageStats> {
-  // This is a simplified version - in production, you'd use Google Cloud APIs
-  // to get actual usage statistics from Firebase and other services
-  
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysElapsed = now.getDate();
-  
-  // Simulate usage based on typical patterns
-  // In production, replace with actual API calls to Google Cloud
-  return {
-    firestore: {
-      reads: Math.floor(Math.random() * 100000) + 10000,
-      writes: Math.floor(Math.random() * 20000) + 2000,
-      deletes: Math.floor(Math.random() * 1000) + 100,
-      storage: 0.5 + Math.random() * 2
-    },
-    functions: {
-      invocations: Math.floor(Math.random() * 50000) + 5000,
-      computeTime: Math.floor(Math.random() * 1000) + 100
-    },
-    storage: {
-      totalGB: 1 + Math.random() * 3,
-      downloadsGB: 0.5 + Math.random() * 2
-    },
-    hosting: {
-      bandwidthGB: 0.1 + Math.random() * 1
-    },
-    geminiAI: {
-      requests: Math.floor(Math.random() * 1000) + 100,
-      tokens: Math.floor(Math.random() * 50000) + 5000
-    },
-    sendGrid: {
-      emails: Math.floor(Math.random() * 500) + 50
+  // Get actual usage data from Firestore statistics and tracking collections
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthKey = startOfMonth.toISOString().slice(0, 7); // YYYY-MM format
+    
+    // Get Firestore usage from tracking document (we'll create this)
+    let firestoreStats = {
+      reads: 0,
+      writes: 0,
+      deletes: 0,
+      storage: 0
+    };
+    
+    try {
+      const usageDoc = await db.collection('_usage_tracking').doc(monthKey).get();
+      if (usageDoc.exists) {
+        const data = usageDoc.data();
+        firestoreStats = {
+          reads: data?.firestoreReads || 0,
+          writes: data?.firestoreWrites || 0,
+          deletes: data?.firestoreDeletes || 0,
+          storage: data?.firestoreStorageGB || 0
+        };
+      }
+    } catch (err) {
+      console.log('Using estimated Firestore stats:', err);
+      // Fallback: estimate from collection sizes
+      const collections = ['appointments', 'customers', 'services', 'settings', 'bookingHolds'];
+      let totalDocs = 0;
+      
+      for (const collName of collections) {
+        const snapshot = await db.collection(collName).count().get();
+        totalDocs += snapshot.data().count;
+      }
+      
+      // Rough estimates based on typical usage patterns
+      firestoreStats = {
+        reads: totalDocs * 50, // assume ~50 reads per doc per month
+        writes: totalDocs * 5,  // assume ~5 writes per doc per month
+        deletes: Math.floor(totalDocs * 0.1), // assume 10% deletion rate
+        storage: totalDocs * 0.001 // assume ~1KB per doc on average
+      };
     }
-  };
+    
+    // Get function invocations from tracking
+    let functionStats = { invocations: 0, computeTime: 0 };
+    try {
+      const funcDoc = await db.collection('_usage_tracking').doc(`${monthKey}_functions`).get();
+      if (funcDoc.exists) {
+        const data = funcDoc.data();
+        functionStats = {
+          invocations: data?.invocations || 0,
+          computeTime: data?.computeTimeSeconds || 0
+        };
+      }
+    } catch (err) {
+      // Estimate from appointment count
+      const apptSnapshot = await db.collection('appointments')
+        .where('createdAt', '>=', startOfMonth)
+        .count()
+        .get();
+      const monthlyAppts = apptSnapshot.data().count;
+      
+      functionStats = {
+        invocations: monthlyAppts * 15, // ~15 function calls per appointment
+        computeTime: monthlyAppts * 2    // ~2 seconds compute per appointment
+      };
+    }
+    
+    // Get storage usage - count profile pictures and consent forms
+    let storageStats = { totalGB: 0, downloadsGB: 0 };
+    try {
+      const storageDoc = await db.collection('_usage_tracking').doc(`${monthKey}_storage`).get();
+      if (storageDoc.exists) {
+        const data = storageDoc.data();
+        storageStats = {
+          totalGB: data?.totalGB || 0,
+          downloadsGB: data?.downloadsGB || 0
+        };
+      }
+    } catch (err) {
+      // Estimate from uploaded files
+      const customersWithPhotos = await db.collection('customers')
+        .where('profilePictureUrl', '!=', null)
+        .count()
+        .get();
+      
+      const consentForms = await db.collection('consentForms')
+        .count()
+        .get();
+      
+      const totalFiles = customersWithPhotos.data().count + (consentForms.data().count * 2);
+      storageStats = {
+        totalGB: (totalFiles * 0.5) / 1024, // assume 500KB per file
+        downloadsGB: (totalFiles * 0.1) / 1024  // assume 10% download rate
+      };
+    }
+    
+    // Get Gemini AI usage
+    let geminiStats = { requests: 0, tokens: 0 };
+    try {
+      const geminiDoc = await db.collection('_usage_tracking').doc(`${monthKey}_gemini`).get();
+      if (geminiDoc.exists) {
+        const data = geminiDoc.data();
+        geminiStats = {
+          requests: data?.requests || 0,
+          tokens: data?.tokens || 0
+        };
+      }
+    } catch (err) {
+      // Estimate from AI conversations
+      const aiConvos = await db.collection('aiConversations')
+        .where('createdAt', '>=', startOfMonth)
+        .count()
+        .get();
+      
+      geminiStats = {
+        requests: aiConvos.data().count * 3, // ~3 requests per conversation
+        tokens: aiConvos.data().count * 500  // ~500 tokens per conversation
+      };
+    }
+    
+    // Get SendGrid email count
+    let sendGridStats = { emails: 0 };
+    try {
+      const emailDoc = await db.collection('_usage_tracking').doc(`${monthKey}_sendgrid`).get();
+      if (emailDoc.exists) {
+        const data = emailDoc.data();
+        sendGridStats = { emails: data?.emails || 0 };
+      }
+    } catch (err) {
+      // Estimate from appointments (confirmations + reminders)
+      const apptSnapshot = await db.collection('appointments')
+        .where('createdAt', '>=', startOfMonth)
+        .count()
+        .get();
+      
+      sendGridStats = {
+        emails: apptSnapshot.data().count * 3 // confirmation + 2 reminders per appt
+      };
+    }
+    
+    // Hosting bandwidth - rough estimate
+    const hostingStats = {
+      bandwidthGB: storageStats.downloadsGB + 0.5 // storage downloads + general traffic
+    };
+    
+    return {
+      firestore: firestoreStats,
+      functions: functionStats,
+      storage: storageStats,
+      hosting: hostingStats,
+      geminiAI: geminiStats,
+      sendGrid: sendGridStats
+    };
+  } catch (error) {
+    console.error('Error getting usage stats:', error);
+    // Return minimal safe values rather than random
+    return {
+      firestore: { reads: 0, writes: 0, deletes: 0, storage: 0 },
+      functions: { invocations: 0, computeTime: 0 },
+      storage: { totalGB: 0, downloadsGB: 0 },
+      hosting: { bandwidthGB: 0 },
+      geminiAI: { requests: 0, tokens: 0 },
+      sendGrid: { emails: 0 }
+    };
+  }
 }
 
 async function calculateCosts(usage: UsageStats): Promise<Omit<CostMetrics, 'date' | 'createdAt'>> {
@@ -564,4 +701,178 @@ async function checkBudgetAlerts(settings: CostMonitoringSettings, costs: Omit<C
       }
     }
   }
+}
+
+/**
+ * Calculate business efficiency metrics
+ */
+async function calculateEfficiency(costs: Omit<CostMetrics, 'date' | 'createdAt'>) {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    
+    // Get appointment count for the month
+    const appointmentsSnapshot = await db.collection('appointments')
+      .where('createdAt', '>=', startOfMonth)
+      .count()
+      .get();
+    const totalAppointments = appointmentsSnapshot.data().count;
+    
+    // Get completed appointments
+    const completedSnapshot = await db.collection('appointments')
+      .where('createdAt', '>=', startOfMonth)
+      .where('status', '==', 'completed')
+      .count()
+      .get();
+    const completedAppointments = completedSnapshot.data().count;
+    
+    // Get total revenue for the month
+    const revenueSnapshot = await db.collection('appointments')
+      .where('createdAt', '>=', startOfMonth)
+      .where('status', '==', 'completed')
+      .get();
+    
+    let totalRevenue = 0;
+    revenueSnapshot.forEach(doc => {
+      const data = doc.data();
+      totalRevenue += data.totalPrice || 0;
+      totalRevenue += data.tipAmount || 0;
+    });
+    
+    // Calculate metrics
+    const costPerAppointment = totalAppointments > 0 ? costs.totalCost / totalAppointments : 0;
+    const costPerCompletedAppointment = completedAppointments > 0 ? costs.totalCost / completedAppointments : 0;
+    const revenueToCostratio = totalRevenue > 0 ? (costs.totalCost / totalRevenue) * 100 : 0;
+    const efficiencyScore = totalRevenue > 0 ? Math.max(0, Math.min(100, 100 - revenueToCostratio)) : 0;
+    
+    // Get customer count
+    const customersSnapshot = await db.collection('customers')
+      .where('status', '==', 'active')
+      .count()
+      .get();
+    const activeCustomers = customersSnapshot.data().count;
+    
+    const costPerCustomer = activeCustomers > 0 ? costs.totalCost / activeCustomers : 0;
+    
+    return {
+      totalAppointments,
+      completedAppointments,
+      totalRevenue,
+      costPerAppointment,
+      costPerCompletedAppointment,
+      costPerCustomer,
+      revenueToCostratio,
+      efficiencyScore: Math.round(efficiencyScore),
+      activeCustomers
+    };
+  } catch (error) {
+    console.error('Error calculating efficiency:', error);
+    return {
+      totalAppointments: 0,
+      completedAppointments: 0,
+      totalRevenue: 0,
+      costPerAppointment: 0,
+      costPerCompletedAppointment: 0,
+      costPerCustomer: 0,
+      revenueToCostratio: 0,
+      efficiencyScore: 0,
+      activeCustomers: 0
+    };
+  }
+}
+
+/**
+ * Get optimization recommendations based on usage patterns
+ */
+async function getOptimizationRecommendations(usage: UsageStats, costs: Omit<CostMetrics, 'date' | 'createdAt'>) {
+  const recommendations: Array<{
+    category: string;
+    severity: 'info' | 'warning' | 'critical';
+    title: string;
+    description: string;
+    potentialSavings?: number;
+  }> = [];
+  
+  // Check Firestore usage
+  if (usage.firestore.reads > FREE_TIER_LIMITS.firestore.reads * 30 * 2) {
+    const potentialSavings = (usage.firestore.reads - FREE_TIER_LIMITS.firestore.reads * 30) * FIREBASE_PRICING.firestore.reads * 0.3;
+    recommendations.push({
+      category: 'Firestore',
+      severity: 'warning',
+      title: 'High Firestore Read Operations',
+      description: 'Consider implementing caching strategies or reducing real-time listeners to minimize reads.',
+      potentialSavings
+    });
+  }
+  
+  if (usage.firestore.writes > FREE_TIER_LIMITS.firestore.writes * 30 * 2) {
+    recommendations.push({
+      category: 'Firestore',
+      severity: 'warning',
+      title: 'High Firestore Write Operations',
+      description: 'Review write operations and batch updates where possible to reduce costs.'
+    });
+  }
+  
+  // Check Functions usage
+  if (usage.functions.invocations > FREE_TIER_LIMITS.functions.invocations * 1.5) {
+    recommendations.push({
+      category: 'Functions',
+      severity: 'warning',
+      title: 'High Function Invocations',
+      description: 'Consider optimizing function triggers or implementing rate limiting.'
+    });
+  }
+  
+  // Check Gemini AI usage
+  if (usage.geminiAI.requests > FREE_TIER_LIMITS.geminiAI.requests * 30 * 0.8) {
+    const potentialSavings = costs.services.geminiAI.cost * 0.2;
+    recommendations.push({
+      category: 'Gemini AI',
+      severity: 'info',
+      title: 'Approaching AI Free Tier Limit',
+      description: 'You\'re using a significant portion of the Gemini AI free tier. Consider caching responses for common queries.',
+      potentialSavings
+    });
+  }
+  
+  // Check Storage usage
+  if (usage.storage.totalGB > FREE_TIER_LIMITS.storage.storage) {
+    recommendations.push({
+      category: 'Storage',
+      severity: 'info',
+      title: 'Storage Usage Above Free Tier',
+      description: 'Consider implementing image compression or cleanup policies for old files.'
+    });
+  }
+  
+  // Check overall cost efficiency
+  if (costs.totalCost > 0) {
+    const highestCost = Object.entries(costs.services)
+      .reduce((max, [key, service]: [string, any]) => 
+        service.cost > max.cost ? { name: key, cost: service.cost } : max,
+        { name: '', cost: 0 }
+      );
+    
+    if (highestCost.cost > costs.totalCost * 0.5) {
+      recommendations.push({
+        category: highestCost.name,
+        severity: 'info',
+        title: `${highestCost.name} is your highest cost`,
+        description: `${highestCost.name} accounts for ${Math.round((highestCost.cost / costs.totalCost) * 100)}% of your total costs. Focus optimization efforts here.`
+      });
+    }
+  }
+  
+  // If no recommendations, add a positive message
+  if (recommendations.length === 0) {
+    recommendations.push({
+      category: 'General',
+      severity: 'info',
+      title: 'Excellent Cost Management',
+      description: 'Your usage is well within optimal ranges. Keep up the good work!'
+    });
+  }
+  
+  return recommendations;
 }

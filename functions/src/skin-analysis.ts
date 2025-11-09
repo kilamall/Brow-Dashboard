@@ -12,7 +12,7 @@ const storage = getStorage();
 
 // Gemini AI Configuration
 const geminiApiKey = defineSecret('GEMINI_API_KEY');
-const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent';
+const GEMINI_VISION_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // Cache configuration
 const CACHE_COLLECTION = 'ai_analysis_cache';
@@ -175,7 +175,7 @@ async function callGeminiVision(imageBase64: string, prompt: string, apiKey: str
         temperature: 0.4,
         topK: 32,
         topP: 1,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 8192,
       }
     };
 
@@ -187,21 +187,42 @@ async function callGeminiVision(imageBase64: string, prompt: string, apiKey: str
 
     if (!response.ok) {
       const errorData = await response.text();
-      console.error('Gemini API error:', response.status, errorData);
-      throw new Error(`Gemini API error: ${response.status}`);
+      console.error('Gemini API error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorData
+      });
+      throw new Error(`Gemini API error (${response.status}): ${errorData}`);
     }
 
     const data = await response.json() as any;
-    const result = data.candidates?.[0]?.content?.parts?.[0]?.text;
     
-    if (!result) {
-      throw new Error('No response from Gemini API');
+    // Check for safety blocking
+    if (data.promptFeedback?.blockReason) {
+      console.error('Content blocked by safety filters:', data.promptFeedback);
+      throw new Error(`Content blocked: ${data.promptFeedback.blockReason}`);
     }
     
+    const result = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const finishReason = data.candidates?.[0]?.finishReason;
+    
+    if (!result) {
+      console.error('No text in response. Finish reason:', finishReason);
+      throw new Error(`No response from Gemini API. Finish reason: ${finishReason || 'unknown'}`);
+    }
+    
+    if (finishReason === 'MAX_TOKENS') {
+      console.warn('⚠️ Response truncated due to MAX_TOKENS. Attempting to parse anyway...');
+    }
+    
+    console.log('✅ AI response received, length:', result.length, 'finish reason:', finishReason);
+    
     return result.trim();
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error calling Gemini Vision API:', error);
-    throw new HttpsError('internal', 'Failed to analyze image with AI');
+    const errorMessage = error.message || 'Failed to analyze image with AI';
+    console.error('Detailed error:', errorMessage);
+    throw new HttpsError('internal', errorMessage);
   }
 }
 

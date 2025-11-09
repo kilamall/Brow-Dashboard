@@ -15,7 +15,7 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
-import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, ServiceCategory, BusinessInfo, HomePageContent, Staff, DayClosure, SpecialHours } from './types';
+import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, ServiceCategory, BusinessInfo, HomePageContent, Staff, DayClosure, SpecialHours, Promotion, PromotionUsage, BirthdayPromoUsage } from './types';
 
 export const E_OVERLAP = 'E_OVERLAP';
 
@@ -136,6 +136,115 @@ export function watchServiceCategories(
     snap.forEach((d) => categories.push({ id: d.id, ...(d.data() as any) }));
     cb(categories);
   });
+}
+
+// ========================= Promotions =========================
+
+export async function createPromotion(
+  db: Firestore,
+  input: Omit<Promotion, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  const ref = doc(collection(db, 'promotions'));
+  await setDoc(ref, {
+    ...input,
+    usedCount: 0,
+    totalDiscountGiven: 0,
+    customerUsageCount: {},
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updatePromotion(
+  db: Firestore,
+  id: string,
+  patch: Partial<Promotion>
+): Promise<void> {
+  const ref = doc(db, 'promotions', id);
+  await updateDoc(ref, {
+    ...patch,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deletePromotion(db: Firestore, id: string): Promise<void> {
+  await deleteDoc(doc(db, 'promotions', id));
+}
+
+export function watchPromotions(
+  db: Firestore,
+  cb: (promotions: Promotion[]) => void
+): () => void {
+  const q = query(collection(db, 'promotions'), orderBy('createdAt', 'desc'));
+  return onSnapshot(q, (snap) => {
+    const promotions: Promotion[] = [];
+    snap.forEach((d) => promotions.push({ id: d.id, ...(d.data() as any) }));
+    cb(promotions);
+  });
+}
+
+export async function recordPromotionUsage(
+  db: Firestore,
+  input: Omit<PromotionUsage, 'id' | 'appliedAt'>
+): Promise<string> {
+  const ref = doc(collection(db, 'promotionUsage'));
+  await setDoc(ref, {
+    ...input,
+    appliedAt: new Date().toISOString(),
+  });
+  return ref.id;
+}
+
+export async function recordBirthdayPromoUsage(
+  db: Firestore,
+  input: Omit<BirthdayPromoUsage, 'id'>
+): Promise<string> {
+  const ref = doc(collection(db, 'birthdayPromoUsage'));
+  await setDoc(ref, input);
+  return ref.id;
+}
+
+export async function getPromotionUsageCount(
+  db: Firestore,
+  promotionId: string
+): Promise<number> {
+  const q = query(
+    collection(db, 'promotionUsage'),
+    where('promotionId', '==', promotionId)
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.size;
+}
+
+export async function getCustomerPromotionUsageCount(
+  db: Firestore,
+  promotionId: string,
+  customerId: string
+): Promise<number> {
+  const q = query(
+    collection(db, 'promotionUsage'),
+    where('promotionId', '==', promotionId),
+    where('customerId', '==', customerId)
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.size;
+}
+
+export async function hasUsedBirthdayPromoThisYear(
+  db: Firestore,
+  promotionId: string,
+  customerId: string,
+  year: number
+): Promise<boolean> {
+  const q = query(
+    collection(db, 'birthdayPromoUsage'),
+    where('customerId', '==', customerId),
+    where('promotionId', '==', promotionId),
+    where('birthdayYear', '==', year)
+  );
+  const snapshot = await getDocs(q);
+  return !snapshot.empty;
 }
 
 // ========================= Customers =========================
@@ -699,6 +808,22 @@ export function watchHomePageContent(db: Firestore, cb: (content: HomePageConten
         buenoCircleTitle: 'Join the Bueno Circle',
         buenoCircleDescription: 'Get 10% off your first appointment and exclusive updates!',
         buenoCircleDiscount: 10,
+        eventsHeroTitle: 'Premium Event Packages',
+        eventsHeroDescription: 'Transform your corporate events, team gatherings, and special occasions with our curated experiential services. From permanent jewelry to professional makeup artistry, we deliver memorable experiences that elevate any event.',
+        eventsFeaturedTitle1: 'Permanent Jewelry',
+        eventsFeaturedDescription1: 'Seamless, custom jewelry installations for lasting memories.',
+        eventsFeaturedTitle2: 'Professional Makeup',
+        eventsFeaturedDescription2: 'Expert artistry for corporate headshots and events.',
+        eventsFeaturedTitle3: 'Face Paint & Artistry',
+        eventsFeaturedDescription3: 'Creative designs that add vibrancy to any occasion.',
+        eventsFeaturedTitle4: 'Curated Experiences',
+        eventsFeaturedDescription4: 'Bespoke packages tailored to your event vision.',
+        eventsPackagesTitle: 'Available Packages',
+        eventsPackagesDescription: 'Explore our curated event packages designed for corporate gatherings, team experiences, and special occasions.',
+        eventsCTATitle: 'Elevate Your Next Corporate Event',
+        eventsCTADescription: 'Our team specializes in creating memorable experiences for corporate gatherings, team building events, product launches, and networking occasions. Contact us to discuss custom package arrangements tailored to your needs.',
+        eventsCTAButton1: 'Schedule Consultation',
+        eventsCTAButton2: 'View All Services',
         skinAnalysisEnabled: false,
         skinAnalysisTitle: 'AI Skin Analysis',
         skinAnalysisSubtitle: 'Discover your skin\'s unique needs with our advanced AI technology',

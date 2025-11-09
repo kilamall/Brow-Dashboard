@@ -16,7 +16,13 @@ export default function ServicesPage() {
 
   useEffect(() => {
     // Public read is allowed by rules; live updates for simplicity.
-    return watchServices(db, { activeOnly: true }, setRows);
+    return watchServices(db, { activeOnly: true }, (servicesList) => {
+      // Filter out "Events" category services from the Services page
+      const regularServices = servicesList.filter(
+        (s) => !s.category || s.category.toLowerCase() !== 'events'
+      );
+      setRows(regularServices);
+    });
   }, []);
 
   const categories = useMemo(() => {

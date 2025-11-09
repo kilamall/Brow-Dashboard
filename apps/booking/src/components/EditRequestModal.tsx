@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
-import type { Appointment, Service, BusinessHours } from '@buenobrows/shared/types';
+import type { Appointment, Service, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { watchBusinessHours } from '@buenobrows/shared/firestoreActions';
+import { watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
 import { watchAvailabilityByDay, fetchAvailabilityForDay } from '@buenobrows/shared/availabilityHelpers';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
-import { getNextValidBookingDateAfter, formatNextAvailableDate, isValidBookingDate } from '@buenobrows/shared/businessHoursUtils';
+import { getNextValidBookingDateAfter, formatNextAvailableDate, isValidBookingDateWithSpecialHours } from '@buenobrows/shared/businessHoursUtils';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 
 // Safe date formatter that won't crash - with enhanced logging
@@ -95,6 +95,8 @@ export default function EditRequestModal({
   
   // Availability state
   const [businessHours, setBusinessHours] = useState<BusinessHours | null>(null);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
   const [bookedSlots, setBookedSlots] = useState<AvailabilitySlot[]>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [findingNextDate, setFindingNextDate] = useState(false);
@@ -108,11 +110,17 @@ export default function EditRequestModal({
     return selectedServices.reduce((sum, service) => sum + service.duration, 0);
   }, [requestedServiceIds, services]);
 
-  // Load business hours
+  // Load business hours, closures, and special hours
   useEffect(() => {
     if (!db) return;
-    const unsubscribe = watchBusinessHours(db, setBusinessHours);
-    return unsubscribe;
+    const unsubscribeBh = watchBusinessHours(db, setBusinessHours);
+    const unsubscribeClosures = watchDayClosures(db, setClosures);
+    const unsubscribeSpecialHours = watchSpecialHours(db, setSpecialHours);
+    return () => {
+      unsubscribeBh();
+      unsubscribeClosures();
+      unsubscribeSpecialHours();
+    };
   }, [db]);
 
   // Find next available date when component loads or services change
@@ -136,11 +144,14 @@ export default function EditRequestModal({
         for (let i = 0; i < 30; i++) {
           const checkDate = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
           
+          // Skip if this date is not a valid business day (considering special hours and closures)
+          if (!isValidBookingDateWithSpecialHours(checkDate, businessHours, closures, specialHours)) continue;
+          
           // Fetch availability for this day
           const daySlots = await fetchAvailabilityForDay(db, checkDate);
           
-          // Check if there are any available slots for this duration
-          const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots);
+          // Check if there are any available slots for this duration (respecting special hours and closures)
+          const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots, closures, specialHours);
           
           if (availableSlots.length > 0) {
             console.log('✅ Found next available date:', checkDate.toISOString());
@@ -156,7 +167,7 @@ export default function EditRequestModal({
     };
 
     findNextAvailableDate();
-  }, [db, businessHours, appointment.start, totalDuration]);
+  }, [db, businessHours, appointment.start, totalDuration, closures, specialHours]);
 
   // Function to find next available day with actual slots
   const findNextAvailableDayWithSlots = async (startDate: Date) => {
@@ -165,21 +176,21 @@ export default function EditRequestModal({
     setLoadingNextDay(true);
     
     try {
-      // First try to find next business day with actual available slots
-      let nextBusinessDay = getNextValidBookingDateAfter(startDate, businessHours);
+      // First try to find next business day with actual available slots (respecting special hours and closures)
+      let nextBusinessDay = getNextValidBookingDateAfter(startDate, businessHours, closures, specialHours);
       
       // Check up to 30 days ahead for actual available slots
       for (let i = 0; i < 30 && nextBusinessDay; i++) {
         const checkDate = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
         
-        // Skip if this date is not a valid business day
-        if (!isValidBookingDate(checkDate, businessHours)) continue;
+        // Skip if this date is not a valid business day (considering special hours and closures)
+        if (!isValidBookingDateWithSpecialHours(checkDate, businessHours, closures, specialHours)) continue;
         
         // Fetch availability for this day
         const daySlots = await fetchAvailabilityForDay(db, checkDate);
         
-        // Check if there are any available slots for this duration
-        const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots);
+        // Check if there are any available slots for this duration (respecting special hours and closures)
+        const availableSlots = availableSlotsForDay(checkDate, totalDuration, businessHours, daySlots, closures, specialHours);
         
         if (availableSlots.length > 0) {
           console.log('✅ Found next available day with slots:', checkDate.toISOString());
@@ -231,8 +242,8 @@ export default function EditRequestModal({
       setBookedSlots(slots);
       setLoadingAvailability(false);
       
-      // If no slots available, find next available day
-      const availableSlots = availableSlotsForDay(dayDate, totalDuration, businessHours, slots);
+      // If no slots available, find next available day (respecting special hours and closures)
+      const availableSlots = availableSlotsForDay(dayDate, totalDuration, businessHours, slots, closures, specialHours);
       if (availableSlots.length === 0) {
         findNextAvailableDayWithSlots(dayDate);
       } else {
@@ -246,7 +257,7 @@ export default function EditRequestModal({
       unsubscribe();
       setLoadingAvailability(false);
     };
-  }, [requestedDate, db, businessHours, totalDuration]);
+  }, [requestedDate, db, businessHours, totalDuration, closures, specialHours]);
 
   // Calculate available time slots
   const availableSlots = useMemo(() => {
@@ -266,7 +277,7 @@ export default function EditRequestModal({
     });
     
     try {
-      const slots = availableSlotsForDay(dayDate, totalDuration, businessHours, bookedSlots);
+      const slots = availableSlotsForDay(dayDate, totalDuration, businessHours, bookedSlots, closures, specialHours);
       console.log('✅ EditRequestModal - Generated slots:', slots.length, 'slots');
       console.log('📊 EditRequestModal - Booked slots:', bookedSlots.map(s => ({ start: s.start, end: s.end, status: s.status })));
       return slots;
@@ -274,7 +285,7 @@ export default function EditRequestModal({
       console.error('❌ Error calculating available slots:', error);
       return [];
     }
-  }, [businessHours, requestedDate, bookedSlots, totalDuration]);
+  }, [businessHours, requestedDate, bookedSlots, totalDuration, closures, specialHours]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

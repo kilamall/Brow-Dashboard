@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { updateDoc, doc, collection, query, where, getDocs } from 'firebase/firestore';
 import type { Appointment, Service, Customer, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { format, parseISO } from 'date-fns';
-import { fromZonedTime } from 'date-fns-tz';
+import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { watchBusinessHours, watchDayClosures, watchSpecialHours } from '@buenobrows/shared/firestoreActions';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
@@ -164,14 +164,19 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
       }
       
       setSelectedCustomerId(appointment.customerId);
-      const startDate = parseISO(appointment.start);
-      setDate(format(startDate, 'yyyy-MM-dd'));
-      setTime(format(startDate, 'HH:mm'));
+      
+      // Convert UTC time to business timezone for display
+      const businessTimezone = bh?.timezone || 'America/Los_Angeles';
+      const startDateUTC = parseISO(appointment.start);
+      const startDateInBusinessTZ = toZonedTime(startDateUTC, businessTimezone);
+      
+      setDate(format(startDateInBusinessTZ, 'yyyy-MM-dd'));
+      setTime(format(startDateInBusinessTZ, 'HH:mm'));
       setNotes(appointment.notes || '');
       setStatus(appointment.status);
       setTipAmount((appointment.tip ?? 0).toString());
     }
-  }, [appointment, services]);
+  }, [appointment, services, bh]);
 
   const handleSave = async () => {
     if (!appointment) return;

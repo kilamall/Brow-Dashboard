@@ -8,10 +8,21 @@ const db = getFirestore();
 
 /**
  * Set up admin email for notifications
+ * SECURITY: Admin-only access required
  */
 export const setupAdminEmail = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
+    // ✅ SECURITY: Require authentication
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    // ✅ SECURITY: Require admin role
+    if (req.auth.token.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+
     try {
       const { email } = req.data || {};
       

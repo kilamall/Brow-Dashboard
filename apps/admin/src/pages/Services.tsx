@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { watchServices, createService, updateService, deleteService } from '@buenobrows/shared/firestoreActions';
-import type { Service } from '@buenobrows/shared/types';
+import { watchServices, createService, updateService, deleteService, watchServiceCategories, createServiceCategory } from '@buenobrows/shared/firestoreActions';
+import type { Service, ServiceCategory } from '@buenobrows/shared/types';
 import ServiceCategoryManager from '@/components/ServiceCategoryManager';
 import DraggableServices from '@/components/DraggableServices';
 import DraggableServicesGrid from '@/components/DraggableServicesGrid';
@@ -376,22 +376,75 @@ export default function Services(){
         />
       )}
 
-      {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} />}
+      {editing && <Editor initial={editing} onClose={()=>setEditing(null)} db={db} allServices={rows} />}
       {showCategoryManager && <ServiceCategoryManager onClose={() => setShowCategoryManager(false)} />}
       {imageUploadService && <ImageUploadModal service={imageUploadService} onClose={() => setImageUploadService(null)} db={db} />}
     </div>
   );
 }
 
-function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; db: any }){
+function Editor({ initial, onClose, db, allServices }:{ initial: Service; onClose: ()=>void; db: any; allServices?: Service[] }){
   const [s, setS] = useState<Service>(initial as Service);
   const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [showNewCategoryForm, setShowNewCategoryForm] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  
+  // Load categories
+  useEffect(() => {
+    const unsubscribe = watchServiceCategories(db, setCategories);
+    return unsubscribe;
+  }, [db]);
+  
+  // Get all unique category names from both ServiceCategory collection and existing services
+  const allCategoryNames = useMemo(() => {
+    const categorySet = new Set<string>();
+    // Add categories from ServiceCategory collection
+    categories.filter(cat => cat.active).forEach(cat => categorySet.add(cat.name));
+    // Add categories from existing services
+    if (allServices) {
+      allServices.forEach(service => {
+        if (service.category && service.category.trim()) {
+          categorySet.add(service.category.trim());
+        }
+      });
+    }
+    return Array.from(categorySet).sort();
+  }, [categories, allServices]);
+  
+  // Create new category
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    
+    setCreatingCategory(true);
+    try {
+      await createServiceCategory(db, {
+        name: newCategoryName.trim(),
+        color: '#6B7280', // Default gray color
+        description: '',
+        active: true
+      });
+      // Set the new category as selected
+      setS({...s, category: newCategoryName.trim()});
+      setShowNewCategoryForm(false);
+      setNewCategoryName('');
+    } catch (error) {
+      console.error('Failed to create category:', error);
+      alert('Failed to create category. Please try again.');
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
 
   async function save() {
     setLoading(true);
     try {
       if (s.id) await updateService(db, s.id, s);
       else await createService(db, s);
+      // Reset form state
+      setShowNewCategoryForm(false);
+      setNewCategoryName('');
       onClose();
     } catch (error) {
       console.error('Failed to save service:', error);
@@ -432,12 +485,77 @@ function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; 
           {/* Category */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-            <input 
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
-              placeholder="e.g., Brows, Lashes, Facials" 
-              value={s.category||''} 
-              onChange={e=>setS({...s, category:e.target.value})} 
-            />
+            {!showNewCategoryForm ? (
+              <div className="space-y-2">
+                <select
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  value={s.category || ''}
+                  onChange={(e) => {
+                    if (e.target.value === '__NEW__') {
+                      setShowNewCategoryForm(true);
+                    } else {
+                      setS({...s, category: e.target.value || undefined});
+                    }
+                  }}
+                >
+                  <option value="">No Category</option>
+                  {allCategoryNames.map((catName) => (
+                    <option key={catName} value={catName}>
+                      {catName}
+                    </option>
+                  ))}
+                  <option value="__NEW__" className="font-semibold text-terracotta">
+                    + Create New Category
+                  </option>
+                </select>
+              </div>
+            ) : (
+              <div className="space-y-2 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-slate-700">New Category Name</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowNewCategoryForm(false);
+                      setNewCategoryName('');
+                      // Reset dropdown selection if category was cleared
+                      if (!s.category) {
+                        setS({...s, category: undefined});
+                      }
+                    }}
+                    className="text-slate-400 hover:text-slate-600"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="flex-1 border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm"
+                    placeholder="Enter category name..."
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newCategoryName.trim()) {
+                        e.preventDefault();
+                        handleCreateCategory();
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateCategory}
+                    disabled={!newCategoryName.trim() || creatingCategory}
+                    className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    {creatingCategory ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Description */}
@@ -503,8 +621,12 @@ function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; 
                   type="number" 
                   step="0.01"
                   placeholder="0.00" 
-                  value={s.price} 
-                  onChange={e=>setS({...s, price: parseFloat(e.target.value||'0')})} 
+                  value={s.price || ''} 
+                  onChange={e=>{
+                    const value = e.target.value;
+                    const numValue = value === '' ? 0 : parseFloat(value);
+                    setS({...s, price: isNaN(numValue) ? 0 : numValue});
+                  }} 
                 />
               </div>
             </div>
@@ -515,8 +637,12 @@ function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; 
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 pr-12 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
                   type="number" 
                   placeholder="60" 
-                  value={s.duration} 
-                  onChange={e=>setS({...s, duration: parseInt(e.target.value||'0')})} 
+                  value={s.duration || ''} 
+                  onChange={e=>{
+                    const value = e.target.value;
+                    const numValue = value === '' ? 0 : parseInt(value);
+                    setS({...s, duration: isNaN(numValue) ? 0 : numValue});
+                  }} 
                 />
                 <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-500 text-sm">min</span>
               </div>
@@ -561,9 +687,9 @@ function Editor({ initial, onClose, db }:{ initial: Service; onClose: ()=>void; 
               Cancel
             </button>
             <button 
-              className="flex-1 bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors disabled:opacity-50" 
+              className="flex-1 bg-terracotta text-white rounded-lg px-4 py-2 hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" 
               onClick={save}
-              disabled={loading || !s.name.trim() || s.price <= 0 || s.duration <= 0}
+              disabled={loading || !s.name?.trim() || (typeof s.price !== 'number' || s.price <= 0) || (typeof s.duration !== 'number' || s.duration <= 0)}
             >
               {loading ? 'Saving...' : (s.id ? 'Update Service' : 'Create Service')}
             </button>

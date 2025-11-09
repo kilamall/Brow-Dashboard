@@ -39,6 +39,12 @@ const navGroups = [
     ]
   },
   {
+    label: 'Marketing',
+    items: [
+      { to: '/promotions', icon: '🎯', label: 'Promotions & Campaigns' }
+    ]
+  },
+  {
     label: 'Settings',
     items: [
       { to: '/settings', icon: '⚙️', label: 'Settings' }

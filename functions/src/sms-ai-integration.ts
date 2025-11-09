@@ -1,5 +1,5 @@
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
@@ -11,11 +11,25 @@ const db = getFirestore();
 const SMS_CACHE_COLLECTION = 'sms_ai_cache';
 const SMS_CACHE_TTL_HOURS = 24; // Cache SMS responses for 24 hours
 
-// AWS SNS configuration
+// Define secrets for Twilio
+const twilioAccountSid = defineSecret('TWILIO_ACCOUNT_SID');
+const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
+const twilioPhoneNumber = defineString('TWILIO_PHONE_NUMBER', { default: '+16506839181' });
+const twilioMessagingServiceSid = defineString('TWILIO_MESSAGING_SERVICE_SID', { default: '' });
+
+// SMS Provider Configuration (Twilio preferred if available, AWS SNS as fallback)
+// For A2P 10DLC compliance, use Messaging Service SID instead of phone number
+const getTwilioConfig = () => ({
+  accountSid: twilioAccountSid.value(),
+  authToken: twilioAuthToken.value(),
+  phoneNumber: twilioPhoneNumber.value(),
+  messagingServiceSid: twilioMessagingServiceSid.value() || undefined
+});
+
+// AWS SNS configuration (fallback)
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
-const BUSINESS_PHONE_NUMBER = process.env.BUSINESS_PHONE_NUMBER;
 
 // Gemini AI configuration
 const geminiApiKey = defineSecret('GEMINI_API_KEY');
@@ -40,8 +54,8 @@ const BUSINESS_CONTEXT = {
     saturday: "9:00 AM - 6:00 PM",
     sunday: "10:00 AM - 4:00 PM"
   },
-  location: "123 Main Street, Downtown",
-  phone: "(650) 613-8455"
+  location: "315 9th Ave, San Mateo, CA 94401",
+  phone: "(650) 766-3918"
 };
 
 // Get real-time business data
@@ -293,13 +307,45 @@ function generateFallbackResponse(message: string): string {
 }
 
 // Send SMS via AWS SNS
-async function sendSMS(phoneNumber: string, message: string): Promise<boolean> {
+async function sendSMS(phoneNumber: string, message: string, twilioConfig?: { accountSid: string; authToken: string; phoneNumber: string; messagingServiceSid?: string }): Promise<boolean> {
   try {
-    if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
-      console.log('AWS SNS not configured, logging SMS:', { to: phoneNumber, body: message });
+    // Option 1: Use Twilio (preferred - A2P approved)
+    if (twilioConfig?.accountSid && twilioConfig?.authToken) {
+      try {
+        const twilio = await import('twilio');
+        const client = twilio.default(twilioConfig.accountSid, twilioConfig.authToken);
+        
+        // For A2P 10DLC compliance, use Messaging Service SID if available
+        // Otherwise fall back to phone number
+        const messageParams: any = {
+          body: message,
+          to: phoneNumber
+        };
+        
+        if (twilioConfig.messagingServiceSid) {
+          // Use Messaging Service SID for A2P compliance
+          messageParams.messagingServiceSid = twilioConfig.messagingServiceSid;
+          console.log('📱 Using Messaging Service SID for A2P compliance');
+        } else if (twilioConfig.phoneNumber) {
+          // Fallback to phone number if Messaging Service not configured
+          messageParams.from = twilioConfig.phoneNumber;
+          console.log('📱 Using phone number directly (not A2P optimized)');
+        } else {
+          throw new Error('Either messagingServiceSid or phoneNumber must be provided');
+        }
+        
+        const result = await client.messages.create(messageParams);
+        
+        console.log('✅ AI SMS sent via Twilio (A2P approved):', result.sid);
       return true;
+      } catch (error) {
+        console.error('Error sending SMS via Twilio:', error);
+        throw error;
+      }
     }
 
+    // Option 2: Use AWS SNS (fallback)
+    if (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY) {
     const AWS = require('aws-sdk');
     const sns = new AWS.SNS({
       accessKeyId: AWS_ACCESS_KEY_ID,
@@ -313,10 +359,15 @@ async function sendSMS(phoneNumber: string, message: string): Promise<boolean> {
     };
 
     const result = await sns.publish(params).promise();
-    console.log('SMS sent via AWS SNS:', result.MessageId);
+      console.log('✅ AI SMS sent via AWS SNS:', result.MessageId);
+      return true;
+    }
+    
+    // Option 3: No SMS provider configured
+    console.log('⚠️ No SMS provider configured, logging AI SMS:', { to: phoneNumber, body: message });
     return true;
   } catch (error) {
-    console.error('Error sending SMS:', error);
+    console.error('❌ Error sending AI SMS:', error);
     return false;
   }
 }
@@ -358,7 +409,11 @@ function generateAvailableSlots(services: any[], businessHours: any, appointment
 
 // Main SMS + AI integration function
 export const smsAIWebhook = onRequest(
-  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
+  { 
+    region: 'us-central1', 
+    cors: true, 
+    secrets: [geminiApiKey, twilioAccountSid, twilioAuthToken] 
+  },
   async (req, res) => {
     const apiKey = geminiApiKey.value();
     console.log('SMS AI webhook received:', req.method, req.body);
@@ -403,7 +458,8 @@ export const smsAIWebhook = onRequest(
       const aiResponse = await callGeminiAI(body, aiContext, from, apiKey);
       
       // Send SMS response
-      const smsSent = await sendSMS(from, aiResponse);
+      const twilioConfig = getTwilioConfig();
+      const smsSent = await sendSMS(from, aiResponse, twilioConfig);
       
       // Store conversation
       await Promise.all([
@@ -446,7 +502,11 @@ export const smsAIWebhook = onRequest(
 
 // Test SMS + AI integration
 export const testSMSAI = onCall(
-  { region: 'us-central1', cors: true, secrets: [geminiApiKey] },
+  { 
+    region: 'us-central1', 
+    cors: true, 
+    secrets: [geminiApiKey, twilioAccountSid, twilioAuthToken] 
+  },
   async (req) => {
     // SECURITY FIX: Require authentication
     if (!req.auth) {
@@ -480,7 +540,8 @@ export const testSMSAI = onCall(
       };
       
       const aiResponse = await callGeminiAI(message, aiContext, phoneNumber, apiKey);
-      const smsSent = await sendSMS(phoneNumber, aiResponse);
+      const twilioConfig = getTwilioConfig();
+      const smsSent = await sendSMS(phoneNumber, aiResponse, twilioConfig);
       
       return {
         success: true,

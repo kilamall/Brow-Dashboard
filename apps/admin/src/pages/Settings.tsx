@@ -9,9 +9,11 @@ import {
   setBusinessInfo,
   watchHomePageContent,
   setHomePageContent,
-  watchAppointmentsByDay
+  watchAppointmentsByDay,
+  watchDayClosures,
+  watchSpecialHours
 } from '@buenobrows/shared/firestoreActions';
-import type { AnalyticsTargets, BusinessHours, BusinessInfo, HomePageContent, Appointment, CustomerConsent, ConsentFormTemplate, Service } from '@buenobrows/shared/types';
+import type { AnalyticsTargets, BusinessHours, BusinessInfo, HomePageContent, Appointment, CustomerConsent, ConsentFormTemplate, Service, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { format, parseISO } from 'date-fns';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -25,8 +27,9 @@ import AITrainingPanel from '../components/AITrainingPanel';
 import CostMonitoringSettings from '../components/CostMonitoringSettings';
 import MediaGalleryManager from '../components/MediaGalleryManager';
 import EmailTemplatesManager from '../components/EmailTemplatesManager';
+import TwoFactorSetup from '../components/TwoFactorSetup';
 
-type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring' | 'emailtemplates';
+type Tab = 'business' | 'content' | 'media' | 'serviceimages' | 'skinanalysis' | 'hours' | 'analytics' | 'consent' | 'verifications' | 'accessibility' | 'datamanagement' | 'adminemail' | 'aitraining' | 'costmonitoring' | 'emailtemplates' | 'security';
 
 export default function Settings() {
   const { db, app } = useFirebase();
@@ -42,7 +45,7 @@ export default function Settings() {
   useEffect(() => {
     const savedTab = localStorage.getItem('settingsActiveTab');
     if (savedTab) {
-      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining', 'costmonitoring', 'emailtemplates'];
+      const validTabs: Tab[] = ['business', 'content', 'media', 'serviceimages', 'skinanalysis', 'hours', 'analytics', 'consent', 'verifications', 'accessibility', 'datamanagement', 'adminemail', 'aitraining', 'costmonitoring', 'emailtemplates', 'security'];
       if (validTabs.includes(savedTab as Tab)) {
         setActiveTab(savedTab as Tab);
       }
@@ -83,6 +86,28 @@ export default function Settings() {
     }
   };
 
+  // Fix customer promotions - sets totalVisits to 0 for new customers
+  const fixCustomerPromotions = async () => {
+    if (!confirm('This will set totalVisits=0 for all customers missing this field, enabling new user promotions. Continue?')) {
+      return;
+    }
+    
+    setSyncing(true);
+    try {
+      const functions = getFunctions(app, 'us-central1');
+      const fixTotalVisitsFn = httpsCallable(functions, 'fixTotalVisits');
+      const result = await fixTotalVisitsFn({});
+      const data = result.data as any;
+      
+      alert(`✅ ${data.message}\n\n📊 Total customers: ${data.totalCustomers}\n🔧 Fixed: ${data.fixedCount}`);
+    } catch (error: any) {
+      console.error('Fix error:', error);
+      alert(`❌ Failed to fix promotions: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   // Clear all holds function using Cloud Function
   const clearAllHolds = async () => {
     if (!confirm('Are you sure you want to clear all active holds? This will release all time slots.')) {
@@ -116,6 +141,7 @@ export default function Settings() {
     { id: 'analytics', label: 'Analytics', icon: '📊' },
     { id: 'consent', label: 'Consent Forms', icon: '📋' },
     { id: 'verifications', label: 'Customer Verifications', icon: '🔐' },
+    { id: 'security', label: 'Security & 2FA', icon: '🔒' },
     { id: 'accessibility', label: 'Accessibility', icon: '♿' },
     { id: 'adminemail', label: 'Admin Notifications', icon: '📧' },
     { id: 'aitraining', label: 'AI Messaging', icon: '🤖' },
@@ -132,24 +158,26 @@ export default function Settings() {
         <p className="text-slate-600 mt-1">Manage your business settings and website content</p>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-slate-200">
-        <nav className="flex gap-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-terracotta text-terracotta font-medium'
-                  : 'border-transparent text-slate-600 hover:text-slate-800 hover:border-slate-300'
-              }`}
-            >
-              <span>{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
+      {/* Tabs - Scrollable with Categories */}
+      <div className="border-b border-slate-200 bg-white">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
+          <nav className="flex gap-1 min-w-max px-2">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-terracotta text-terracotta font-medium bg-terracotta/5'
+                    : 'border-transparent text-slate-600 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
       </div>
 
       {/* Tab Content */}
@@ -224,6 +252,12 @@ export default function Settings() {
           </section>
         )}
 
+        {activeTab === 'security' && (
+          <section className="bg-white rounded-xl shadow-soft p-6">
+            <TwoFactorSetup />
+          </section>
+        )}
+
         {activeTab === 'accessibility' && (
           <section className="bg-white rounded-xl shadow-soft p-6 space-y-6">
             <div>
@@ -265,7 +299,7 @@ export default function Settings() {
             {/* Quick Actions Section */}
             <div className="mb-8">
               <h3 className="font-semibold text-lg mb-4">Quick Actions</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <button 
                   onClick={syncAvailability}
                   disabled={syncing}
@@ -288,6 +322,18 @@ export default function Settings() {
                   }`}
                 >
                   {syncing ? '⏳ Working...' : '🗑️ Clear All Holds'}
+                </button>
+                
+                <button 
+                  onClick={fixCustomerPromotions}
+                  disabled={syncing}
+                  className={`px-6 py-4 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    syncing 
+                      ? 'bg-gray-400 text-white cursor-not-allowed' 
+                      : colorAccessibility ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white shadow-lg hover:shadow-xl' : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {syncing ? '⏳ Fixing...' : '🎁 Fix Customer Promotions'}
                 </button>
               </div>
             </div>
@@ -937,6 +983,215 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
         </div>
       </div>
 
+      {/* Events Page Section */}
+      <div className="space-y-4 border-t pt-6">
+        <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+          <span className="text-lg">🎉</span>
+          Events Page Content
+        </h3>
+        <p className="text-sm text-slate-600">Customize the content for your Events page (for corporate and special event packages)</p>
+        
+        <div className="grid gap-4">
+          <label htmlFor="events-hero-title" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">Events Hero Title</span>
+            <input 
+              id="events-hero-title"
+              name="events-hero-title"
+              type="text" 
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              value={content.eventsHeroTitle || ''} 
+              onChange={(e)=>setContent({...content, eventsHeroTitle: e.target.value})} 
+              placeholder="Premium Event Packages"
+            />
+          </label>
+          <label htmlFor="events-hero-description" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">Events Hero Description</span>
+            <textarea 
+              id="events-hero-description"
+              name="events-hero-description"
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              rows={3}
+              value={content.eventsHeroDescription || ''} 
+              onChange={(e)=>setContent({...content, eventsHeroDescription: e.target.value})} 
+              placeholder="Transform your corporate events, team gatherings, and special occasions..."
+            />
+          </label>
+        </div>
+
+        {/* Featured Services */}
+        <div className="mt-6 space-y-4">
+          <h4 className="text-sm font-semibold text-slate-700">Featured Services Showcase</h4>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <label htmlFor="events-featured-1-title" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 1 Title</span>
+              <input 
+                id="events-featured-1-title"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedTitle1 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedTitle1: e.target.value})} 
+                placeholder="Permanent Jewelry"
+              />
+            </label>
+            <label htmlFor="events-featured-1-desc" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 1 Description</span>
+              <input 
+                id="events-featured-1-desc"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedDescription1 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedDescription1: e.target.value})} 
+                placeholder="Seamless, custom jewelry installations..."
+              />
+            </label>
+            <label htmlFor="events-featured-2-title" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 2 Title</span>
+              <input 
+                id="events-featured-2-title"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedTitle2 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedTitle2: e.target.value})} 
+                placeholder="Professional Makeup"
+              />
+            </label>
+            <label htmlFor="events-featured-2-desc" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 2 Description</span>
+              <input 
+                id="events-featured-2-desc"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedDescription2 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedDescription2: e.target.value})} 
+                placeholder="Expert artistry for corporate headshots..."
+              />
+            </label>
+            <label htmlFor="events-featured-3-title" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 3 Title</span>
+              <input 
+                id="events-featured-3-title"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedTitle3 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedTitle3: e.target.value})} 
+                placeholder="Face Paint & Artistry"
+              />
+            </label>
+            <label htmlFor="events-featured-3-desc" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 3 Description</span>
+              <input 
+                id="events-featured-3-desc"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedDescription3 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedDescription3: e.target.value})} 
+                placeholder="Creative designs that add vibrancy..."
+              />
+            </label>
+            <label htmlFor="events-featured-4-title" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 4 Title</span>
+              <input 
+                id="events-featured-4-title"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedTitle4 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedTitle4: e.target.value})} 
+                placeholder="Curated Experiences"
+              />
+            </label>
+            <label htmlFor="events-featured-4-desc" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Feature 4 Description</span>
+              <input 
+                id="events-featured-4-desc"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent text-sm" 
+                value={content.eventsFeaturedDescription4 || ''} 
+                onChange={(e)=>setContent({...content, eventsFeaturedDescription4: e.target.value})} 
+                placeholder="Bespoke packages tailored to your event vision..."
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Packages Section */}
+        <div className="mt-6 space-y-4">
+          <h4 className="text-sm font-semibold text-slate-700">Available Packages Section</h4>
+          <label htmlFor="events-packages-title" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">Packages Section Title</span>
+            <input 
+              id="events-packages-title"
+              type="text" 
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              value={content.eventsPackagesTitle || ''} 
+              onChange={(e)=>setContent({...content, eventsPackagesTitle: e.target.value})} 
+              placeholder="Available Packages"
+            />
+          </label>
+          <label htmlFor="events-packages-description" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">Packages Section Description</span>
+            <textarea 
+              id="events-packages-description"
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              rows={2}
+              value={content.eventsPackagesDescription || ''} 
+              onChange={(e)=>setContent({...content, eventsPackagesDescription: e.target.value})} 
+              placeholder="Explore our curated event packages..."
+            />
+          </label>
+        </div>
+
+        {/* CTA Section */}
+        <div className="mt-6 space-y-4">
+          <h4 className="text-sm font-semibold text-slate-700">Call-to-Action Section</h4>
+          <label htmlFor="events-cta-title" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">CTA Title</span>
+            <input 
+              id="events-cta-title"
+              type="text" 
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              value={content.eventsCTATitle || ''} 
+              onChange={(e)=>setContent({...content, eventsCTATitle: e.target.value})} 
+              placeholder="Elevate Your Next Corporate Event"
+            />
+          </label>
+          <label htmlFor="events-cta-description" className="grid gap-2">
+            <span className="text-sm font-medium text-slate-700">CTA Description</span>
+            <textarea 
+              id="events-cta-description"
+              className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+              rows={3}
+              value={content.eventsCTADescription || ''} 
+              onChange={(e)=>setContent({...content, eventsCTADescription: e.target.value})} 
+              placeholder="Our team specializes in creating memorable experiences..."
+            />
+          </label>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <label htmlFor="events-cta-button-1" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Primary CTA Button Text</span>
+              <input 
+                id="events-cta-button-1"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+                value={content.eventsCTAButton1 || ''} 
+                onChange={(e)=>setContent({...content, eventsCTAButton1: e.target.value})} 
+                placeholder="Schedule Consultation"
+              />
+            </label>
+            <label htmlFor="events-cta-button-2" className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">Secondary CTA Button Text</span>
+              <input 
+                id="events-cta-button-2"
+                type="text" 
+                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
+                value={content.eventsCTAButton2 || ''} 
+                onChange={(e)=>setContent({...content, eventsCTAButton2: e.target.value})} 
+                placeholder="View All Services"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+
       {/* About Section */}
       <div className="space-y-4 border-t pt-6">
         <h3 className="font-semibold text-slate-800 flex items-center gap-2">
@@ -955,69 +1210,6 @@ function HomePageContentForm({ initial }: { initial: HomePageContent }) {
             onChange={(e)=>setContent({...content, aboutText: e.target.value})} 
           />
         </label>
-      </div>
-
-      {/* Bueno Circle */}
-      <div className="space-y-4 border-t pt-6">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-            <span className="text-lg">🎁</span>
-            Bueno Circle (Loyalty Program)
-          </h3>
-          <label htmlFor="bueno-circle-enabled" className="flex items-center gap-2">
-            <input 
-              id="bueno-circle-enabled"
-              name="bueno-circle-enabled"
-              type="checkbox" 
-              className="rounded border-slate-300 text-terracotta focus:ring-terracotta"
-              checked={content.buenoCircleEnabled} 
-              onChange={(e)=>setContent({...content, buenoCircleEnabled: e.target.checked})} 
-            />
-            <span className="text-sm font-medium text-slate-600">Enabled</span>
-          </label>
-        </div>
-
-        {content.buenoCircleEnabled && (
-          <div className="grid gap-4 pl-6 border-l-2 border-terracotta/30">
-            <label htmlFor="bueno-circle-title" className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">Section Title</span>
-              <input 
-                id="bueno-circle-title"
-                name="bueno-circle-title"
-                type="text" 
-                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
-                value={content.buenoCircleTitle} 
-                onChange={(e)=>setContent({...content, buenoCircleTitle: e.target.value})} 
-              />
-            </label>
-
-            <label htmlFor="bueno-circle-description" className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">Description</span>
-              <textarea 
-                id="bueno-circle-description"
-                name="bueno-circle-description"
-                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent" 
-                rows={2}
-                value={content.buenoCircleDescription} 
-                onChange={(e)=>setContent({...content, buenoCircleDescription: e.target.value})} 
-              />
-            </label>
-
-            <label htmlFor="bueno-circle-discount" className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">Discount Percentage</span>
-              <input 
-                id="bueno-circle-discount"
-                name="bueno-circle-discount"
-                type="number" 
-                min={0}
-                max={100}
-                className="border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-terracotta focus:border-transparent w-32" 
-                value={content.buenoCircleDiscount} 
-                onChange={(e)=>setContent({...content, buenoCircleDiscount: parseInt(e.target.value || '0')})} 
-              />
-            </label>
-          </div>
-        )}
       </div>
 
       {/* Save Button */}
@@ -1427,13 +1619,23 @@ function SlotPreview({ bh }: { bh: BusinessHours }) {
   const [dateStr, setDateStr] = useState<string>(() => new Date().toISOString().slice(0,10));
   const [duration, setDuration] = useState<number>(60);
   const [appts, setAppts] = useState<Appointment[]>([]);
+  const [closures, setClosures] = useState<DayClosure[]>([]);
+  const [specialHours, setSpecialHours] = useState<SpecialHours[]>([]);
   const d = useMemo(() => new Date(dateStr + 'T00:00:00'), [dateStr]);
 
   useEffect(() => {
     return watchAppointmentsByDay(db, d, setAppts);
   }, [d]);
+  
+  useEffect(() => {
+    return watchDayClosures(db, setClosures);
+  }, [db]);
+  
+  useEffect(() => {
+    return watchSpecialHours(db, setSpecialHours);
+  }, [db]);
 
-  const slots = useMemo(() => availableSlotsForDay(d, duration, bh, appts), [d, duration, bh, appts]);
+  const slots = useMemo(() => availableSlotsForDay(d, duration, bh, appts, closures, specialHours), [d, duration, bh, appts, closures, specialHours]);
 
   return (
     <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">

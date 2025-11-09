@@ -93,6 +93,135 @@ createdAt?: any;
 updatedAt?: any;
 }
 
+// ========================= PROMOTIONS & CAMPAIGNS =========================
+
+export type DiscountType = 
+  | 'percentage'           // 10% off
+  | 'fixed_amount'         // $10 off
+  | 'free_service'         // Free service when conditions met
+  | 'buy_x_get_y'          // Buy 2, get 1 free
+  | 'bundle_discount';     // Book 3 services, save 15%
+
+export type ApplicationMethod = 
+  | 'auto_apply'           // Automatically applies
+  | 'promo_code'           // Customer enters code
+  | 'one_time_code'        // Single-use code
+  | 'manual';              // Admin applies
+
+export type CustomerSegment = 
+  | 'all'
+  | 'new_customers'        // 0 visits
+  | 'returning_customers'  // 1+ visits
+  | 'loyalty_milestone'    // Xth visit
+  | 'inactive_customers'   // Haven't booked in X days
+  | 'specific_customers'   // Custom customer list
+  | 'birthday';            // Birthday customers
+
+export interface Promotion {
+  id: ID;
+  name: string;
+  description?: string;
+  
+  // Campaign Status & Scheduling
+  status: 'draft' | 'scheduled' | 'active' | 'paused' | 'ended';
+  scheduledStart?: string; // ISO date string
+  scheduledEnd?: string;   // ISO date string
+  startedAt?: string;      // When campaign actually started
+  endedAt?: string;        // When campaign ended
+  
+  // Discount Configuration
+  discountType: DiscountType;
+  discountValue: number;   // 10 for 10% or $10
+  discountConfig?: {
+    buyQuantity?: number;  // For BOGO: buy 2
+    getQuantity?: number;  // For BOGO: get 1
+    bundleSize?: number;   // For bundle: 3 services
+    freeServiceId?: string; // For free_service: service ID
+  };
+  
+  // Application Method
+  applicationMethod: ApplicationMethod;
+  promoCode?: string;      // If code-based: "SUMMER2025"
+  codeFormat?: 'custom' | 'auto_generated'; // For code generation
+  oneTimeCodes?: string[]; // Array of single-use codes
+  
+  // Targeting - Services/Categories
+  appliesTo: 'all' | 'services' | 'categories';
+  serviceIds?: string[];   // Specific services
+  categoryNames?: string[];// Specific categories
+  excludeServiceIds?: string[];     // Never apply to these services
+  excludeCategoryNames?: string[];  // Never apply to these categories
+  
+  // Targeting - Customer Segments
+  customerSegment: CustomerSegment;
+  segmentConfig?: {
+    visitCount?: number;        // For loyalty_milestone: 5
+    inactiveDays?: number;      // For inactive_customers: 30
+    customerIds?: string[];     // For specific_customers
+    birthdayWindow?: {
+      daysBefore?: number;      // Send email X days before (default: 7)
+      daysAfter?: number;       // Valid X days after birthday (default: 7)
+      sendEmail?: boolean;      // Auto-send birthday email
+      emailTemplate?: string;   // Email template ID to use
+    };
+  };
+  
+  // Conditions
+  minPurchaseAmount?: number;   // Minimum $ to qualify
+  maxUses?: number;             // Total uses (null = unlimited)
+  maxUsesPerCustomer?: number;  // Per customer limit (null = unlimited)
+  stackable: boolean;           // Can combine with other promos
+  
+  // Priority (if multiple applicable, higher priority wins)
+  priority: number;             // 1-100, higher = more priority
+  
+  // Date/Time Restrictions
+  validFrom?: string;           // ISO date string
+  validUntil?: string;          // ISO date string
+  validDaysOfWeek?: number[];   // [0-6] Sunday-Saturday
+  validTimeRanges?: {           // Time windows
+    start: string;              // "09:00"
+    end: string;                // "17:00"
+  }[];
+  
+  // Exclusions
+  excludePromotionIds?: string[]; // Can't combine with these promos
+  
+  // Tracking
+  usedCount?: number;           // Total times used
+  totalDiscountGiven?: number;  // Total $ saved by customers
+  customerUsageCount?: Record<string, number>; // Per-customer usage
+  
+  // Metadata
+  createdAt?: any;
+  updatedAt?: any;
+  createdBy?: string;           // Admin user ID
+}
+
+export interface PromotionUsage {
+  id: ID;
+  promotionId: ID;
+  customerId: ID;
+  appointmentId?: ID;
+  appliedAt: string; // ISO date string
+  discountAmount: number; // Amount saved
+  promoCodeUsed?: string;
+  triggerContext?: {
+    trigger: CustomerSegment;
+    visitCount?: number; // For tracking which visit triggered it
+  };
+}
+
+export interface BirthdayPromoUsage {
+  id: ID;
+  customerId: ID;
+  promotionId: ID;
+  birthdayYear: number; // e.g., 2025 - tracks which year they used it
+  usedAt: string; // ISO date string
+  appointmentId?: ID;
+  discountAmount: number;
+}
+
 
 export interface Customer {
 id: ID;
@@ -287,6 +416,23 @@ skinAnalysisSubtitle: string;
 skinAnalysisDescription: string;
 skinAnalysisImageUrl?: string;
 skinAnalysisCTA: string;
+// Events Page Section
+eventsHeroTitle: string;
+eventsHeroDescription: string;
+eventsFeaturedTitle1: string;
+eventsFeaturedDescription1: string;
+eventsFeaturedTitle2: string;
+eventsFeaturedDescription2: string;
+eventsFeaturedTitle3: string;
+eventsFeaturedDescription3: string;
+eventsFeaturedTitle4: string;
+eventsFeaturedDescription4: string;
+eventsPackagesTitle: string;
+eventsPackagesDescription: string;
+eventsCTATitle: string;
+eventsCTADescription: string;
+eventsCTAButton1: string;
+eventsCTAButton2: string;
 }
 
 export interface SkinAnalysis {

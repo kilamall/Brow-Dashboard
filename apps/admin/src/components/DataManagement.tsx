@@ -5,7 +5,8 @@ import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from 'firebase/fi
 
 export default function DataManagement() {
   const { db } = useFirebase();
-  const [collectionCounts, setCollectionCounts] = useState<any>(null);
+  const [collectionCounts, setCollectionCounts] = useState<Record<string, number> | null>(null);
+  const [selectedCollections, setSelectedCollections] = useState<Set<string>>(new Set());
   const [showPurgeModal, setShowPurgeModal] = useState(false);
   const [purgeLoading, setPurgeLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -63,10 +64,26 @@ export default function DataManagement() {
       const functions = getFunctions();
       const getCounts = httpsCallable(functions, 'getCollectionCounts');
       const result = await getCounts();
-      setCollectionCounts(result.data);
+      const data = result.data as any;
+      // Extract the counts object from the response
+      setCollectionCounts(data?.counts || {});
+      setSelectedCollections(new Set()); // Reset selections when loading
     } catch (error) {
       console.error('Failed to load collection counts:', error);
+      setCollectionCounts({});
     }
+  };
+
+  const handleCollectionToggle = (collection: string) => {
+    setSelectedCollections(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(collection)) {
+        newSet.delete(collection);
+      } else {
+        newSet.add(collection);
+      }
+      return newSet;
+    });
   };
 
   const handleSyncCustomerVisits = async () => {
@@ -191,6 +208,7 @@ export default function DataManagement() {
       
       alert(message);
       setShowPurgeModal(false);
+      setSelectedCollections(new Set()); // Clear selections after successful purge
       await loadCollectionCounts();
     } catch (error: any) {
       console.error('Purge failed:', error);
@@ -342,52 +360,13 @@ export default function DataManagement() {
       
       if (data) {
         console.log('📄 Current homepage content:', JSON.stringify(data, null, 2));
-        
-        // Check if galleryPhotos is in wrong format (objects instead of strings)
-        if (data.galleryPhotos && data.galleryPhotos.length > 0 && typeof data.galleryPhotos[0] === 'object') {
-          alert('⚠️ Data format issue detected!\n\ngalleryPhotos contains objects instead of strings.\n\nClick "Fix Data Format" to resolve this.');
-        } else {
-          alert('✅ Homepage content looks good!\n\nCheck the console for full data structure.');
-        }
+        alert('✅ Homepage content loaded!\n\nCheck the console for full data structure.');
       } else {
         alert('❌ No homepage content found.');
       }
     } catch (error) {
       console.error('Error checking homepage content:', error);
       alert('Error checking homepage content: ' + error);
-    }
-  };
-
-  const fixDataFormat = async () => {
-    try {
-      const data = await loadHomepageContent();
-      
-      if (!data) {
-        alert('No homepage content found to fix.');
-        return;
-      }
-
-      const galleryPhotos = data.galleryPhotos || [];
-      
-      // Convert objects to URL strings
-      const fixedGalleryPhotos = galleryPhotos.map((photo: any) => {
-        if (typeof photo === 'object' && photo.url) {
-          return photo.url;
-        }
-        return photo;
-      });
-
-      // Update the document with fixed data
-      await setDoc(doc(db, 'settings', 'homePageContent'), {
-        ...data,
-        galleryPhotos: fixedGalleryPhotos
-      }, { merge: true });
-
-      alert('✅ Data format fixed!\n\nConverted galleryPhotos from objects to URL strings.');
-      await loadHomepageContent();
-    } catch (error) {
-      console.error('Error fixing data format:', error);
-      alert('Error fixing data format: ' + error);
     }
   };
 
@@ -506,17 +485,84 @@ export default function DataManagement() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Smart Cleanup Center */}
-      <div className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-xl shadow-lg p-6">
+    <div className="space-y-6 max-h-[calc(100vh-250px)] overflow-y-auto pr-2">
+      {/* Warning Banner */}
+      <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+        <div className="flex items-start">
+          <svg className="w-6 h-6 text-red-500 mr-3 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <h4 className="text-red-800 font-semibold mb-1">⚠️ Data Management Warning</h4>
+            <p className="text-sm text-red-700">Actions in this section can permanently delete data. Always review what you're deleting before confirming. Some actions cannot be undone.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Safe Operations Section */}
+      <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl shadow-lg p-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h3 className="text-xl font-bold text-slate-800">Smart Cleanup Center</h3>
-            <p className="text-sm text-slate-600">Intelligent database maintenance and optimization</p>
+            <h3 className="text-xl font-bold text-green-800 flex items-center gap-2">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Safe Operations
+            </h3>
+            <p className="text-sm text-green-700 mt-1">These actions are safe and won't delete any data</p>
           </div>
-          <button onClick={loadCleanupStats} className="text-sm text-blue-600 hover:text-blue-700">
-            Refresh Stats
+          <button onClick={loadCleanupStats} className="text-sm text-green-700 hover:text-green-800 font-medium px-3 py-1 bg-white rounded-lg hover:bg-green-100 transition-colors">
+            🔄 Refresh Stats
           </button>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button 
+            className="bg-white hover:bg-green-50 border-2 border-green-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={handleSyncCustomerVisits}
+            disabled={syncing}
+          >
+            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Sync Customer Visits</div>
+              <div className="text-xs text-slate-600">Update visit counts from appointments</div>
+            </div>
+            {syncing && <div className="text-green-600">⏳</div>}
+          </button>
+          
+          <button 
+            className="bg-white hover:bg-green-50 border-2 border-green-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={loadCleanupStats}
+          >
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">View Database Stats</div>
+              <div className="text-xs text-slate-600">Check current database status</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Smart Cleanup Center */}
+      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-lg p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-blue-800 flex items-center gap-2">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Automated Cleanup
+            </h3>
+            <p className="text-sm text-blue-700 mt-1">Safe cleanup of old expired data (30+ days old)</p>
+          </div>
         </div>
         
         {/* Smart Recommendations Section */}
@@ -539,58 +585,83 @@ export default function DataManagement() {
           </div>
         )}
         
-        {/* Quick Actions Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Cleanup Actions Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <button 
-            className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg p-4 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
-            onClick={handleSyncCustomerVisits}
-            disabled={syncing}
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span className="font-medium">Sync Visits</span>
-            <span className="text-xs opacity-90">Update counts</span>
-          </button>
-          
-          <button 
-            className="bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg p-4 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            className="bg-white hover:bg-orange-50 border-2 border-orange-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
             onClick={handleClearCancelledAppointments}
             disabled={clearing || cancelledCount === 0}
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            <span className="font-medium">Clear Old Data</span>
-            <span className="text-xs opacity-90">{cancelledCount || 0} items</span>
+            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Clear Cancelled Appointments</div>
+              <div className="text-xs text-slate-600">{cancelledCount || 0} items older than 30 days</div>
+            </div>
+            {clearing && <div className="text-orange-600">⏳</div>}
           </button>
           
           <button 
-            className="bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg p-4 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
+            className="bg-white hover:bg-green-50 border-2 border-green-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
             onClick={handleRunCleanup}
             disabled={runningCleanup}
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span className="font-medium">Auto Cleanup</span>
-            <span className="text-xs opacity-90">Run all tasks</span>
-          </button>
-          
-          <button 
-            className="bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-lg p-4 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
-            onClick={() => {
-              setShowPurgeModal(true);
-              loadCollectionCounts();
-            }}
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            <span className="font-medium">Purge Data</span>
-            <span className="text-xs opacity-90">Advanced</span>
+            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Run Auto Cleanup</div>
+              <div className="text-xs text-slate-600">Clean all old expired data</div>
+            </div>
+            {runningCleanup && <div className="text-green-600">⏳</div>}
           </button>
         </div>
+      </div>
+
+      {/* Dangerous Operations Section */}
+      <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-xl shadow-lg p-6 border-2 border-red-200">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-red-800 flex items-center gap-2">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              Dangerous Operations
+            </h3>
+            <p className="text-sm text-red-700 mt-1">⚠️ These actions permanently delete data. Use with extreme caution!</p>
+          </div>
+        </div>
+        
+        <div className="bg-red-100 border border-red-300 rounded-lg p-4 mb-4">
+          <p className="text-sm text-red-800 font-medium">⚠️ Warning: The operations below will permanently delete data from your database. This cannot be undone. Only use these if you're absolutely sure.</p>
+        </div>
+
+        <button 
+          className="w-full bg-white hover:bg-red-50 border-2 border-red-300 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+          onClick={() => {
+            setShowPurgeModal(true);
+            loadCollectionCounts();
+            setSelectedCollections(new Set()); // Reset selections when opening modal
+          }}
+        >
+          <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </div>
+          <div className="text-left flex-1">
+            <div className="font-medium text-slate-800">Purge Collection Data</div>
+            <div className="text-xs text-slate-600">Permanently delete entire collections (IRREVERSIBLE)</div>
+          </div>
+          <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
 
       {/* Homepage Content Management */}
@@ -606,7 +677,7 @@ export default function DataManagement() {
         </div>
         
         {/* Homepage Content Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <button 
             className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
             onClick={checkHomepageContent}
@@ -616,17 +687,6 @@ export default function DataManagement() {
             </svg>
             <span className="font-medium text-sm">Check Content</span>
             <span className="text-xs opacity-90">Inspect data</span>
-          </button>
-          
-          <button 
-            className="bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-lg p-3 flex flex-col items-center gap-2 transition-all shadow-md hover:shadow-lg"
-            onClick={fixDataFormat}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0l1.83 7.506a1.5 1.5 0 01-1.442 1.882H9.937a1.5 1.5 0 01-1.442-1.882l1.83-7.506zM15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span className="font-medium text-sm">Fix Format</span>
-            <span className="text-xs opacity-90">Repair data</span>
           </button>
           
           <button 
@@ -844,52 +904,101 @@ export default function DataManagement() {
 
       {/* Purge Data Modal */}
       {showPurgeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
-            <h3 className="font-serif text-lg mb-4">Purge Collection Data</h3>
-            <p className="text-sm text-slate-600 mb-6">
-              ⚠️ This will permanently delete all data from the selected collections. This action cannot be undone.
-            </p>
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto border-4 border-red-300">
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-lg">
+              <h3 className="font-bold text-red-800 text-xl mb-2 flex items-center gap-2">
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                ⚠️ DANGER: Purge Collection Data
+              </h3>
+              <p className="text-sm text-red-700 font-medium mb-2">
+                This will PERMANENTLY DELETE all data from the selected collections.
+              </p>
+              <p className="text-sm text-red-600">
+                ⚠️ This action CANNOT be undone. All data will be lost forever. Make sure you have backups if needed.
+              </p>
+            </div>
             
-            {collectionCounts && (
+            {collectionCounts && Object.keys(collectionCounts).length > 0 ? (
               <div className="space-y-3 mb-6">
-                {Object.entries(collectionCounts).map(([collection, count]) => (
-                  <label key={collection} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-slate-50">
-                    <input 
-                      type="checkbox" 
-                      value={collection}
-                      className="rounded"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium text-slate-800">{collection}</div>
-                      <div className="text-sm text-slate-600">{count as number} documents</div>
-                    </div>
-                  </label>
-                ))}
+                <p className="text-sm text-slate-600 mb-3">Select collections to purge (check the boxes):</p>
+                {Object.entries(collectionCounts).map(([collection, count]) => {
+                  const countValue = typeof count === 'number' ? count : 0;
+                  const isSelected = selectedCollections.has(collection);
+                  return (
+                    <label 
+                      key={collection} 
+                      className={`flex items-center gap-3 p-3 border-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors ${
+                        isSelected ? 'border-red-400 bg-red-50' : 'border-slate-200'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={isSelected}
+                        onChange={() => handleCollectionToggle(collection)}
+                        className="rounded w-5 h-5 text-red-600 focus:ring-red-500"
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-slate-800">{collection}</div>
+                        <div className="text-sm text-slate-600">
+                          {countValue.toLocaleString()} {countValue === 1 ? 'document' : 'documents'}
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </label>
+                  );
+                })}
+                {selectedCollections.size > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
+                    <p className="text-sm text-blue-800">
+                      <strong>{selectedCollections.size}</strong> collection{selectedCollections.size !== 1 ? 's' : ''} selected for purging
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                <p className="text-sm text-yellow-800">Loading collection counts...</p>
               </div>
             )}
             
             <div className="flex gap-3 justify-end">
               <button 
-                onClick={() => setShowPurgeModal(false)}
-                className="px-4 py-2 text-slate-600 hover:text-slate-800"
+                onClick={() => {
+                  setShowPurgeModal(false);
+                  setSelectedCollections(new Set()); // Clear selections when closing
+                }}
+                className="px-4 py-2 text-slate-600 hover:text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button 
                 onClick={() => {
-                  const checkboxes = document.querySelectorAll('input[type="checkbox"]:checked');
-                  const collections = Array.from(checkboxes).map(cb => (cb as HTMLInputElement).value);
-                  if (collections.length === 0) {
-                    alert('Please select at least one collection to purge.');
+                  if (selectedCollections.size === 0) {
+                    alert('⚠️ Please select at least one collection to purge by checking the boxes above.');
                     return;
                   }
-                  handlePurgeData(collections);
+                  const collections = Array.from(selectedCollections);
+                  // Double confirmation
+                  const confirmMessage = `⚠️ FINAL CONFIRMATION\n\nYou are about to PERMANENTLY DELETE all data from:\n${collections.join('\n')}\n\nThis CANNOT be undone!\n\nType "DELETE" to confirm:`;
+                  const userInput = prompt(confirmMessage);
+                  if (userInput === 'DELETE') {
+                    handlePurgeData(collections);
+                    setSelectedCollections(new Set()); // Clear selections after purge
+                  } else {
+                    alert('Purge cancelled. Data was not deleted.');
+                  }
                 }}
-                disabled={purgeLoading}
-                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50"
+                disabled={purgeLoading || selectedCollections.size === 0}
+                className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold shadow-lg"
               >
-                {purgeLoading ? 'Purging...' : 'Purge Selected'}
+                {purgeLoading ? '⏳ Purging...' : `⚠️ Purge ${selectedCollections.size} Selected Collection${selectedCollections.size !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>
