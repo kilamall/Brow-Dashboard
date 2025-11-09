@@ -49,7 +49,7 @@ const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 
 // SMS Response Templates
-const PRIVACY_URL = 'https://bueno-brows-7cce7.web.app/privacy';
+const PRIVACY_URL = 'https://buenobrows.com/privacy';
 const A2P_FOOTER = `\n\nReply STOP to opt out, HELP for help. Msg&data rates may apply. Privacy: ${PRIVACY_URL}`;
 const SMS_TEMPLATES = {
   greeting: () => {
@@ -99,7 +99,7 @@ const SMS_TEMPLATES = {
   
   categorySelection: (categories: string[]) => {
     if (categories.length === 0) {
-      return `What service are you interested in?\n\nReply with the service name, or visit https://bueno-brows-7cce7.web.app/services to browse.\n\nNeed help? Call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
+      return `What service are you interested in?\n\nReply with the service name, or visit https://buenobrows.com/services to browse.\n\nNeed help? Call (650) 613-8455. - Bueno Brows` + A2P_FOOTER;
     }
     const categoryList = categories.map((c, i) => `${i + 1}. ${c}`).join('\n');
     return `What type of service are you looking for? 💅\n\n${categoryList}\n\nReply with the number or category name (e.g., "1" or "Brows"). - Bueno Brows` + A2P_FOOTER;
@@ -120,12 +120,12 @@ const SMS_TEMPLATES = {
   },
 
   serviceNotFound: (searchTerm: string) => {
-    return `Hmm, I don't see "${searchTerm}" in our services at the moment. 🤔\n\nWould you like to try a different service? You can browse our full menu at https://bueno-brows-7cce7.web.app/services\n\nOr give us a call at (650) 613-8455 and we'll help you find the perfect service! - Bueno Brows` + A2P_FOOTER;
+    return `Hmm, I don't see "${searchTerm}" in our services at the moment. 🤔\n\nWould you like to try a different service? You can browse our full menu at https://buenobrows.com/services\n\nOr give us a call at (650) 613-8455 and we'll help you find the perfect service! - Bueno Brows` + A2P_FOOTER;
   },
 
   serviceNotFoundWithSuggestions: (searchTerm: string, suggestions: any[]) => {
     const suggestionList = suggestions.map((s, i) => `${i + 1}. ${s.name} - $${s.price} (${s.duration} min)`).join('\n');
-    return `Hmm, I don't see "${searchTerm}" exactly. 🤔\n\nDid you mean one of these?\n\n${suggestionList}\n\nReply with the number or try a different service. Browse all at https://bueno-brows-7cce7.web.app/services\n\nCall (650) 613-8455 for help! - Bueno Brows` + A2P_FOOTER;
+    return `Hmm, I don't see "${searchTerm}" exactly. 🤔\n\nDid you mean one of these?\n\n${suggestionList}\n\nReply with the number or try a different service. Browse all at https://buenobrows.com/services\n\nCall (650) 613-8455 for help! - Bueno Brows` + A2P_FOOTER;
   },
 
   bookingCompleteWithEmail: (name: string, service: string, date: string, time: string) => {
@@ -390,7 +390,36 @@ function findServiceByNameOrNumber(
 function parseSMSMessage(message: string, conversationState: any = null): { type: string; data: any } {
   const text = message.toLowerCase().trim();
   
-  // Check for YES/NO confirmations (when in conversation state)
+  // PRIORITY 1: Check for escape commands FIRST (before conversation state)
+  // This allows users to break out of stuck conversations
+  
+  // Check for cancel/restart requests (clears conversation state)
+  if (text === 'cancel' || text === 'restart' || text === 'start over' || text === 'reset') {
+    return { type: 'cancel', data: null };
+  }
+  
+  // Check for help requests
+  if (text === 'help' || text === 'info' || text === 'menu') {
+    return { type: 'help', data: null };
+  }
+  
+  // Check for greetings
+  const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
+  const isGreeting = greetings.some(greeting => {
+    const words = text.split(/\s+/);
+    return words.length <= 3 && words.some(word => word === greeting || word.startsWith(greeting));
+  });
+  
+  if (isGreeting) {
+    return { type: 'greeting', data: null };
+  }
+  
+  // Check for availability requests (also an escape from stuck state)
+  if (text === 'available' || text === 'availability') {
+    return { type: 'availability_request', data: null };
+  }
+  
+  // PRIORITY 2: Check conversation state actions
   if (conversationState) {
     if (text === 'yes' || text === 'y' || text === 'yeah' || text === 'yep' || text === 'sure') {
       return { type: 'confirm_yes', data: conversationState };
@@ -425,17 +454,6 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     }
   }
   
-  // Check for greetings first
-  const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
-  const isGreeting = greetings.some(greeting => {
-    const words = text.split(/\s+/);
-    return words.length <= 3 && words.some(word => word === greeting || word.startsWith(greeting));
-  });
-  
-  if (isGreeting) {
-    return { type: 'greeting', data: null };
-  }
-  
   // Check for booking requests
   if (text.includes('book') || text.includes('schedule') || text.includes('appointment')) {
     const dateMatch = text.match(/(\d{1,2}\/\d{1,2}|\d{1,2}-\d{1,2}|\d{1,2}\s+\d{1,2})/);
@@ -453,8 +471,8 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     return { type: 'booking_help', data: null };
   }
   
-  // Check for availability requests with specific date
-  if (text.includes('available') || text.includes('open') || text.includes('free') || text.includes('availability')) {
+  // Check for availability requests with specific date (also below escape commands)
+  if (text.includes('open') || text.includes('free')) {
     const specificDate = parseSpecificDate(text);
     if (specificDate) {
       return { 
@@ -473,16 +491,6 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
         data: { question: keyword, answer }
       };
     }
-  }
-  
-  // Check for cancel/restart requests (clears conversation state)
-  if (text === 'cancel' || text === 'restart' || text === 'start over' || text === 'reset') {
-    return { type: 'cancel', data: null };
-  }
-  
-  // Check for help requests
-  if (text.includes('help') || text.includes('info') || text.includes('menu')) {
-    return { type: 'help', data: null };
   }
   
   // Check if message contains a date without explicit availability keywords
