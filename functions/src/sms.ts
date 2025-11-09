@@ -53,7 +53,7 @@ const PRIVACY_URL = 'https://bueno-brows-7cce7.web.app/privacy';
 const A2P_FOOTER = `\n\nReply STOP to opt out, HELP for help. Msg&data rates may apply. Privacy: ${PRIVACY_URL}`;
 const SMS_TEMPLATES = {
   greeting: () => {
-    return `Hi! 👋 Welcome to Bueno Brows!\n\nI'm your booking assistant. I can help you:\n• Book appointments\n• Check availability\n• Answer questions about our services\n\nReply "AVAILABLE" to see open slots\nReply "HELP" for more options\nOr just ask me a question!\n\nCall us: (650) 613-8455\n- Bueno Brows` + A2P_FOOTER;
+    return `Hi! 👋 Welcome to Bueno Brows!\n\nI'm your booking assistant. I can help you:\n• Book appointments\n• Check availability\n• Answer questions about our services\n\nReply "AVAILABLE" to see open slots\nReply "HELP" for more options\nReply "CANCEL" anytime to start over\n\nOr just ask me a question!\n\nCall us: (650) 613-8455\n- Bueno Brows` + A2P_FOOTER;
   },
   
   availability: (availableSlots: string[]) => {
@@ -72,7 +72,7 @@ const SMS_TEMPLATES = {
   },
   
   booking_instructions: () => {
-    return `To book an appointment, reply with:\n"BOOK [date] [time]"\n\nExample: "BOOK 12/15 2:00 PM"\n\nFor availability, reply "AVAILABLE"\nFor questions, just ask! - Bueno Brows` + A2P_FOOTER;
+    return `To book an appointment, reply with:\n"BOOK [date] [time]"\n\nExample: "BOOK 12/15 2:00 PM"\n\nFor availability, reply "AVAILABLE"\nStuck? Reply "CANCEL" to restart\nFor questions, just ask! - Bueno Brows` + A2P_FOOTER;
   },
   
   specificAvailable: (date: string, times: string[]) => {
@@ -473,6 +473,11 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
         data: { question: keyword, answer }
       };
     }
+  }
+  
+  // Check for cancel/restart requests (clears conversation state)
+  if (text === 'cancel' || text === 'restart' || text === 'start over' || text === 'reset') {
+    return { type: 'cancel', data: null };
   }
   
   // Check for help requests
@@ -1090,6 +1095,11 @@ export const smsWebhook = onRequest(
           
         case 'confirm_no':
           responseMessage = SMS_TEMPLATES.bookingCancelled();
+          await clearConversationState(from);
+          break;
+          
+        case 'cancel':
+          responseMessage = `No problem! Your booking has been cancelled. 👍\n\nReply "AVAILABLE" to start a new booking or "HELP" for options.\n\nCall us: (650) 613-8455 - Bueno Brows` + A2P_FOOTER;
           await clearConversationState(from);
           break;
           
