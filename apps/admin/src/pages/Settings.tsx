@@ -131,52 +131,98 @@ export default function Settings() {
     }
   };
 
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'business', label: 'Business Info', icon: '🏢' },
-    { id: 'content', label: 'Website Content', icon: '📝' },
-    { id: 'media', label: 'Media Gallery', icon: '📸' },
-    { id: 'serviceimages', label: 'Service Images', icon: '🎨' },
-    { id: 'skinanalysis', label: 'Skin Analysis', icon: '✨' },
-    { id: 'hours', label: 'Business Hours & Operations', icon: '🕐' },
-    { id: 'analytics', label: 'Analytics', icon: '📊' },
-    { id: 'consent', label: 'Consent Forms', icon: '📋' },
-    { id: 'verifications', label: 'Customer Verifications', icon: '🔐' },
-    { id: 'security', label: 'Security & 2FA', icon: '🔒' },
-    { id: 'accessibility', label: 'Accessibility', icon: '♿' },
-    { id: 'adminemail', label: 'Admin Notifications', icon: '📧' },
-    { id: 'aitraining', label: 'AI Messaging', icon: '🤖' },
-    { id: 'costmonitoring', label: 'Cost Monitoring', icon: '💰' },
-    { id: 'emailtemplates', label: 'Email Templates', icon: '📝' },
-    { id: 'datamanagement', label: 'Data Management', icon: '🗄️' }
+  // Group tabs by category for better mobile UX
+  const tabGroups = [
+    {
+      name: 'Content & Media',
+      tabs: [
+        { id: 'business' as Tab, label: 'Business Info', icon: '🏢' },
+        { id: 'content' as Tab, label: 'Website Content', icon: '📝' },
+        { id: 'media' as Tab, label: 'Media Gallery', icon: '📸' },
+        { id: 'serviceimages' as Tab, label: 'Service Images', icon: '🎨' },
+        { id: 'skinanalysis' as Tab, label: 'Skin Analysis', icon: '✨' },
+      ]
+    },
+    {
+      name: 'Operations',
+      tabs: [
+        { id: 'hours' as Tab, label: 'Business Hours', icon: '🕐' },
+        { id: 'consent' as Tab, label: 'Consent Forms', icon: '📋' },
+        { id: 'verifications' as Tab, label: 'Verifications', icon: '🔐' },
+      ]
+    },
+    {
+      name: 'Communications',
+      tabs: [
+        { id: 'adminemail' as Tab, label: 'Admin Notifications', icon: '📧' },
+        { id: 'aitraining' as Tab, label: 'AI Messaging', icon: '🤖' },
+        { id: 'emailtemplates' as Tab, label: 'Email Templates', icon: '📝' },
+      ]
+    },
+    {
+      name: 'Analytics & System',
+      tabs: [
+        { id: 'analytics' as Tab, label: 'Analytics', icon: '📊' },
+        { id: 'costmonitoring' as Tab, label: 'Cost Monitoring', icon: '💰' },
+        { id: 'security' as Tab, label: 'Security & 2FA', icon: '🔒' },
+        { id: 'accessibility' as Tab, label: 'Accessibility', icon: '♿' },
+        { id: 'datamanagement' as Tab, label: 'Data Management', icon: '🗄️' },
+      ]
+    }
   ];
+
+  // Flatten tabs for easy access
+  const allTabs = tabGroups.flatMap(group => group.tabs);
+
+  // Get current active tab info
+  const activeTabInfo = allTabs.find(tab => tab.id === activeTab);
+  const activeGroupInfo = tabGroups.find(group => 
+    group.tabs.some(tab => tab.id === activeTab)
+  );
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="font-serif text-3xl text-slate-800">Settings</h1>
-        <p className="text-slate-600 mt-1">Manage your business settings and website content</p>
-      </div>
-
-      {/* Tabs - Scrollable with Categories */}
-      <div className="border-b border-slate-200 bg-white">
-        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-          <nav className="flex gap-1 min-w-max px-2">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'border-terracotta text-terracotta font-medium bg-terracotta/5'
-                    : 'border-transparent text-slate-600 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <span>{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </nav>
+      {/* Header with Compact Tab Selector */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-3xl text-slate-800">Settings</h1>
+          <p className="text-slate-600 mt-1">Manage your business settings and website content</p>
+        </div>
+        
+        {/* Compact Dropdown Tab Selector */}
+        <div className="relative w-full md:w-96">
+          <label htmlFor="settings-tab-select" className="sr-only">Select Settings Section</label>
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <span className="text-xl">{activeTabInfo?.icon}</span>
+            </div>
+            <select
+              id="settings-tab-select"
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value as Tab)}
+              className="block w-full pl-12 pr-10 py-3 text-base border border-slate-300 focus:outline-none focus:ring-2 focus:ring-terracotta focus:border-terracotta rounded-lg bg-white shadow-sm cursor-pointer hover:border-slate-400 transition-colors"
+            >
+              {tabGroups.map((group) => (
+                <optgroup key={group.name} label={group.name}>
+                  {group.tabs.map((tab) => (
+                    <option key={tab.id} value={tab.id}>
+                      {tab.icon} {tab.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+              <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+              </svg>
+            </div>
+          </div>
+          {activeGroupInfo && (
+            <p className="mt-1 text-xs text-slate-500 pl-1">
+              {activeGroupInfo.name}
+            </p>
+          )}
         </div>
       </div>
 
