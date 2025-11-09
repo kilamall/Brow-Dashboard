@@ -282,6 +282,23 @@ export default function CalendarWeekView({
                           {dayAppointments.length} appt{dayAppointments.length !== 1 ? 's' : ''}
                         </div>
                       )}
+                      {/* Business Hours Display */}
+                      {businessHours && (() => {
+                        const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][day.getDay()] as keyof typeof businessHours.slots;
+                        const ranges = businessHours.slots[dayKey];
+                        if (ranges && ranges.length > 0) {
+                          const hoursText = ranges.map(([start, end]) => {
+                            const formatShort = (t: string) => t.replace(':00', '').replace(/^0/, '');
+                            return `${formatShort(start)}-${formatShort(end)}`;
+                          }).join(', ');
+                          return (
+                            <div className="text-[10px] text-slate-500 mt-1">
+                              {hoursText}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   </th>
                 );

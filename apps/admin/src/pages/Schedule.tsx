@@ -1429,7 +1429,36 @@ export default function Schedule() {
             });
             return (
               <>
-                <div className="text-xs font-medium mb-2">{format(hoverDate, 'PP')}</div>
+                <div className="mb-2">
+                  <div className="text-xs font-medium">{format(hoverDate, 'PP')}</div>
+                  {bh && (() => {
+                    const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][hoverDate.getDay()] as keyof typeof bh.slots;
+                    const ranges = bh.slots[dayKey];
+                    if (ranges && ranges.length > 0) {
+                      const hoursText = ranges.map(([start, end]) => {
+                        // Format times in 12-hour format
+                        const formatTime = (time: string) => {
+                          const [h, m] = time.split(':');
+                          const hour = parseInt(h);
+                          if (hour === 0) return '12:' + m + ' AM';
+                          if (hour < 12) return hour + ':' + m + ' AM';
+                          if (hour === 12) return '12:' + m + ' PM';
+                          return (hour - 12) + ':' + m + ' PM';
+                        };
+                        return `${formatTime(start)}-${formatTime(end)}`;
+                      }).join(', ');
+                      return (
+                        <div className="text-xs text-slate-600 flex items-center gap-1 mt-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Open: {hoursText}
+                        </div>
+                      );
+                    }
+                    return <div className="text-xs text-slate-500 mt-1">Closed</div>;
+                  })()}
+                </div>
                 <ul className="max-h-48 overflow-auto space-y-2">
                   {(() => {
                     // Group appointments by customer for better organization

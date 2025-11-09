@@ -138,6 +138,38 @@ export default function CalendarDayView({ date, appointments, services, business
         </p>
       </div>
 
+      {/* Business Hours Display */}
+      {businessHours && (
+        <div className="bg-slate-50 border-l-4 border-terracotta rounded-lg p-3 mx-6 my-4">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-sm font-medium text-slate-700">
+              {(() => {
+                const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()] as keyof typeof businessHours.slots;
+                const ranges = businessHours.slots[dayKey];
+                if (ranges && ranges.length > 0) {
+                  const hours = ranges.map(([s, e]) => {
+                    const formatTime = (t: string) => {
+                      const [h, m] = t.split(':');
+                      const hour = parseInt(h);
+                      if (hour === 0) return '12:' + m + ' AM';
+                      if (hour < 12) return hour + ':' + m + ' AM';
+                      if (hour === 12) return '12:' + m + ' PM';
+                      return (hour - 12) + ':' + m + ' PM';
+                    };
+                    return `${formatTime(s)} - ${formatTime(e)}`;
+                  }).join(', ');
+                  return `Open: ${hours}`;
+                }
+                return 'Closed Today';
+              })()}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Calendar Grid */}
       <div className="relative">
         {/* Time Labels */}
