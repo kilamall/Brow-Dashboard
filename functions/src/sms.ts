@@ -1648,21 +1648,20 @@ export const smsWebhook = onRequest(
             }
             
             try {
-              // Update customer name and email if needed
+              // Update customer name and email
               const customerData = customer.docs[0]?.data();
-              const updateData: any = { updatedAt: new Date().toISOString() };
+              const updateData: any = { 
+                name: customerName, // Always update name from SMS booking
+                updatedAt: new Date().toISOString() 
+              };
               
-              if (customerData?.name === 'SMS Customer') {
-                updateData.name = customerName;
-              }
-              
-              if (conversationState.customerEmail && !customerData?.email) {
+              // Update email if provided and not already set
+              if (conversationState.customerEmail) {
                 updateData.email = conversationState.customerEmail;
               }
               
-              if (Object.keys(updateData).length > 1) { // More than just updatedAt
-                await db.collection('customers').doc(customerId).update(updateData);
-              }
+              console.log('👤 Updating customer:', customerId, 'with:', updateData);
+              await db.collection('customers').doc(customerId).update(updateData);
               
               // Create the appointment directly using admin SDK with transaction
               const appointmentRef = db.collection('appointments').doc();
