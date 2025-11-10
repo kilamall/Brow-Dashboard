@@ -1522,7 +1522,13 @@ export const smsWebhook = onRequest(
             
             // Check if their requested time is available
             const requestedTime = parsed.data.time.toUpperCase();
-            const timeAvailable = availableTimes.some(t => t.toUpperCase().includes(requestedTime.replace(/[:\s]/g, '')));
+            const normalizedRequestedTime = requestedTime.replace(/[:\s]/g, ''); // "7pm" → "7PM", "7:00 PM" → "700PM"
+            const timeAvailable = availableTimes.some(t => {
+              const normalizedAvailableTime = t.toUpperCase().replace(/[:\s]/g, ''); // "7:00 PM" → "700PM"
+              // Match if the normalized available time starts with the requested time
+              // e.g., "700PM".startsWith("7PM") = true
+              return normalizedAvailableTime.startsWith(normalizedRequestedTime);
+            });
             
             if (timeAvailable) {
               // Time is available - ask for service
@@ -1539,9 +1545,18 @@ export const smsWebhook = onRequest(
                 awaitingCategory: true
               });
             } else {
-              // Time not available - show what IS available
+              // Time not available - show what IS available and save state for time selection
               const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
               responseMessage = `${requestedTime} isn't available on ${dateDisplay}. Here's what we have:\n\n${availableTimes.slice(0, 5).join('\n')}\n\nReply with a time to continue booking! - Bueno Brows` + A2P_FOOTER;
+              
+              // Save conversation state so they can select a time
+              await saveConversationState(from, {
+                type: 'awaiting_time',
+                date: bookingDate.toISOString(),
+                dateStr: dateDisplay,
+                pendingTimes: availableTimes,
+                awaitingTime: true
+              });
             }
           } else {
             responseMessage = SMS_TEMPLATES.booking_instructions();
