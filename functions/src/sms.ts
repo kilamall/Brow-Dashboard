@@ -1380,6 +1380,16 @@ export const smsWebhook = onRequest(
               const endMs = appointmentDate.getTime() + (conversationState.serviceDuration * 60 * 1000);
               const endISO = new Date(endMs).toISOString();
               
+              console.log('📅 Creating SMS appointment:', {
+                date: dateISO,
+                time: conversationState.time,
+                parsedTime: parsedTime,
+                appointmentDateUTC: appointmentDate.toISOString(),
+                appointmentDateLocal: appointmentDate.toLocaleString('en-US', { timeZone: businessTimezone }),
+                startISO,
+                endISO
+              });
+              
               await db.runTransaction(async (transaction) => {
                 // Check for conflicts within transaction
                 const windowStartISO = new Date(appointmentDate.getTime() - (conversationState.serviceDuration * 60 * 1000)).toISOString();
@@ -1407,7 +1417,7 @@ export const smsWebhook = onRequest(
                   }
                 }
                 
-                // No conflicts - create appointment
+                // No conflicts - create appointment as PENDING first (will update to confirmed after)
                 transaction.set(appointmentRef, {
                   customerId: customerId,
                   serviceId: conversationState.serviceId,
@@ -1415,7 +1425,7 @@ export const smsWebhook = onRequest(
                   start: startISO,
                   end: endISO,
                   duration: conversationState.serviceDuration,
-                  status: 'confirmed',
+                  status: 'pending', // Create as pending first to trigger email on confirmation
                   notes: `Booked via SMS by ${customerName}`,
                   bookedPrice: conversationState.servicePrice,
                   servicePrices: { [conversationState.serviceId]: conversationState.servicePrice },
@@ -1423,6 +1433,12 @@ export const smsWebhook = onRequest(
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString()
                 });
+              });
+              
+              // Update to confirmed to trigger email notifications
+              await appointmentRef.update({
+                status: 'confirmed',
+                updatedAt: new Date().toISOString()
               });
               
               console.log('✅ Appointment created via SMS:', appointmentRef.id);
