@@ -5,6 +5,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
 import { fromZonedTime } from 'date-fns-tz';
+import { callGeminiAI } from './sms-ai-integration.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -138,7 +139,15 @@ const SMS_TEMPLATES = {
   },
   
   error: () => {
-    return "Sorry, I didn't understand that. Reply 'HELP' for instructions or call (650) 613-8455. - Bueno Brows" + A2P_FOOTER;
+    return "Sorry, I didn't understand that. 😕\n\nText 'HELP' for commands or call (650) 613-8455 for assistance. - Bueno Brows" + A2P_FOOTER;
+  },
+  
+  notAvailable: () => {
+    return "No availability found. 📅\n\nCall (650) 613-8455 to discuss options or check alternate dates. - Bueno Brows" + A2P_FOOTER;
+  },
+  
+  tooManyAttempts: () => {
+    return "Having trouble? Let's get you help! 📞\n\nCall (650) 613-8455 and we'll book you right away. - Bueno Brows" + A2P_FOOTER;
   }
 };
 
@@ -276,6 +285,120 @@ function parseTimeString(timeStr: string): { hours: number; minutes: number } | 
   }
   
   return null;
+}
+
+/**
+ * Parse message using Gemini AI for natural language understanding
+ * Extracts booking intent, date, time, service, and email from complex messages
+ */
+async function parseMessageWithGemini(message: string, phoneNumber: string): Promise<{
+  intent: 'booking' | 'availability' | 'question' | 'unknown',
+  date?: string,
+  time?: string,
+  service?: string,
+  email?: string
+} | null> {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.log('⚠️ GEMINI_API_KEY not found, skipping AI parsing');
+      return null;
+    }
+
+    const systemPrompt = `You are a booking assistant parser. Extract booking information from SMS messages.
+
+Return ONLY a JSON object (no other text) with these fields:
+{
+  "intent": "booking" | "availability" | "question" | "unknown",
+  "date": "MM/DD or YYYY-MM-DD format if found",
+  "time": "HH:MM AM/PM format if found",
+  "service": "service name if mentioned",
+  "email": "email@example.com if provided"
+}
+
+Examples:
+"BOOK 11/11 10am brow wax" → {"intent":"booking","date":"11/11","time":"10:00 AM","service":"brow wax"}
+"I need a brow wax next Tuesday around 2pm" → {"intent":"booking","date":"next tuesday","time":"2:00 PM","service":"brow wax"}
+"What are your hours?" → {"intent":"question"}
+
+Message: ${message}`;
+
+    const requestBody = {
+      contents: [{ parts: [{ text: systemPrompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 150,
+      }
+    };
+
+    console.log('🤖 Calling Gemini AI to parse:', message);
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    if (!response.ok) {
+      console.error('Gemini API error:', response.status, response.statusText);
+      return null;
+    }
+
+    const data = await response.json() as any;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      console.log('✅ Gemini parsed:', parsed);
+      return parsed;
+    }
+    
+    console.log('⚠️ Gemini response had no JSON:', text);
+    return null;
+  } catch (error) {
+    console.error('❌ Gemini parsing error:', error);
+    return null;
+  }
+}
+
+/**
+ * Quick regex parser for one-message bookings
+ * Pattern: "BOOK 11/11 10am brow wax jane@email.com"
+ */
+function parseQuickBooking(message: string): {
+  success: boolean,
+  date?: string,
+  time?: string,
+  service?: string,
+  email?: string
+} {
+  // Pattern: "BOOK 11/11 10am brow wax jane@email.com"
+  const bookPattern = /book\s+([0-9]{1,2}[\/\-][0-9]{1,2})\s+(?:at\s+)?([0-9]{1,2}:?[0-9]{0,2}\s*(?:am|pm))\s+([a-z\s]+?)(?:\s+([^\s@]+@[^\s@]+\.[^\s@]+))?$/i;
+  
+  const match = message.toLowerCase().trim().match(bookPattern);
+  
+  if (!match) {
+    return { success: false };
+  }
+  
+  console.log('✅ Quick booking parsed:', {
+    date: match[1],
+    time: match[2],
+    service: match[3].trim(),
+    email: match[4]
+  });
+  
+  return {
+    success: true,
+    date: match[1],
+    time: match[2],
+    service: match[3].trim(),
+    email: match[4]
+  };
 }
 
 // Get or create conversation state
@@ -469,7 +592,23 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     return { type: 'availability_request', data: null };
   }
   
-  // PRIORITY 2: Check conversation state actions
+  // PRIORITY 2: Try quick pattern - one-message booking
+  if (text.startsWith('book ')) {
+    const quickBooking = parseQuickBooking(message);
+    if (quickBooking.success) {
+      return { 
+        type: 'quick_booking', 
+        data: {
+          date: quickBooking.date,
+          time: quickBooking.time,
+          service: quickBooking.service,
+          email: quickBooking.email
+        }
+      };
+    }
+  }
+  
+  // PRIORITY 3: Check conversation state actions
   if (conversationState) {
     if (text === 'yes' || text === 'y' || text === 'yeah' || text === 'yep' || text === 'sure') {
       return { type: 'confirm_yes', data: conversationState };
@@ -563,8 +702,10 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     };
   }
   
-  // Default to error
-  return { type: 'error', data: null };
+  // PRIORITY 4: Try Gemini AI for complex messages
+  // This will be called asynchronously in the webhook handler
+  // Return a flag to trigger Gemini parsing
+  return { type: 'needs_gemini_parse', data: { message } };
 }
 
 // Get available appointment slots - searches up to 30 days or until we find enough slots
@@ -1074,7 +1215,38 @@ export const smsWebhook = onRequest(
       const conversationState = await getConversationState(from);
       
       // Parse the incoming message with conversation context
-      const parsed = parseSMSMessage(body, conversationState);
+      let parsed = parseSMSMessage(body, conversationState);
+      
+      // If needs Gemini parsing, try it
+      if (parsed.type === 'needs_gemini_parse') {
+        console.log('🤖 Message needs Gemini AI parsing');
+        const geminiResult = await parseMessageWithGemini(body, from);
+        
+        if (geminiResult && geminiResult.intent === 'booking') {
+          // Convert to quick_booking format
+          console.log('✅ Gemini detected booking intent');
+          parsed = {
+            type: 'quick_booking',
+            data: {
+              date: geminiResult.date,
+              time: geminiResult.time,
+              service: geminiResult.service,
+              email: geminiResult.email
+            }
+          };
+        } else if (geminiResult && geminiResult.intent === 'availability') {
+          // Convert to availability check
+          console.log('✅ Gemini detected availability check');
+          parsed = {
+            type: 'specific_availability_request',
+            data: { date: geminiResult.date }
+          };
+        } else {
+          // Gemini couldn't parse, return error with help
+          console.log('❌ Gemini could not parse message');
+          parsed = { type: 'error', data: null };
+        }
+      }
       
       // Get or create customer record
       let customer = await db.collection('customers').where('phone', '==', from).limit(1).get();
@@ -1141,6 +1313,119 @@ export const smsWebhook = onRequest(
           }
           break;
           
+        case 'quick_booking':
+          // User sent "BOOK 11/11 10am brow wax" or Gemini parsed a complex booking request
+          console.log('📅 Processing quick booking:', parsed.data);
+          
+          // Parse the date
+          const bookingDateStr = parsed.data.date;
+          let bookingDate = parseSpecificDate(bookingDateStr);
+          
+          if (!bookingDate) {
+            responseMessage = `Sorry, I couldn't understand the date "${bookingDateStr}". 😕\n\nTry: "BOOK 11/11 10am brow wax"\n\nCall (650) 613-8455 for assistance. - Bueno Brows` + A2P_FOOTER;
+            break;
+          }
+          
+          // Check availability for this date
+          const bookingAvailableTimes = await getAvailableSlotsForDate(bookingDate);
+          
+          if (bookingAvailableTimes.length === 0) {
+            const bookingDateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            responseMessage = `No availability on ${bookingDateDisplay}. 😕\n\nCall (650) 613-8455 to find another date. - Bueno Brows` + A2P_FOOTER;
+            break;
+          }
+          
+          // Check if requested time is available
+          const requestedTimeStr = parsed.data.time.toUpperCase();
+          const normalizedRequestedTimeStr = requestedTimeStr.replace(/[:\s]/g, '');
+          const timeIsAvailable = bookingAvailableTimes.some(t => {
+            const normalized = t.toUpperCase().replace(/[:\s]/g, '');
+            return normalized.startsWith(normalizedRequestedTimeStr);
+          });
+          
+          if (!timeIsAvailable) {
+            const bookingDateDisplay2 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            responseMessage = `${requestedTimeStr} isn't available on ${bookingDateDisplay2}. Here's what we have:\n\n${bookingAvailableTimes.slice(0, 5).join('\n')}\n\nReply with a time. - Bueno Brows` + A2P_FOOTER;
+            
+            await saveConversationState(from, {
+              type: 'awaiting_time',
+              date: bookingDate.toISOString(),
+              dateStr: bookingDateDisplay2,
+              pendingTimes: bookingAvailableTimes,
+              service: parsed.data.service,
+              email: parsed.data.email,
+              awaitingTime: true
+            });
+            break;
+          }
+          
+          // Time is available! Try to find the service if provided
+          if (parsed.data.service) {
+            const allBookingServices = await db.collection('services').where('active', '==', true).get();
+            const bookingServices = allBookingServices.docs.map(d => ({ id: d.id, ...d.data() }));
+            const serviceMatch = findServiceByNameOrNumber(bookingServices, parsed.data.service);
+            
+            if (serviceMatch.match) {
+              // Service found! Check if customer has email
+              const customerData = customer.docs[0]?.data();
+              const hasEmail = customerData?.email || parsed.data.email;
+              
+              const bookingDateDisplay3 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              
+              if (hasEmail) {
+                // Skip email, go to name
+                responseMessage = SMS_TEMPLATES.bookingConfirmName();
+                await saveConversationState(from, {
+                  type: 'awaiting_name',
+                  date: bookingDate.toISOString(),
+                  dateStr: bookingDateDisplay3,
+                  time: requestedTimeStr,
+                  serviceId: serviceMatch.match.id,
+                  serviceName: serviceMatch.match.name,
+                  serviceDuration: serviceMatch.match.duration,
+                  servicePrice: serviceMatch.match.price,
+                  customerEmail: hasEmail,
+                  awaitingName: true
+                });
+              } else {
+                // Need email
+                responseMessage = SMS_TEMPLATES.bookingConfirm(bookingDateDisplay3, requestedTimeStr);
+                await saveConversationState(from, {
+                  type: 'awaiting_email',
+                  date: bookingDate.toISOString(),
+                  dateStr: bookingDateDisplay3,
+                  time: requestedTimeStr,
+                  serviceId: serviceMatch.match.id,
+                  serviceName: serviceMatch.match.name,
+                  serviceDuration: serviceMatch.match.duration,
+                  servicePrice: serviceMatch.match.price,
+                  awaitingEmail: true
+                });
+              }
+              break;
+            }
+          }
+          
+          // Service not found or not provided - show top 5
+          const top5BookingServices = await db.collection('services').where('active', '==', true).orderBy('price', 'asc').limit(5).get();
+          const top5Services = top5BookingServices.docs.map(d => ({ id: d.id, ...d.data() as any }));
+          
+          const bookingDateDisplay4 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          
+          responseMessage = `Great! Which service?\n\n${top5Services.map((s, i) => 
+            `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
+          ).join('\n')}\n\nView all: buenobrows.com/services\n\nReply with number or name. - Bueno Brows` + A2P_FOOTER;
+          
+          await saveConversationState(from, {
+            type: 'awaiting_service',
+            date: bookingDate.toISOString(),
+            dateStr: bookingDateDisplay4,
+            time: requestedTimeStr,
+            email: parsed.data.email,
+            awaitingService: true
+          });
+          break;
+          
         case 'confirm_yes':
           // User confirmed a single time slot - now ask for category
           if (conversationState && conversationState.singleTime) {
@@ -1172,56 +1457,23 @@ export const smsWebhook = onRequest(
           break;
           
         case 'time_selection':
-          // User selected a time - now ask for category
+          // User selected a time - show top 5 services directly (skip categories)
           if (conversationState && conversationState.pendingTimes) {
             const selectedTime = parsed.data.time;
-            const categories = await getServiceCategories();
-            responseMessage = SMS_TEMPLATES.categorySelection(categories);
             
-            await saveConversationState(from, {
-              type: 'awaiting_category',
-              date: conversationState.date,
-              dateStr: conversationState.dateStr,
-              time: selectedTime,
-              awaitingCategory: true,
-              availableCategories: categories
-            });
-          } else {
-            responseMessage = SMS_TEMPLATES.error();
-            await clearConversationState(from);
-          }
-          break;
-          
-        case 'provide_category':
-          // User selected a category - show services in that category
-          console.log('🔍 Category selection:', parsed.data.categoryInput);
-          
-          if (conversationState && conversationState.awaitingCategory) {
-            const categories = conversationState.availableCategories || await getServiceCategories();
-            const selectedCategory = findCategory(categories, parsed.data.categoryInput);
+            // Show top 5 services directly (skip categories)
+            const allServicesForTime = await db.collection('services').where('active', '==', true).orderBy('price', 'asc').limit(5).get();
+            const top5ForTime = allServicesForTime.docs.map(d => ({ id: d.id, ...d.data() as any }));
             
-            if (!selectedCategory) {
-              console.log('❌ Category not found:', parsed.data.categoryInput);
-              responseMessage = `I didn't recognize that category. Please reply with a number (1-${categories.length}) or category name. - Bueno Brows` + A2P_FOOTER;
-              // Keep state for retry
-              break;
-            }
-            
-            console.log('✅ Found category:', selectedCategory);
-            const servicesInCategory = await getServicesByCategory(selectedCategory);
-            const top5 = servicesInCategory.slice(0, 5);
-            const hasMore = servicesInCategory.length > 5;
-            
-            responseMessage = SMS_TEMPLATES.serviceListInCategory(selectedCategory, top5, hasMore);
+            responseMessage = `Great! Which service?\n\n${top5ForTime.map((s, i) => 
+              `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
+            ).join('\n')}\n\nView all: buenobrows.com/services\n\nReply with number or name. - Bueno Brows` + A2P_FOOTER;
             
             await saveConversationState(from, {
               type: 'awaiting_service',
               date: conversationState.date,
               dateStr: conversationState.dateStr,
-              time: conversationState.time,
-              selectedCategory,
-              availableServices: top5,
-              allServicesInCategory: servicesInCategory,
+              time: selectedTime,
               awaitingService: true
             });
           } else {
@@ -1284,19 +1536,40 @@ export const smsWebhook = onRequest(
               break;
             }
             
-            // Service fits! Ask for email first
-            responseMessage = SMS_TEMPLATES.bookingConfirm(conversationState.dateStr, conversationState.time);
-            await saveConversationState(from, {
-              type: 'awaiting_email',
-              date: conversationState.date,
-              dateStr: conversationState.dateStr,
-              time: conversationState.time,
-              serviceId: service.id,
-              serviceName: service.name,
-              serviceDuration: service.duration,
-              servicePrice: service.price,
-              awaitingEmail: true
-            });
+            // Service fits! Check if customer has email
+            const customerData = customer.docs[0]?.data();
+            if (customerData?.email) {
+              // Skip email step, go directly to name
+              console.log('✅ Customer has email, skipping email collection');
+              responseMessage = SMS_TEMPLATES.bookingConfirmName();
+              await saveConversationState(from, {
+                type: 'awaiting_name',
+                date: conversationState.date,
+                dateStr: conversationState.dateStr,
+                time: conversationState.time,
+                serviceId: service.id,
+                serviceName: service.name,
+                serviceDuration: service.duration,
+                servicePrice: service.price,
+                customerEmail: customerData.email, // Use existing email
+                awaitingName: true
+              });
+            } else {
+              // New customer, ask for email
+              console.log('📧 Customer has no email, asking for it');
+              responseMessage = SMS_TEMPLATES.bookingConfirm(conversationState.dateStr, conversationState.time);
+              await saveConversationState(from, {
+                type: 'awaiting_email',
+                date: conversationState.date,
+                dateStr: conversationState.dateStr,
+                time: conversationState.time,
+                serviceId: service.id,
+                serviceName: service.name,
+                serviceDuration: service.duration,
+                servicePrice: service.price,
+                awaitingEmail: true
+              });
+            }
           } else {
             responseMessage = SMS_TEMPLATES.error();
             await clearConversationState(from);
@@ -1564,8 +1837,26 @@ export const smsWebhook = onRequest(
           break;
           
         default:
-          responseMessage = SMS_TEMPLATES.error();
-          await clearConversationState(from);
+          // Check attempts and suggest calling after 2 failures
+          const attempts = conversationState?.attempts || 0;
+          
+          if (attempts >= 2) {
+            console.log('❌ Too many failed attempts, suggesting to call');
+            responseMessage = SMS_TEMPLATES.tooManyAttempts();
+            await clearConversationState(from);
+          } else {
+            console.log(`⚠️ Error parsing message (attempt ${attempts + 1}/3)`);
+            responseMessage = SMS_TEMPLATES.error();
+            
+            // Save state with incremented attempts if we have conversation state
+            if (conversationState) {
+              await saveConversationState(from, {
+                ...conversationState,
+                attempts: attempts + 1
+              });
+            }
+          }
+          break;
       }
       
       // Send response

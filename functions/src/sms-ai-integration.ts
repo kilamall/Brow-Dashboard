@@ -197,7 +197,7 @@ async function saveSMSToCache(cacheKey: string, response: string): Promise<void>
 }
 
 // Call Gemini AI
-async function callGeminiAI(message: string, context: any, phoneNumber: string, apiKey: string): Promise<string> {
+export async function callGeminiAI(message: string, context: any, phoneNumber: string, apiKey: string): Promise<string> {
   try {
     // Check cache first for common queries
     const cacheKey = generateSMSCacheKey(message, 'generic'); // Use 'generic' for common questions
