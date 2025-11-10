@@ -16,6 +16,9 @@ const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
 const twilioPhoneNumber = defineString('TWILIO_PHONE_NUMBER', { default: '+16506839181' });
 const twilioMessagingServiceSid = defineString('TWILIO_MESSAGING_SERVICE_SID', { default: '' });
 
+// Define secret for Gemini AI
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
+
 // SMS Service Integration
 interface SMSMessage {
   to: string;
@@ -291,7 +294,7 @@ function parseTimeString(timeStr: string): { hours: number; minutes: number } | 
  * Parse message using Gemini AI for natural language understanding
  * Extracts booking intent, date, time, service, and email from complex messages
  */
-async function parseMessageWithGemini(message: string, phoneNumber: string): Promise<{
+async function parseMessageWithGemini(message: string, phoneNumber: string, apiKey: string): Promise<{
   intent: 'booking' | 'availability' | 'question' | 'unknown',
   date?: string,
   time?: string,
@@ -299,9 +302,8 @@ async function parseMessageWithGemini(message: string, phoneNumber: string): Pro
   email?: string
 } | null> {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.log('⚠️ GEMINI_API_KEY not found, skipping AI parsing');
+      console.log('⚠️ GEMINI_API_KEY not provided, skipping AI parsing');
       return null;
     }
 
@@ -1193,7 +1195,7 @@ export const smsWebhook = onRequest(
   { 
     region: 'us-central1', 
     cors: true,
-    secrets: [twilioAccountSid, twilioAuthToken]
+    secrets: [twilioAccountSid, twilioAuthToken, geminiApiKey]
   },
   async (req, res) => {
     console.log('SMS webhook received:', req.method, req.body);
@@ -1227,7 +1229,7 @@ export const smsWebhook = onRequest(
       // If needs Gemini parsing, try it
       if (parsed.type === 'needs_gemini_parse') {
         console.log('🤖 Message needs Gemini AI parsing');
-        const geminiResult = await parseMessageWithGemini(body, from);
+        const geminiResult = await parseMessageWithGemini(body, from, geminiApiKey.value());
         
         if (geminiResult && geminiResult.intent === 'booking') {
           // Convert to quick_booking format
@@ -1416,8 +1418,11 @@ export const smsWebhook = onRequest(
           }
           
           // Service not found or not provided - show top 5
-          const top5BookingServices = await db.collection('services').where('active', '==', true).orderBy('price', 'asc').limit(5).get();
-          const top5Services = top5BookingServices.docs.map(d => ({ id: d.id, ...d.data() as any }));
+          const top5BookingServices = await db.collection('services').where('active', '==', true).get();
+          const top5Services = top5BookingServices.docs
+            .map(d => ({ id: d.id, ...d.data() as any }))
+            .sort((a, b) => a.price - b.price)
+            .slice(0, 5);
           
           const bookingDateDisplay4 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           
@@ -1471,8 +1476,11 @@ export const smsWebhook = onRequest(
             const selectedTime = parsed.data.time;
             
             // Show top 5 services directly (skip categories)
-            const allServicesForTime = await db.collection('services').where('active', '==', true).orderBy('price', 'asc').limit(5).get();
-            const top5ForTime = allServicesForTime.docs.map(d => ({ id: d.id, ...d.data() as any }));
+            const allServicesForTime = await db.collection('services').where('active', '==', true).get();
+            const top5ForTime = allServicesForTime.docs
+              .map(d => ({ id: d.id, ...d.data() as any }))
+              .sort((a, b) => a.price - b.price)
+              .slice(0, 5);
             
             responseMessage = `Great! Which service?\n\n${top5ForTime.map((s, i) => 
               `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
