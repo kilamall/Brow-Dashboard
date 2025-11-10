@@ -619,8 +619,14 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     
     // Check if they're selecting a time from the available options
     const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)/i);
-    if (timeMatch && conversationState.pendingTimes) {
-      return { type: 'time_selection', data: { time: message.trim() } };
+    if (timeMatch) {
+      console.log('🕐 Time pattern matched:', timeMatch[0], 'pendingTimes:', conversationState.pendingTimes);
+      if (conversationState.pendingTimes) {
+        console.log('✅ Returning time_selection');
+        return { type: 'time_selection', data: { time: message.trim() } };
+      } else {
+        console.log('❌ No pendingTimes in state, state:', JSON.stringify(conversationState));
+      }
     }
     
     // Check if they're providing their email (in email collection state)
@@ -1213,6 +1219,7 @@ export const smsWebhook = onRequest(
     try {
       // Get conversation state (if any)
       const conversationState = await getConversationState(from);
+      console.log('📱 Conversation state for', from, ':', conversationState ? JSON.stringify(conversationState) : 'null');
       
       // Parse the incoming message with conversation context
       let parsed = parseSMSMessage(body, conversationState);
@@ -1345,6 +1352,7 @@ export const smsWebhook = onRequest(
           
           if (!timeIsAvailable) {
             const bookingDateDisplay2 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            console.log('⏰ Requested time not available. Saving state with pendingTimes:', bookingAvailableTimes.length, 'slots');
             responseMessage = `${requestedTimeStr} isn't available on ${bookingDateDisplay2}. Here's what we have:\n\n${bookingAvailableTimes.slice(0, 5).join('\n')}\n\nReply with a time. - Bueno Brows` + A2P_FOOTER;
             
             await saveConversationState(from, {
@@ -1356,6 +1364,7 @@ export const smsWebhook = onRequest(
               email: parsed.data.email,
               awaitingTime: true
             });
+            console.log('✅ State saved with pendingTimes for phone:', from);
             break;
           }
           
