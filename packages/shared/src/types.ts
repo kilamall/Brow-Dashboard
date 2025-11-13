@@ -25,6 +25,7 @@ export interface CostMetrics {
     hosting: { bandwidth: number; cost: number };
     geminiAI: { calls: number; cost: number };
     sendGrid: { emails: number; cost: number };
+    twilio: { smsSent: number; smsReceived: number; cost: number };
   };
   projectedMonthly: number;
   createdAt: string;
@@ -65,6 +66,10 @@ export interface UsageStats {
   };
   sendGrid: {
     emails: number;
+  };
+  twilio: {
+    smsSent: number;
+    smsReceived: number;
   };
 }
 
@@ -441,7 +446,8 @@ customerId: ID; // Required - must be logged in
 customerEmail: string;
 customerName: string;
 type: 'skin' | 'products';
-imageUrl: string;
+imageUrl: string; // Legacy field - single image (for backward compatibility)
+imageUrls?: string[]; // New field - supports multiple images
 analysis: {
   skinType?: string;
   skinTone?: {

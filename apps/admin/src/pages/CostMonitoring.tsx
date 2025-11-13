@@ -72,7 +72,8 @@ export default function CostMonitoring() {
             storage: { totalGB: 0, downloadsGB: 0 },
             hosting: { bandwidthGB: 0 },
             geminiAI: { requests: 0, tokens: 0 },
-            sendGrid: { emails: 0 }
+            sendGrid: { emails: 0 },
+            twilio: { smsSent: 0, smsReceived: 0 }
           },
           costs: {
             totalCost: 0,
@@ -82,7 +83,8 @@ export default function CostMonitoring() {
               storage: { gb: 0, bandwidth: 0, cost: 0 },
               hosting: { bandwidth: 0, cost: 0 },
               geminiAI: { calls: 0, cost: 0 },
-              sendGrid: { emails: 0, cost: 0 }
+              sendGrid: { emails: 0, cost: 0 },
+              twilio: { smsSent: 0, smsReceived: 0, cost: 0 }
             },
             projectedMonthly: 0
           },
@@ -447,26 +449,56 @@ export default function CostMonitoring() {
       <div className="bg-white rounded-xl shadow-soft p-6">
         <h2 className="font-serif text-xl mb-6">Service Breakdown</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {costData?.costs?.services && Object.entries(costData.costs.services).map(([service, data]: [string, any]) => (
-            <div key={service} className="border border-slate-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-slate-800 capitalize">
-                  {service.replace(/([A-Z])/g, ' $1').trim()}
-                </h3>
-                <div className="text-lg font-bold text-terracotta">
-                  {formatCurrency(data.cost || 0)}
-                </div>
-              </div>
-              <div className="space-y-2 text-sm text-slate-600">
-                {Object.entries(data).filter(([key]) => key !== 'cost').map(([key, value]) => (
-                  <div key={key} className="flex justify-between">
-                    <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
-                    <span>{typeof value === 'number' ? value.toLocaleString() : String(value)}</span>
+          {costData?.costs?.services && Object.entries(costData.costs.services).map(([service, data]: [string, any]) => {
+            const serviceCost = data.cost || 0;
+            const daysInMonth = new Date().getDate();
+            const costPerDay = serviceCost / Math.max(daysInMonth, 1);
+            const activeCustomers = costData?.efficiency?.activeCustomers || 1;
+            const costPerCustomer = serviceCost / activeCustomers;
+            const projectedMonthlyCost = costData?.costs?.projectedMonthly ? 
+              (serviceCost / costData.costs.totalCost) * costData.costs.projectedMonthly : 0;
+            
+            return (
+              <div key={service} className="border border-slate-200 rounded-lg p-4 hover:border-terracotta transition-colors">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-slate-800 capitalize">
+                    {service.replace(/([A-Z])/g, ' $1').trim()}
+                  </h3>
+                  <div className="text-lg font-bold text-terracotta">
+                    {formatCurrency(serviceCost)}
                   </div>
-                ))}
+                </div>
+                
+                {/* Usage Metrics */}
+                <div className="space-y-2 text-sm text-slate-600 mb-3 pb-3 border-b border-slate-100">
+                  {Object.entries(data).filter(([key]) => key !== 'cost').map(([key, value]) => (
+                    <div key={key} className="flex justify-between">
+                      <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                      <span className="font-medium">{typeof value === 'number' ? value.toLocaleString() : String(value)}</span>
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Cost Breakdown - Only show if there's actual cost */}
+                {serviceCost > 0 && (
+                  <div className="space-y-1 text-xs text-slate-500">
+                    <div className="flex justify-between">
+                      <span>Per Day:</span>
+                      <span className="font-medium text-slate-700">{formatCurrency(costPerDay)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Per Customer:</span>
+                      <span className="font-medium text-slate-700">{formatCurrency(costPerCustomer)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Projected Month:</span>
+                      <span className="font-medium text-terracotta">{formatCurrency(projectedMonthlyCost)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

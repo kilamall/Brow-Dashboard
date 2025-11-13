@@ -1046,14 +1046,29 @@ export default function SkinAnalysesPage() {
                 return null;
               })()}
 
-              {/* Uploaded Image */}
+              {/* Uploaded Images */}
               <div>
-                <h3 className="font-semibold mb-2">Uploaded Image</h3>
-                <img
-                  src={selectedAnalysis.imageUrl}
-                  alt="Analysis"
-                  className="max-h-64 rounded-lg border"
-                />
+                <h3 className="font-semibold mb-2">Uploaded Image{selectedAnalysis.imageUrls && selectedAnalysis.imageUrls.length > 1 ? 's' : ''}</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {selectedAnalysis.imageUrls && selectedAnalysis.imageUrls.length > 0 ? (
+                    selectedAnalysis.imageUrls.map((imageUrl, index) => (
+                      <img
+                        key={index}
+                        src={imageUrl}
+                        alt={`Analysis ${index + 1}`}
+                        className="max-h-64 w-full object-cover rounded-lg border"
+                      />
+                    ))
+                  ) : selectedAnalysis.imageUrl ? (
+                    <img
+                      src={selectedAnalysis.imageUrl}
+                      alt="Analysis"
+                      className="max-h-64 w-full object-cover rounded-lg border"
+                    />
+                  ) : (
+                    <div className="text-slate-400 text-sm">No image available</div>
+                  )}
+                </div>
               </div>
 
               {selectedAnalysis.status === 'completed' && selectedAnalysis.analysis && (

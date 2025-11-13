@@ -517,7 +517,7 @@ const defaultTemplates: EmailTemplate[] = [
 </body>
 </html>
     `,
-    variables: ['customerName', 'customerEmail', 'customerPhone', 'customerPhoneSection', 'currentServiceName', 'currentDate', 'currentTime', 'requestedChangesSection', 'reason', 'reasonSection', 'reviewLink', 'websiteLink', 'businessName', 'businessPhone', 'businessAddress', 'businessEmail'],
+    variables: ['customerName', 'customerEmail', 'customerPhone', 'customerPhoneSection', 'serviceName', 'currentServiceName', 'currentDate', 'currentTime', 'requestedChangesSection', 'reason', 'reasonSection', 'reviewLink', 'websiteLink', 'businessName', 'businessPhone', 'businessAddress', 'businessEmail'],
     isDefault: true
   }
 ];

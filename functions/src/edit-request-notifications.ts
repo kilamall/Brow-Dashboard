@@ -203,6 +203,7 @@ export const onEditRequestCreated = onDocumentCreated(
           customerEmail: customerData?.email || 'N/A',
           customerPhone: customerData?.phone || '',
           customerPhoneSection: customerPhoneSection,
+          serviceName: currentServiceNamesDisplay,
           currentServiceName: currentServiceNamesDisplay,
           currentDate: formattedCurrentDate,
           currentTime: formattedCurrentTime,

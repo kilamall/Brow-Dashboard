@@ -171,8 +171,33 @@ export default function Settings() {
     }
   ];
 
-  // Flatten tabs for easy access
+  // Flatten tabs for desktop view
   const allTabs = tabGroups.flatMap(group => group.tabs);
+
+  // Track which groups are expanded (mobile only)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['Content & Media']));
+
+  // Auto-expand group containing active tab
+  useEffect(() => {
+    const activeGroup = tabGroups.find(group =>
+      group.tabs.some(tab => tab.id === activeTab)
+    );
+    if (activeGroup) {
+      setExpandedGroups(prev => new Set([...prev, activeGroup.name]));
+    }
+  }, [activeTab]);
+
+  const toggleGroup = (groupName: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  };
 
   // Get current active tab info
   const activeTabInfo = allTabs.find(tab => tab.id === activeTab);

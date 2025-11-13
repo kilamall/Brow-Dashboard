@@ -145,6 +145,10 @@ const SMS_TEMPLATES = {
     return "Sorry, I didn't understand that. 😕\n\nText 'HELP' for commands or call (650) 613-8455 for assistance. - Bueno Brows" + A2P_FOOTER;
   },
   
+  weeklyGrid: (gridData: string) => {
+    return `📅 NEXT 5 DAYS:\n\n${gridData}\n\n✓ = Open  ✗ = Booked\n\nReply with day & time to book! (e.g., "Wed 2pm")\n- Bueno Brows` + A2P_FOOTER;
+  },
+  
   notAvailable: () => {
     return "No availability found. 📅\n\nCall (650) 613-8455 to discuss options or check alternate dates. - Bueno Brows" + A2P_FOOTER;
   },
@@ -175,26 +179,30 @@ function parseSpecificDate(text: string): Date | null {
   
   // Handle "tomorrow"
   if (lowerText.includes('tomorrow')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrow = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate() + 1, 12, 0, 0));
+    console.log('📅 Parsed "tomorrow" as:', tomorrow.toISOString());
     return tomorrow;
   }
   
   // Handle "today"
   if (lowerText.includes('today')) {
-    return today;
+    const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0));
+    console.log('📅 Parsed "today" as:', todayUTC.toISOString());
+    return todayUTC;
   }
   
   // Handle "the [number]th/st/nd/rd" OR just "[number]th/st/nd/rd" (e.g., "the 9th", "9th", "15th")
   const dayMatch = lowerText.match(/(?:the\s+)?(\d{1,2})(st|nd|rd|th)/);
   if (dayMatch) {
     const day = parseInt(dayMatch[1]);
-    const targetDate = new Date(today);
-    targetDate.setDate(day);
+    // Create date at UTC noon to avoid timezone issues
+    const targetDate = new Date(Date.UTC(today.getFullYear(), today.getMonth(), day, 12, 0, 0));
+    const todayUTCNoon = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0));
     // If the day has passed this month, assume next month
-    if (targetDate < today) {
-      targetDate.setMonth(targetDate.getMonth() + 1);
+    if (targetDate < todayUTCNoon) {
+      targetDate.setUTCMonth(targetDate.getUTCMonth() + 1);
     }
+    console.log(`📅 Parsed "${day}${dayMatch[2]}" as:`, targetDate.toISOString());
     return targetDate;
   }
   
@@ -204,11 +212,13 @@ function parseSpecificDate(text: string): Date | null {
     if (numMatch) {
       const day = parseInt(numMatch[1]);
       if (day >= 1 && day <= 31) {
-        const targetDate = new Date(today);
-        targetDate.setDate(day);
-        if (targetDate < today) {
-          targetDate.setMonth(targetDate.getMonth() + 1);
+        // Create date at UTC noon to avoid timezone issues
+        const targetDate = new Date(Date.UTC(today.getFullYear(), today.getMonth(), day, 12, 0, 0));
+        const todayUTCNoon = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0));
+        if (targetDate < todayUTCNoon) {
+          targetDate.setUTCMonth(targetDate.getUTCMonth() + 1);
         }
+        console.log(`📅 Parsed "the ${day}" as:`, targetDate.toISOString());
         return targetDate;
       }
     }
@@ -221,10 +231,13 @@ function parseSpecificDate(text: string): Date | null {
       const dayNumMatch = lowerText.match(/\d{1,2}/);
       if (dayNumMatch) {
         const day = parseInt(dayNumMatch[0]);
-        const targetDate = new Date(today.getFullYear(), i, day);
-        if (targetDate < today) {
-          targetDate.setFullYear(targetDate.getFullYear() + 1);
+        // Create date at UTC noon to avoid timezone issues
+        const targetDate = new Date(Date.UTC(today.getFullYear(), i, day, 12, 0, 0));
+        const todayUTCNoon = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0));
+        if (targetDate < todayUTCNoon) {
+          targetDate.setUTCFullYear(targetDate.getUTCFullYear() + 1);
         }
+        console.log(`📅 Parsed "${months[i]} ${day}" as:`, targetDate.toISOString());
         return targetDate;
       }
     }
@@ -235,10 +248,13 @@ function parseSpecificDate(text: string): Date | null {
   if (dateMatch) {
     const month = parseInt(dateMatch[1]) - 1;
     const day = parseInt(dateMatch[2]);
-    const targetDate = new Date(today.getFullYear(), month, day);
-    if (targetDate < today) {
-      targetDate.setFullYear(targetDate.getFullYear() + 1);
+    // Create date at UTC noon to avoid timezone issues
+    const targetDate = new Date(Date.UTC(today.getFullYear(), month, day, 12, 0, 0));
+    const todayUTCNoon = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0));
+    if (targetDate < todayUTCNoon) {
+      targetDate.setUTCFullYear(targetDate.getUTCFullYear() + 1);
     }
+    console.log(`📅 Parsed "${dateMatch[1]}/${dateMatch[2]}" as:`, targetDate.toISOString());
     return targetDate;
   }
   
@@ -288,6 +304,29 @@ function parseTimeString(timeStr: string): { hours: number; minutes: number } | 
   }
   
   return null;
+}
+
+/**
+ * Check if a requested time matches an available time slot
+ * Handles cases like "10am" matching "10:00 AM"
+ */
+function timeMatches(requestedTime: string, availableTime: string): boolean {
+  const requested = parseTimeString(requestedTime);
+  const available = parseTimeString(availableTime);
+  
+  if (!requested || !available) {
+    // Fallback to simple string comparison if parsing fails
+    const normalizedRequested = requestedTime.toUpperCase().replace(/[:\s]/g, '');
+    const normalizedAvailable = availableTime.toUpperCase().replace(/[:\s]/g, '');
+    return normalizedAvailable === normalizedRequested;
+  }
+  
+  // Match if hours are the same and:
+  // - Minutes match exactly, OR
+  // - Requested time had no minutes specified (defaults to 0) and available time is on the hour
+  return requested.hours === available.hours && 
+         (requested.minutes === available.minutes || 
+          (requested.minutes === 0 && available.minutes === 0));
 }
 
 /**
@@ -448,6 +487,74 @@ async function getActiveServices(): Promise<{ id: string; name: string; duration
   }));
 }
 
+// Get top 5 most booked services (sorted by popularity)
+async function getTop5MostBookedServices(): Promise<any[]> {
+  try {
+    // Get all active services
+    const servicesSnapshot = await db.collection('services').where('active', '==', true).get();
+    const services = servicesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      name: doc.data().name,
+      price: doc.data().price,
+      duration: doc.data().duration,
+      category: doc.data().category || null,
+      bookingCount: 0
+    }));
+    
+    // Get all appointments from last 90 days to measure recent popularity
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    
+    const appointmentsSnapshot = await db.collection('appointments')
+      .where('start', '>=', ninetyDaysAgo.toISOString())
+      .get();
+    
+    // Count bookings per service
+    const bookingCounts = new Map<string, number>();
+    
+    appointmentsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      // Handle both single serviceId and multiple serviceIds
+      if (data.serviceIds && Array.isArray(data.serviceIds)) {
+        data.serviceIds.forEach((sid: string) => {
+          bookingCounts.set(sid, (bookingCounts.get(sid) || 0) + 1);
+        });
+      } else if (data.serviceId) {
+        bookingCounts.set(data.serviceId, (bookingCounts.get(data.serviceId) || 0) + 1);
+      }
+    });
+    
+    // Add booking counts to services
+    services.forEach(service => {
+      service.bookingCount = bookingCounts.get(service.id) || 0;
+    });
+    
+    // Sort by booking count (descending), then by price (ascending) as tiebreaker
+    const sortedServices = services.sort((a, b) => {
+      if (b.bookingCount !== a.bookingCount) {
+        return b.bookingCount - a.bookingCount; // Most booked first
+      }
+      return a.price - b.price; // If equal bookings, cheaper first
+    });
+    
+    // Log for debugging
+    console.log('📊 Service popularity (last 90 days):');
+    sortedServices.slice(0, 10).forEach((s, i) => {
+      console.log(`  ${i+1}. ${s.name} - ${s.bookingCount} bookings ($${s.price})`);
+    });
+    
+    return sortedServices.slice(0, 5);
+  } catch (error) {
+    console.error('Error getting top 5 services:', error);
+    // Fallback to all services sorted by price if there's an error
+    const servicesSnapshot = await db.collection('services').where('active', '==', true).get();
+    return servicesSnapshot.docs
+      .map(d => ({ id: d.id, ...d.data() as any }))
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 5);
+  }
+}
+
 // Get unique categories
 async function getServiceCategories(): Promise<string[]> {
   const services = await getActiveServices();
@@ -594,6 +701,11 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     return { type: 'availability_request', data: null };
   }
   
+  // Check for weekly grid request
+  if (text === 'week' || text === 'weekly') {
+    return { type: 'weekly_grid_request', data: null };
+  }
+  
   // PRIORITY 2: Try quick pattern - one-message booking
   if (text.startsWith('book ')) {
     const quickBooking = parseQuickBooking(message);
@@ -650,14 +762,16 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
       }
     }
     
-    // Check if they're providing a category (in category selection state)
-    if (conversationState.awaitingCategory) {
-      return { type: 'provide_category', data: { categoryInput: message.trim() } };
-    }
-    
     // Check if they're providing a service name (in service selection state)
     if (conversationState.awaitingService) {
       return { type: 'provide_service', data: { serviceInput: message.trim() } };
+    }
+    
+    // Legacy: Handle old category states by redirecting to service selection
+    // (Users might have old state from before we removed categories)
+    if (conversationState.awaitingCategory) {
+      console.log('⚠️ Found legacy awaitingCategory state, redirecting to service selection');
+      return { type: 'legacy_category_redirect', data: { input: message.trim() } };
     }
   }
   
@@ -704,6 +818,21 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
   // This catches messages like "9th?", "tomorrow?", "Dec 15?"
   const implicitDate = parseSpecificDate(text);
   if (implicitDate) {
+    // BUT: Check if there's also a time in the message
+    // If so, treat it as a booking request, not just availability
+    const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)|(\d{1,2})\s*(am|pm)/i);
+    if (timeMatch) {
+      console.log('🕐 Found both date AND time in message, treating as booking request');
+      return {
+        type: 'booking_request',
+        data: {
+          date: `${implicitDate.getMonth() + 1}/${implicitDate.getDate()}`,
+          time: timeMatch[0].trim()
+        }
+      };
+    }
+    
+    // Just a date, treat as availability request
     return { 
       type: 'specific_availability_request', 
       data: { date: implicitDate }
@@ -714,6 +843,60 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
   // This will be called asynchronously in the webhook handler
   // Return a flag to trigger Gemini parsing
   return { type: 'needs_gemini_parse', data: { message } };
+}
+
+// Generate weekly availability grid (5 days, hourly)
+async function getWeeklyAvailabilityGrid(): Promise<string> {
+  try {
+    const businessTimezone = 'America/Los_Angeles';
+    const now = new Date();
+    const gridLines: string[] = [];
+    
+    // Get next 5 days
+    for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
+      const targetDate = new Date(now);
+      targetDate.setDate(now.getDate() + dayOffset);
+      
+      // Format day label with month (e.g., "Tu 11/12", "We 11/13")
+      const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+      const dayName = dayNames[targetDate.getDay()];
+      const monthNum = targetDate.getMonth() + 1;
+      const dayNum = targetDate.getDate();
+      
+      // Get available times for this day
+      const availableTimes = await getAvailableSlotsForDate(targetDate);
+      
+      // Convert available times to hourly grid (10am-4pm = 7 hours)
+      const hourSlots: string[] = [];
+      for (let hour = 10; hour <= 16; hour++) { // 10am to 4pm
+        const displayHour = hour > 12 ? hour - 12 : hour;
+        
+        // Check if this hour is available
+        const hourAvailable = availableTimes.some(timeStr => {
+          const timeMatch = timeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)/i);
+          if (!timeMatch) return false;
+          const timeHour = parseInt(timeMatch[1]);
+          const period = timeMatch[3]?.toUpperCase();
+          let hour24 = timeHour;
+          if (period === 'PM' && timeHour !== 12) hour24 += 12;
+          if (period === 'AM' && timeHour === 12) hour24 = 0;
+          return hour24 === hour;
+        });
+        
+        hourSlots.push(hourAvailable ? '✓' : '✗');
+      }
+      
+      // Format line: "Tu 11/12│10✓ 11✓ 12✓ 1✓ 2✓ 3✗ 4✗"
+      const hours = ['10', '11', '12', '1', '2', '3', '4'];
+      const slotsWithHours = hours.map((h, i) => `${h}${hourSlots[i]}`).join(' ');
+      gridLines.push(`${dayName} ${monthNum}/${dayNum}│${slotsWithHours}`);
+    }
+    
+    return gridLines.join('\n');
+  } catch (error) {
+    console.error('Error generating weekly grid:', error);
+    return 'Unable to load weekly view. Text "AVAILABLE" for next slots.';
+  }
 }
 
 // Get available appointment slots - searches up to 30 days or until we find enough slots
@@ -1296,26 +1479,32 @@ export const smsWebhook = onRequest(
           break;
           
         case 'availability_request':
-          const availableSlots = await getAvailableSlots();
-          responseMessage = SMS_TEMPLATES.availability(availableSlots);
+          // Default to weekly grid view instead of list
+          console.log('📅 Showing weekly availability grid (default)...');
+          const weeklyGridForAvailable = await getWeeklyAvailabilityGrid();
+          responseMessage = SMS_TEMPLATES.weeklyGrid(weeklyGridForAvailable);
           await clearConversationState(from);
           break;
           
         case 'specific_availability_request':
           const targetDate = parsed.data.date;
+          console.log('📅 Checking availability for:', targetDate.toISOString());
           const availableTimes = await getAvailableSlotsForDate(targetDate);
+          console.log(`✅ Found ${availableTimes.length} available times:`, availableTimes);
           const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           responseMessage = SMS_TEMPLATES.specificAvailable(dateStr, availableTimes);
           
           // Save conversation state if there are times available
           if (availableTimes.length > 0) {
+            const singleTimeValue = availableTimes.length === 1 ? availableTimes[0] : null;
+            console.log(`💾 Saving state with singleTime:`, singleTimeValue);
             await saveConversationState(from, {
               type: 'awaiting_time_selection',
               date: targetDate.toISOString(),
               dateStr,
               availableTimes,
               pendingTimes: true,
-              singleTime: availableTimes.length === 1 ? availableTimes[0] : null
+              singleTime: singleTimeValue
             });
           } else {
             await clearConversationState(from);
@@ -1347,10 +1536,7 @@ export const smsWebhook = onRequest(
           // Check if requested time is available
           const requestedTimeStr = parsed.data.time.toUpperCase();
           const normalizedRequestedTimeStr = requestedTimeStr.replace(/[:\s]/g, '');
-          const timeIsAvailable = bookingAvailableTimes.some(t => {
-            const normalized = t.toUpperCase().replace(/[:\s]/g, '');
-            return normalized.startsWith(normalizedRequestedTimeStr);
-          });
+          const timeIsAvailable = bookingAvailableTimes.some(t => timeMatches(requestedTimeStr, t));
           
           if (!timeIsAvailable) {
             const bookingDateDisplay2 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -1417,12 +1603,9 @@ export const smsWebhook = onRequest(
             }
           }
           
-          // Service not found or not provided - show top 5
-          const top5BookingServices = await db.collection('services').where('active', '==', true).get();
-          const top5Services = top5BookingServices.docs
-            .map(d => ({ id: d.id, ...d.data() as any }))
-            .sort((a, b) => a.price - b.price)
-            .slice(0, 5);
+          // Service not found or not provided - show top 5 most booked
+          console.log('📋 Getting top 5 most booked services...');
+          const top5Services = await getTop5MostBookedServices();
           
           const bookingDateDisplay4 = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           
@@ -1436,23 +1619,28 @@ export const smsWebhook = onRequest(
             dateStr: bookingDateDisplay4,
             time: requestedTimeStr,
             email: parsed.data.email,
-            awaitingService: true
+            awaitingService: true,
+            availableServices: top5Services
           });
           break;
           
         case 'confirm_yes':
-          // User confirmed a single time slot - now ask for category
+          // User confirmed a single time slot - show top 5 most booked services
           if (conversationState && conversationState.singleTime) {
-            const categories = await getServiceCategories();
-            responseMessage = SMS_TEMPLATES.categorySelection(categories);
+            console.log('📋 Getting top 5 most booked services...');
+            const top5ServicesList = await getTop5MostBookedServices();
+            
+            responseMessage = `Great! Which service?\n\n${top5ServicesList.map((s, i) => 
+              `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
+            ).join('\n')}\n\nView all: buenobrows.com/services\n\nReply with number or name. - Bueno Brows` + A2P_FOOTER;
             
             await saveConversationState(from, {
-              type: 'awaiting_category',
+              type: 'awaiting_service',
               date: conversationState.date,
               dateStr: conversationState.dateStr,
               time: conversationState.singleTime,
-              awaitingCategory: true,
-              availableCategories: categories
+              awaitingService: true,
+              availableServices: top5ServicesList
             });
           } else {
             responseMessage = SMS_TEMPLATES.error();
@@ -1471,16 +1659,13 @@ export const smsWebhook = onRequest(
           break;
           
         case 'time_selection':
-          // User selected a time - show top 5 services directly (skip categories)
+          // User selected a time - show top 5 most booked services
           if (conversationState && conversationState.pendingTimes) {
             const selectedTime = parsed.data.time;
             
-            // Show top 5 services directly (skip categories)
-            const allServicesForTime = await db.collection('services').where('active', '==', true).get();
-            const top5ForTime = allServicesForTime.docs
-              .map(d => ({ id: d.id, ...d.data() as any }))
-              .sort((a, b) => a.price - b.price)
-              .slice(0, 5);
+            // Show top 5 most booked services
+            console.log('📋 Getting top 5 most booked services...');
+            const top5ForTime = await getTop5MostBookedServices();
             
             responseMessage = `Great! Which service?\n\n${top5ForTime.map((s, i) => 
               `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
@@ -1491,10 +1676,38 @@ export const smsWebhook = onRequest(
               date: conversationState.date,
               dateStr: conversationState.dateStr,
               time: selectedTime,
-              awaitingService: true
+              awaitingService: true,
+              availableServices: top5ForTime
             });
           } else {
             responseMessage = SMS_TEMPLATES.error();
+            await clearConversationState(from);
+          }
+          break;
+          
+        case 'legacy_category_redirect':
+          // Handle users with old awaitingCategory state from before we removed categories
+          console.log('🔄 Handling legacy category state, showing top 5 most booked services');
+          if (conversationState && conversationState.date && conversationState.time) {
+            console.log('📋 Getting top 5 most booked services...');
+            const legacyTop5 = await getTop5MostBookedServices();
+            
+            responseMessage = `Great! Which service?\n\n${legacyTop5.map((s, i) => 
+              `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
+            ).join('\n')}\n\nView all: buenobrows.com/services\n\nReply with number or name. - Bueno Brows` + A2P_FOOTER;
+            
+            await saveConversationState(from, {
+              type: 'awaiting_service',
+              date: conversationState.date,
+              dateStr: conversationState.dateStr,
+              time: conversationState.time,
+              awaitingService: true,
+              availableServices: legacyTop5
+            });
+          } else {
+            // State incomplete, restart booking flow
+            console.log('❌ Legacy state incomplete, restarting');
+            responseMessage = SMS_TEMPLATES.booking_instructions();
             await clearConversationState(from);
           }
           break;
@@ -1621,6 +1834,8 @@ export const smsWebhook = onRequest(
           // User provided name - create the appointment!
           if (conversationState && conversationState.awaitingName) {
             const customerName = parsed.data.name;
+            console.log('📝 Customer provided name:', customerName);
+            console.log('📋 Current conversation state:', JSON.stringify(conversationState));
             
             // Parse appointment date/time in BUSINESS TIMEZONE (Pacific)
             const businessTimezone = 'America/Los_Angeles';
@@ -1662,6 +1877,7 @@ export const smsWebhook = onRequest(
               
               console.log('👤 Updating customer:', customerId, 'with:', updateData);
               await db.collection('customers').doc(customerId).update(updateData);
+              console.log('✅ Customer updated successfully');
               
               // Create the appointment directly using admin SDK with transaction
               const appointmentRef = db.collection('appointments').doc();
@@ -1670,6 +1886,8 @@ export const smsWebhook = onRequest(
               const endISO = new Date(endMs).toISOString();
               
               console.log('📅 Creating SMS appointment:', {
+                customerName: customerName,
+                customerId: customerId,
                 date: dateISO,
                 time: conversationState.time,
                 parsedTime: parsedTime,
@@ -1707,21 +1925,26 @@ export const smsWebhook = onRequest(
                 }
                 
                 // No conflicts - create appointment as PENDING first (will update to confirmed after)
-                transaction.set(appointmentRef, {
+                const appointmentData = {
                   customerId: customerId,
+                  customerName: customerName,
+                  customerEmail: conversationState.customerEmail || customerData?.email || '',
+                  customerPhone: from,
                   serviceId: conversationState.serviceId,
                   serviceIds: [conversationState.serviceId],
                   start: startISO,
                   end: endISO,
                   duration: conversationState.serviceDuration,
                   status: 'pending', // Create as pending first to trigger email on confirmation
-                  notes: `Booked via SMS by ${customerName}`,
+                  notes: `Booked via SMS`,
                   bookedPrice: conversationState.servicePrice,
                   servicePrices: { [conversationState.serviceId]: conversationState.servicePrice },
                   attendance: 'pending',
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString()
-                });
+                };
+                console.log('💾 Setting appointment data:', JSON.stringify(appointmentData));
+                transaction.set(appointmentRef, appointmentData);
               });
               
               // Update to confirmed to trigger email notifications
@@ -1772,6 +1995,13 @@ export const smsWebhook = onRequest(
           await clearConversationState(from);
           break;
           
+        case 'weekly_grid_request':
+          console.log('📅 Generating weekly availability grid...');
+          const weeklyGrid = await getWeeklyAvailabilityGrid();
+          responseMessage = SMS_TEMPLATES.weeklyGrid(weeklyGrid);
+          await clearConversationState(from);
+          break;
+          
         case 'booking_request':
           // User sent "BOOK [date] [time]" - process the booking
           if (parsed.data.date && parsed.data.time) {
@@ -1811,27 +2041,26 @@ export const smsWebhook = onRequest(
             
             // Check if their requested time is available
             const requestedTime = parsed.data.time.toUpperCase();
-            const normalizedRequestedTime = requestedTime.replace(/[:\s]/g, ''); // "7pm" → "7PM", "7:00 PM" → "700PM"
-            const timeAvailable = availableTimes.some(t => {
-              const normalizedAvailableTime = t.toUpperCase().replace(/[:\s]/g, ''); // "7:00 PM" → "700PM"
-              // Match if the normalized available time starts with the requested time
-              // e.g., "700PM".startsWith("7PM") = true
-              return normalizedAvailableTime.startsWith(normalizedRequestedTime);
-            });
+            const timeAvailable = availableTimes.some(t => timeMatches(requestedTime, t));
             
             if (timeAvailable) {
-              // Time is available - ask for service
+              // Time is available - show top 5 most booked services
               const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-              const categories = await getServiceCategories();
-              responseMessage = SMS_TEMPLATES.categorySelection(categories);
+              console.log('📋 Getting top 5 most booked services...');
+              const top5ServicesList = await getTop5MostBookedServices();
+              
+              responseMessage = `Great! Which service?\n\n${top5ServicesList.map((s, i) => 
+                `${i+1}. ${s.name} - $${s.price} (${s.duration}min)`
+              ).join('\n')}\n\nView all: buenobrows.com/services\n\nReply with number or name. - Bueno Brows` + A2P_FOOTER;
               
               await saveConversationState(from, {
-                type: 'awaiting_category',
+                type: 'awaiting_service',
                 date: bookingDate.toISOString(),
                 dateStr: dateDisplay,
                 time: requestedTime,
                 pendingTimes: [requestedTime],
-                awaitingCategory: true
+                awaitingService: true,
+                availableServices: top5ServicesList
               });
             } else {
               // Time not available - show what IS available and save state for time selection

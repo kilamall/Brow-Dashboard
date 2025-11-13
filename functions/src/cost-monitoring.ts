@@ -2,7 +2,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineString } from 'firebase-functions/params';
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import sgMail from '@sendgrid/mail';
 // Define types locally since shared types may not be available in functions
 interface CostMonitoringSettings {
@@ -29,6 +29,7 @@ interface CostMetrics {
     hosting: { bandwidth: number; cost: number };
     geminiAI: { calls: number; cost: number };
     sendGrid: { emails: number; cost: number };
+    twilio: { smsSent: number; smsReceived: number; cost: number };
   };
   projectedMonthly: number;
   createdAt: string;
@@ -58,6 +59,10 @@ interface UsageStats {
   };
   sendGrid: {
     emails: number;
+  };
+  twilio: {
+    smsSent: number;
+    smsReceived: number;
   };
 }
 
@@ -110,6 +115,13 @@ const FIREBASE_PRICING = {
   },
   sendGrid: {
     emails: 0.0006               // $0.0006 per email (Essentials plan)
+  },
+  twilio: {
+    smsSent: 0.0079,             // $0.0079 per outgoing SMS (US)
+    smsReceived: 0.0075,         // $0.0075 per incoming SMS (US)
+    carrierFee: 0.003,           // $0.003 per SMS segment (carrier fees)
+    phoneNumber: 1.15 / 30,      // $1.15 per month / 30 days (actual cost)
+    a2pRegistration: 8.00 / 30   // $8.00 per month A2P registration (prorated, varies)
   }
 };
 
@@ -383,6 +395,9 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthKey = startOfMonth.toISOString().slice(0, 7); // YYYY-MM format
     
+    // Create Firestore Timestamp for querying (Firestore uses Timestamp objects, not ISO strings)
+    const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+    
     // Get Firestore usage from tracking document (we'll create this)
     let firestoreStats = {
       reads: 0,
@@ -436,7 +451,7 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
     } catch (err) {
       // Estimate from appointment count
       const apptSnapshot = await db.collection('appointments')
-        .where('createdAt', '>=', startOfMonth)
+        .where('createdAt', '>=', startOfMonthTimestamp)
         .count()
         .get();
       const monthlyAppts = apptSnapshot.data().count;
@@ -447,7 +462,7 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
       };
     }
     
-    // Get storage usage - count profile pictures and consent forms
+    // Get storage usage - count profile pictures, consent forms, and images
     let storageStats = { totalGB: 0, downloadsGB: 0 };
     try {
       const storageDoc = await db.collection('_usage_tracking').doc(`${monthKey}_storage`).get();
@@ -459,21 +474,69 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
         };
       }
     } catch (err) {
-      // Estimate from uploaded files
-      const customersWithPhotos = await db.collection('customers')
-        .where('profilePictureUrl', '!=', null)
-        .count()
-        .get();
-      
-      const consentForms = await db.collection('consentForms')
-        .count()
-        .get();
-      
-      const totalFiles = customersWithPhotos.data().count + (consentForms.data().count * 2);
-      storageStats = {
-        totalGB: (totalFiles * 0.5) / 1024, // assume 500KB per file
-        downloadsGB: (totalFiles * 0.1) / 1024  // assume 10% download rate
-      };
+      // Estimate from actual uploaded files across all collections
+      try {
+        let totalSizeMB = 0;
+        let downloadsMB = 0;
+        
+        // Customer profile pictures (~1MB each)
+        const customersWithPhotos = await db.collection('customers')
+          .where('profilePictureUrl', '!=', null)
+          .count()
+          .get();
+        totalSizeMB += customersWithPhotos.data().count * 1;
+        downloadsMB += customersWithPhotos.data().count * 0.1; // 10% downloaded
+        
+        // Consent forms (~200KB each, 2 files per form)
+        const consentForms = await db.collection('customerConsents')
+          .count()
+          .get();
+        totalSizeMB += (consentForms.data().count * 0.2 * 2);
+        downloadsMB += (consentForms.data().count * 0.2 * 0.05); // 5% downloaded
+        
+        // Skin analysis images (~2MB each, auto-deleted after 30 days)
+        const thirtyDaysAgo = Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+        const skinAnalyses = await db.collection('skinAnalyses')
+          .where('createdAt', '>=', thirtyDaysAgo)
+          .count()
+          .get();
+        totalSizeMB += skinAnalyses.data().count * 2;
+        downloadsMB += skinAnalyses.data().count * 0.5; // 25% downloaded
+        
+        // Service images (~500KB each)
+        const services = await db.collection('services')
+          .where('imageUrl', '!=', null)
+          .count()
+          .get();
+        totalSizeMB += services.data().count * 0.5;
+        downloadsMB += services.data().count * 1; // Frequently accessed
+        
+        // Gallery/slideshow images (~3MB each)
+        const slideshow = await db.collection('slideshow')
+          .count()
+          .get();
+        totalSizeMB += slideshow.data().count * 3;
+        downloadsMB += slideshow.data().count * 2; // Frequently accessed
+        
+        storageStats = {
+          totalGB: totalSizeMB / 1024,
+          downloadsGB: downloadsMB / 1024
+        };
+        
+        console.log(`💾 Storage usage: ${(totalSizeMB / 1024).toFixed(2)} GB, Downloads: ${(downloadsMB / 1024).toFixed(2)} GB`);
+      } catch (storageErr) {
+        console.log('Could not fetch storage usage, using basic estimate:', storageErr);
+        // Fallback to simple estimate
+        const customersWithPhotos = await db.collection('customers')
+          .where('profilePictureUrl', '!=', null)
+          .count()
+          .get();
+        
+        storageStats = {
+          totalGB: (customersWithPhotos.data().count * 0.5) / 1024,
+          downloadsGB: (customersWithPhotos.data().count * 0.1) / 1024
+        };
+      }
     }
     
     // Get Gemini AI usage
@@ -488,19 +551,44 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
         };
       }
     } catch (err) {
-      // Estimate from AI conversations
-      const aiConvos = await db.collection('aiConversations')
-        .where('createdAt', '>=', startOfMonth)
-        .count()
-        .get();
-      
-      geminiStats = {
-        requests: aiConvos.data().count * 3, // ~3 requests per conversation
-        tokens: aiConvos.data().count * 500  // ~500 tokens per conversation
-      };
+      // Get actual AI usage from multiple sources
+      try {
+        let totalRequests = 0;
+        
+        // Count AI chatbot conversations (web messaging)
+        const aiChatbotSnapshot = await db.collection('ai_conversations')
+          .where('createdAt', '>=', startOfMonthTimestamp)
+          .count()
+          .get();
+        totalRequests += aiChatbotSnapshot.data().count;
+        
+        // Count SMS AI conversations
+        const smsAiSnapshot = await db.collection('ai_sms_conversations')
+          .where('createdAt', '>=', startOfMonthTimestamp)
+          .count()
+          .get();
+        totalRequests += smsAiSnapshot.data().count;
+        
+        // Count skin analyses (these use Gemini for image analysis)
+        const skinAnalysesSnapshot = await db.collection('skinAnalyses')
+          .where('createdAt', '>=', startOfMonthTimestamp)
+          .where('status', '==', 'completed')
+          .count()
+          .get();
+        totalRequests += skinAnalysesSnapshot.data().count * 2; // Usually 2 API calls per analysis
+        
+        geminiStats = {
+          requests: totalRequests,
+          tokens: totalRequests * 500  // ~500 tokens average per request
+        };
+        
+        console.log(`🤖 Gemini AI usage this month: ${totalRequests} requests`);
+      } catch (aiErr) {
+        console.log('Could not fetch AI usage, using zero values:', aiErr);
+      }
     }
     
-    // Get SendGrid email count
+    // Get SendGrid email count from actual email_logs collection
     let sendGridStats = { emails: 0 };
     try {
       const emailDoc = await db.collection('_usage_tracking').doc(`${monthKey}_sendgrid`).get();
@@ -509,15 +597,126 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
         sendGridStats = { emails: data?.emails || 0 };
       }
     } catch (err) {
-      // Estimate from appointments (confirmations + reminders)
-      const apptSnapshot = await db.collection('appointments')
-        .where('createdAt', '>=', startOfMonth)
-        .count()
-        .get();
-      
-      sendGridStats = {
-        emails: apptSnapshot.data().count * 3 // confirmation + 2 reminders per appt
-      };
+      // Get ACTUAL email count from email_logs collection
+      try {
+        const emailLogsSnapshot = await db.collection('email_logs')
+          .where('timestamp', '>=', startOfMonthTimestamp)
+          .where('status', '==', 'sent')
+          .get();
+        
+        const totalEmails = emailLogsSnapshot.size;
+        
+        // Break down by type for debugging
+        const byType: Record<string, number> = {};
+        emailLogsSnapshot.forEach(doc => {
+          const data = doc.data();
+          const type = data.type || 'unknown';
+          byType[type] = (byType[type] || 0) + 1;
+        });
+        
+        sendGridStats = { emails: totalEmails };
+        
+        console.log(`📧 SendGrid emails this month: ${totalEmails} emails`);
+        console.log(`📧 Breakdown:`, byType);
+      } catch (emailErr) {
+        console.log('Could not fetch email_logs, using appointment estimate:', emailErr);
+        // Fallback to appointment-based estimate only if email_logs fails
+        try {
+          let totalEmails = 0;
+          
+          // Count appointment-related emails (confirmations + reminders)
+          const confirmedAppts = await db.collection('appointments')
+            .where('createdAt', '>=', startOfMonthTimestamp)
+            .where('status', 'in', ['confirmed', 'completed'])
+            .count()
+            .get();
+          totalEmails += confirmedAppts.data().count * 3; // confirmation + 2 reminders
+          
+          // Count cancelled appointments (1 cancellation email each)
+          const cancelledAppts = await db.collection('appointments')
+            .where('createdAt', '>=', startOfMonthTimestamp)
+            .where('status', '==', 'cancelled')
+            .count()
+            .get();
+          totalEmails += cancelledAppts.data().count;
+          
+          sendGridStats = { emails: totalEmails };
+          console.log(`📧 SendGrid (estimated) emails this month: ${totalEmails} emails`);
+        } catch (fallbackErr) {
+          console.log('Complete email tracking failure:', fallbackErr);
+        }
+      }
+    }
+    
+    // Get Twilio SMS usage from both sms_logs AND sms_conversations collections
+    let twilioStats = { smsSent: 0, smsReceived: 0 };
+    try {
+      const twilioDoc = await db.collection('_usage_tracking').doc(`${monthKey}_twilio`).get();
+      if (twilioDoc.exists) {
+        const data = twilioDoc.data();
+        twilioStats = {
+          smsSent: data?.smsSent || 0,
+          smsReceived: data?.smsReceived || 0
+        };
+      }
+    } catch (err) {
+      // Get actual SMS usage from BOTH sms_logs and sms_conversations
+      try {
+        let sentCount = 0;
+        let receivedCount = 0;
+        
+        // Check sms_logs collection (direct sendSMS calls)
+        try {
+          const smsLogsSnapshot = await db.collection('sms_logs')
+            .where('timestamp', '>=', startOfMonthTimestamp)
+            .get();
+          
+          smsLogsSnapshot.forEach(doc => {
+            const data = doc.data();
+            // Count Twilio messages only (provider === 'twilio')
+            if (data.provider === 'twilio') {
+              if (data.type === 'admin_message' || data.direction === 'outbound') {
+                sentCount++;
+              } else if (data.direction === 'inbound') {
+                receivedCount++;
+              }
+            }
+          });
+          
+          console.log(`📱 SMS from sms_logs: ${sentCount} sent, ${receivedCount} received`);
+        } catch (logsErr) {
+          console.log('Could not fetch sms_logs:', logsErr);
+        }
+        
+        // Check sms_conversations collection (webhook messages)
+        try {
+          const conversationsSnapshot = await db.collection('sms_conversations')
+            .where('timestamp', '>=', startOfMonthTimestamp)
+            .get();
+          
+          conversationsSnapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.direction === 'outbound') {
+              sentCount++;
+            } else if (data.direction === 'inbound') {
+              receivedCount++;
+            }
+          });
+          
+          console.log(`📱 SMS from sms_conversations: ${sentCount} total sent, ${receivedCount} total received`);
+        } catch (convoErr) {
+          console.log('Could not fetch sms_conversations:', convoErr);
+        }
+        
+        twilioStats = {
+          smsSent: sentCount,
+          smsReceived: receivedCount
+        };
+        
+        console.log(`📱 TOTAL Twilio SMS usage this month: ${sentCount} sent, ${receivedCount} received`);
+      } catch (smsErr) {
+        console.log('Could not fetch SMS data, using zero values:', smsErr);
+      }
     }
     
     // Hosting bandwidth - rough estimate
@@ -531,7 +730,8 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
       storage: storageStats,
       hosting: hostingStats,
       geminiAI: geminiStats,
-      sendGrid: sendGridStats
+      sendGrid: sendGridStats,
+      twilio: twilioStats
     };
   } catch (error) {
     console.error('Error getting usage stats:', error);
@@ -542,7 +742,8 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
       storage: { totalGB: 0, downloadsGB: 0 },
       hosting: { bandwidthGB: 0 },
       geminiAI: { requests: 0, tokens: 0 },
-      sendGrid: { emails: 0 }
+      sendGrid: { emails: 0 },
+      twilio: { smsSent: 0, smsReceived: 0 }
     };
   }
 }
@@ -573,7 +774,16 @@ async function calculateCosts(usage: UsageStats): Promise<Omit<CostMetrics, 'dat
   // Calculate SendGrid costs
   const sendGridCost = usage.sendGrid.emails * FIREBASE_PRICING.sendGrid.emails;
 
-  const totalCost = firestoreCost + functionsCost + storageCost + hostingCost + geminiCost + sendGridCost;
+  // Calculate Twilio SMS costs (including carrier fees and A2P registration)
+  const totalSmsSegments = usage.twilio.smsSent + usage.twilio.smsReceived;
+  const twilioCost = 
+    (usage.twilio.smsSent * FIREBASE_PRICING.twilio.smsSent) +              // Outbound message cost
+    (usage.twilio.smsReceived * FIREBASE_PRICING.twilio.smsReceived) +      // Inbound message cost
+    (totalSmsSegments * FIREBASE_PRICING.twilio.carrierFee) +               // Carrier fees per segment
+    (new Date().getDate() * FIREBASE_PRICING.twilio.phoneNumber) +          // Phone number daily cost
+    (new Date().getDate() * FIREBASE_PRICING.twilio.a2pRegistration);       // A2P registration daily cost
+
+  const totalCost = firestoreCost + functionsCost + storageCost + hostingCost + geminiCost + sendGridCost + twilioCost;
 
   return {
     totalCost,
@@ -603,6 +813,11 @@ async function calculateCosts(usage: UsageStats): Promise<Omit<CostMetrics, 'dat
       sendGrid: {
         emails: usage.sendGrid.emails,
         cost: sendGridCost
+      },
+      twilio: {
+        smsSent: usage.twilio.smsSent,
+        smsReceived: usage.twilio.smsReceived,
+        cost: twilioCost
       }
     },
     projectedMonthly: totalCost * (30 / new Date().getDate())
@@ -710,17 +925,18 @@ async function calculateEfficiency(costs: Omit<CostMetrics, 'date' | 'createdAt'
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
     
     // Get appointment count for the month
     const appointmentsSnapshot = await db.collection('appointments')
-      .where('createdAt', '>=', startOfMonth)
+      .where('createdAt', '>=', startOfMonthTimestamp)
       .count()
       .get();
     const totalAppointments = appointmentsSnapshot.data().count;
     
     // Get completed appointments
     const completedSnapshot = await db.collection('appointments')
-      .where('createdAt', '>=', startOfMonth)
+      .where('createdAt', '>=', startOfMonthTimestamp)
       .where('status', '==', 'completed')
       .count()
       .get();
@@ -728,7 +944,7 @@ async function calculateEfficiency(costs: Omit<CostMetrics, 'date' | 'createdAt'
     
     // Get total revenue for the month
     const revenueSnapshot = await db.collection('appointments')
-      .where('createdAt', '>=', startOfMonth)
+      .where('createdAt', '>=', startOfMonthTimestamp)
       .where('status', '==', 'completed')
       .get();
     
@@ -843,6 +1059,29 @@ async function getOptimizationRecommendations(usage: UsageStats, costs: Omit<Cos
       severity: 'info',
       title: 'Storage Usage Above Free Tier',
       description: 'Consider implementing image compression or cleanup policies for old files.'
+    });
+  }
+  
+  // Check Twilio SMS usage
+  if (usage.twilio.smsSent > 100) {
+    const potentialSavings = costs.services.twilio.cost * 0.1;
+    recommendations.push({
+      category: 'Twilio SMS',
+      severity: 'info',
+      title: 'SMS Usage Detected',
+      description: `You've sent ${usage.twilio.smsSent} SMS messages this month. Consider implementing SMS response templates and caching to reduce redundant messages.`,
+      potentialSavings
+    });
+  }
+  
+  // Check if SMS costs are high relative to total
+  if (costs.services.twilio.cost > costs.totalCost * 0.3 && costs.services.twilio.cost > 5) {
+    recommendations.push({
+      category: 'Twilio SMS',
+      severity: 'warning',
+      title: 'High SMS Costs',
+      description: `SMS costs account for ${Math.round((costs.services.twilio.cost / costs.totalCost) * 100)}% of your total costs. Review your SMS usage patterns and consider consolidating messages.`,
+      potentialSavings: costs.services.twilio.cost * 0.2
     });
   }
   
