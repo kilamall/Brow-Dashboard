@@ -445,6 +445,7 @@ id: ID;
 customerId: ID; // Required - must be logged in
 customerEmail: string;
 customerName: string;
+customerPhone?: string;
 type: 'skin' | 'products';
 imageUrl: string; // Legacy field - single image (for backward compatibility)
 imageUrls?: string[]; // New field - supports multiple images

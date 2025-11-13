@@ -105,6 +105,7 @@ export * from './generate-receipt.js';
 export * from './close-shop.js';
 // export * from './cleanup-edit-requests.js';
 export * from './cost-monitoring.js';
+export * from './cost-diagnostic.js';
 export * from './event-inquiries.js';
 export * from './check-new-customer.js';
 export * from './fix-total-visits.js';

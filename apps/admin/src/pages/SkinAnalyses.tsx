@@ -67,6 +67,37 @@ export default function SkinAnalysesPage() {
     }
   };
 
+  // Helper function to enrich analyses with customer data
+  const enrichAnalysesWithCustomerData = async (analyses: SkinAnalysis[]) => {
+    const db = getFirestore();
+    const enrichedAnalyses = await Promise.all(
+      analyses.map(async (analysis) => {
+        // Skip if already has customer data
+        if (analysis.customerName && analysis.customerEmail) {
+          return analysis;
+        }
+
+        // Fetch customer data
+        try {
+          const customerDoc = await getDoc(doc(db, 'customers', analysis.customerId));
+          if (customerDoc.exists()) {
+            const customerData = customerDoc.data();
+            return {
+              ...analysis,
+              customerName: customerData.name || 'N/A',
+              customerEmail: customerData.email || 'N/A',
+              customerPhone: customerData.phone || 'N/A',
+            };
+          }
+        } catch (error) {
+          console.error('Error fetching customer data for analysis:', analysis.id, error);
+        }
+        return analysis;
+      })
+    );
+    return enrichedAnalyses;
+  };
+
   useEffect(() => {
     const db = getFirestore();
     
@@ -76,13 +107,17 @@ export default function SkinAnalysesPage() {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribeAnalyses = onSnapshot(analysesQuery, (snapshot) => {
+    const unsubscribeAnalyses = onSnapshot(analysesQuery, async (snapshot) => {
       const data = snapshot.docs.map(doc => ({
         ...doc.data(),
         id: doc.id,
       })) as SkinAnalysis[];
-      setAnalyses(data);
-      calculateAiMetrics(data);
+      
+      // Enrich with customer data
+      const enrichedData = await enrichAnalysesWithCustomerData(data);
+      
+      setAnalyses(enrichedData);
+      calculateAiMetrics(enrichedData);
       setLoading(false);
     });
 
@@ -928,9 +963,10 @@ export default function SkinAnalysesPage() {
               {/* Customer Info */}
               <div>
                 <h3 className="font-semibold mb-2">Customer Information</h3>
-                <div className="bg-gray-50 rounded p-3 text-sm">
+                <div className="bg-gray-50 rounded p-3 text-sm space-y-2">
                   <div><strong>Name:</strong> {selectedAnalysis.customerName || 'N/A'}</div>
                   <div><strong>Email:</strong> {selectedAnalysis.customerEmail || 'N/A'}</div>
+                  <div><strong>Phone:</strong> {selectedAnalysis.customerPhone || 'N/A'}</div>
                   <div><strong>Date:</strong> {formatDate(selectedAnalysis.createdAt)}</div>
                   <div>
                     <strong>Status:</strong>{' '}
