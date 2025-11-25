@@ -565,6 +565,7 @@ consentedAt: string; // ISO timestamp
 expiresAt?: string; // Optional expiration date (e.g., annual renewal)
 needsRenewal?: boolean; // Flag when consent form is updated
 appointmentId?: ID; // If consent was given during booking
+isQuickUpdate?: boolean; // Flag to indicate this is a quick update (one-question form) vs full consent
 createdAt: any;
 updatedAt?: any;
 }

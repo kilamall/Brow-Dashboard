@@ -188,6 +188,15 @@ const defaultTemplates: EmailTemplate[] = [
         </div>
       </div>
       {{notesSection}}
+      <div style="background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #FFC107;">
+        <p style="margin: 0 0 12px 0; color: #FFC107; font-weight: 600; font-size: 16px;">💳 Accepted Payment Methods:</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Cash</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Zelle</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Venmo</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Apple Cash</span>
+        </div>
+      </div>
       <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Manage Your Booking</a></div>
       <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at {{businessPhone}}</p>
     </div>
@@ -262,6 +271,15 @@ const defaultTemplates: EmailTemplate[] = [
         </div>
       </div>
       <p style="margin-top: 20px;">Please arrive 5-10 minutes early for your appointment.</p>
+      <div style="background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #FFC107;">
+        <p style="margin: 0 0 12px 0; color: #FFC107; font-weight: 600; font-size: 16px;">💳 Accepted Payment Methods:</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Cash</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Zelle</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Venmo</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Apple Cash</span>
+        </div>
+      </div>
       <div style="text-align: center;"><a href="{{bookingLink}}" class="cta-button">Manage Your Booking</a></div>
       <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at {{businessPhone}} or visit our website.</p>
     </div>

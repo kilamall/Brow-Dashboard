@@ -1,12 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import { findOrCreateCustomerClient } from '@buenobrows/shared/functionsClient';
 import { ErrorBoundary } from '@buenobrows/shared/ErrorBoundary';
 import { FeatureError } from '@buenobrows/shared/FallbackUI';
 import { ErrorCategory } from '@buenobrows/shared/errorHandling';
 import Navbar from './components/Navbar';
 import ServiceWorkerUpdate from './components/ServiceWorkerUpdate';
+import IdleSessionWarning from './components/IdleSessionWarning';
 import Home from '@/pages/Home';
 import Privacy from '@/pages/Privacy';
 import ServicesPage from '@/pages/Services';
@@ -23,10 +24,13 @@ import Verify from '@/pages/verify';
 
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  
   // Ensure a customer record exists/links on any auth state change
   useEffect(() => {
     const auth = getAuth();
     const unsub = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
       if (!user) return;
       try {
         await findOrCreateCustomerClient({
@@ -45,6 +49,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-cream text-slate-800">
+      <IdleSessionWarning user={user} timeoutMinutes={30} warningMinutes={5} />
       <Navbar />
       <ServiceWorkerUpdate />
       <main className="max-w-6xl mx-auto px-4 py-6 md:px-6">

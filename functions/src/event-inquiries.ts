@@ -218,12 +218,15 @@ export const submitEventInquiry = onCall(
       `;
 
       // Send admin notification email
-      await sendEmail({
+      const adminEmailResult = await sendEmail({
         to: adminEmail,
         from: { email: 'hello@buenobrows.com', name: 'Bueno Brows' },
         subject: emailSubject,
         html: emailHtml,
       });
+      if (!adminEmailResult.success) {
+        console.error('Failed to send admin notification email:', adminEmailResult.error);
+      }
 
       // Send confirmation email to the client
       const confirmationSubject = 'Thank You for Your Event Inquiry - Bueno Brows';
@@ -372,12 +375,15 @@ export const submitEventInquiry = onCall(
         </html>
       `;
 
-      await sendEmail({
+      const confirmationEmailResult = await sendEmail({
         to: inquiry.email,
         from: { email: 'hello@buenobrows.com', name: 'Bueno Brows' },
         subject: confirmationSubject,
         html: confirmationHtml,
       });
+      if (!confirmationEmailResult.success) {
+        console.error('Failed to send confirmation email to client:', confirmationEmailResult.error);
+      }
 
       return {
         success: true,

@@ -98,3 +98,17 @@ reset-*.js
 .dataconnect
 dist/
 *.backup
+
+# Diagnostic and debug files
+*-diagnostic.ts
+*-debug*.ts
+check-*.js
+enable-*.js
+trace-*.ts
+inspect-*.ts
+debug-*.ts
+simple-*.ts
+count-*.ts
+analytics-diagnostic.ts
+audit-log.ts
+check-email-config.ts

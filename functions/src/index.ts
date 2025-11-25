@@ -106,9 +106,24 @@ export * from './close-shop.js';
 // export * from './cleanup-edit-requests.js';
 export * from './cost-monitoring.js';
 export * from './cost-diagnostic.js';
+export * from './simple-cost-check.js';
+export * from './count-all-docs.js';
+export * from './analytics-diagnostic.js';
 export * from './event-inquiries.js';
 export * from './check-new-customer.js';
 export * from './fix-total-visits.js';
+export * from './check-email-config.js';
+export * from './send-receipt-email.js';
+export * from './send-receipt-sms.js';
+export * from './fix-orphaned-customers.js';
+export * from './fix-orphaned-appointments.js';
+export * from './debug-customer-query.js';
+export * from './inspect-customer.js';
+export * from './cleanup-orphaned-migrations.js';
+export * from './fix-luis-duplicate.js';
+export * from './fix-self-reference-migrations.js';
+export * from './trace-customer-filter.js';
+export * from './audit-log.js';
 
 // SECURITY FIX: Disable test functions in production
 // These functions are now secured with authentication but should not be used in production

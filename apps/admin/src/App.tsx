@@ -1,7 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
 import AuthGate from './components/AuthGate';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+import IdleSessionWarning from './components/IdleSessionWarning';
 
 import AnalyticsHome from './AnalyticsHome';        // lives at src/AnalyticsHome.tsx
 import Schedule from './pages/Schedule';
@@ -22,8 +25,17 @@ import Settings from './pages/Settings';
 import Promotions from './pages/Promotions';
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const auth = getAuth();
+    const unsub = onAuthStateChanged(auth, setUser);
+    return () => unsub();
+  }, []);
+
   return (
     <AuthGate>
+      <IdleSessionWarning user={user} timeoutMinutes={15} warningMinutes={3} />
       <div className="min-h-screen grid" style={{ gridTemplateRows: '56px 1fr' }}>
         {/* Top bar */}
         <Header />

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { onSnapshot, collection, query, where, orderBy, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { AnalyticsTargets, Appointment, Service, BusinessHours } from '@buenobrows/shared/types';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isSameMonth, parseISO, differenceInDays, } from 'date-fns';
 import { formatInBusinessTZ, formatAppointmentTimeRange, getBusinessTimezone } from '@buenobrows/shared/timezoneUtils';
@@ -31,8 +30,7 @@ export default function AnalyticsHome() {
   const [bh, setBh] = useState<BusinessHours | null>(null); // Business hours for timezone-aware formatting
 
   // Get memoized Firebase instance
-  const { db, app } = useFirebase();
-  const functions = getFunctions(app, 'us-central1');
+  const { db } = useFirebase();
 
   // Load business hours for timezone-aware formatting
   useEffect(() => {
@@ -176,32 +174,148 @@ export default function AnalyticsHome() {
 
   // Watch ALL appointments (past 30 days + future) for the appointment lists
   useEffect(() => {
+    if (!db) return;
     const ref = collection(db, 'appointments');
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const qy = query(ref, where('start', '>=', thirtyDaysAgo.toISOString()), orderBy('start', 'asc'));
+    const thirtyDaysAgoISO = thirtyDaysAgo.toISOString();
+    console.log('📊 [ANALYTICS] Querying all appointments from:', thirtyDaysAgoISO);
+    const qy = query(ref, where('start', '>=', thirtyDaysAgoISO), orderBy('start', 'asc'));
     return onSnapshot(qy, (snap) => {
       const rows: Appointment[] = [];
       snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
+      console.log(`📊 [ANALYTICS] Loaded ${rows.length} appointments (last 30 days + future)`);
       setAllAppts(rows);
+    }, (error) => {
+      console.error('❌ [ANALYTICS] Error loading all appointments:', error);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [db]);
 
   // Compute range based on period
   const { fromISO, toISO } = useMemo(() => computeRange(period), [period]);
 
   // Watch appointments for the selected period (for metrics only)
   useEffect(() => {
+    if (!db) return;
     const ref = collection(db, 'appointments');
+    console.log(`📊 [ANALYTICS] Querying appointments for period: ${fromISO} to ${toISO}`);
     const qy = query(ref, where('start', '>=', fromISO), where('start', '<=', toISO), orderBy('start', 'asc'));
     return onSnapshot(qy, (snap) => {
       const rows: Appointment[] = [];
-      snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
+      let earliestDate: string | null = null;
+      let latestDate: string | null = null;
+      snap.forEach((d) => {
+        const data = d.data();
+        const appt = { id: d.id, ...(data as any) };
+        rows.push(appt);
+        if (appt.start) {
+          if (!earliestDate || appt.start < earliestDate) earliestDate = appt.start;
+          if (!latestDate || appt.start > latestDate) latestDate = appt.start;
+        }
+      });
+      console.log(`📊 [ANALYTICS] Loaded ${rows.length} appointments for selected period`);
+      if (earliestDate && latestDate) {
+        console.log(`📊 [ANALYTICS] Date range in results: ${earliestDate} to ${latestDate}`);
+      }
+      
+      // Check if query was limited or had issues
+      if (snap.metadata.fromCache) {
+        console.warn('⚠️ [ANALYTICS] Query results came from cache');
+      }
+      
+      // Check for potential query issues
+      if (period === 'all' && rows.length > 0) {
+        // Verify we're getting appointments from the full range
+        const has2025Data = rows.some(a => a.start && a.start.startsWith('2025'));
+        const has2024Data = rows.some(a => a.start && a.start.startsWith('2024'));
+        if (!has2025Data && !has2024Data) {
+          console.warn('⚠️ [ANALYTICS] "All" query returned results but no 2024/2025 data - possible date range issue');
+        }
+      }
+      
+      // Check if we got fewer results than expected for "All"
+      if (period === 'all' && rows.length < 40) {
+        console.warn(`⚠️ [ANALYTICS] "All" period returned only ${rows.length} appointments - this seems low. Check if query is complete.`);
+      }
+      
       setAppts(rows);
+    }, (error: any) => {
+      console.error('❌ [ANALYTICS] Error loading period appointments:', error);
+      console.error('❌ [ANALYTICS] Error code:', error.code);
+      console.error('❌ [ANALYTICS] Error message:', error.message);
+      // Set empty array on error to prevent stale data
+      setAppts([]);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromISO, toISO]);
+  }, [db, fromISO, toISO, period]);
+
+  // Current year metrics (for "Next Steps" - always shows current business stage)
+  const currentYearMetrics = useMemo(() => {
+    const now = new Date();
+    const yearStart = startOfYear(now);
+    const yearEnd = endOfYear(now);
+    
+    // Filter allAppts for current calendar year only
+    const currentYearAppts = allAppts.filter(a => {
+      if (!a.start) return false;
+      const apptDate = parseISO(a.start);
+      return apptDate >= yearStart && apptDate <= yearEnd;
+    });
+    
+    const confirmed = currentYearAppts.filter((a) => a.status === 'confirmed' || a.status === 'pending' || a.status === 'completed');
+    const uniqueCustomers = new Set(confirmed.map((a) => a.customerId)).size || 0;
+    
+    const monthlyBreakEven = 34; // Based on your overhead analysis
+    const yearlyBreakEven = monthlyBreakEven * 12; // 408 clients per year
+    const servicesToBreakEven = Math.max(0, yearlyBreakEven - uniqueCustomers);
+    
+    // Calculate how many months into the year we are
+    const currentMonth = now.getMonth() + 1; // 1-12
+    const expectedByNow = monthlyBreakEven * currentMonth; // Expected clients by this month (34 per month)
+    
+    // Determine focus based on progress
+    const progressVsExpected = uniqueCustomers - expectedByNow;
+    const progressPercent = (uniqueCustomers / yearlyBreakEven) * 100;
+    const monthsRemaining = 12 - currentMonth;
+    const neededPerMonth = servicesToBreakEven / Math.max(1, monthsRemaining);
+    
+    let focus: string;
+    let focusReason: string;
+    
+    if (uniqueCustomers >= yearlyBreakEven) {
+      focus = "Scaling & Optimization";
+      focusReason = "Goal achieved! Focus on growth and efficiency";
+    } else if (progressPercent >= 90) {
+      focus = "Final Push";
+      focusReason = "Almost there! Push to reach your goal";
+    } else if (progressVsExpected >= 10) {
+      focus = "Customer Retention";
+      focusReason = "Ahead of schedule! Focus on keeping customers";
+    } else if (progressVsExpected >= -5) {
+      focus = "Steady Growth";
+      focusReason = "On track! Maintain momentum";
+    } else if (neededPerMonth <= monthlyBreakEven) {
+      focus = "Customer Acquisition";
+      focusReason = "Need to pick up pace to reach goal";
+    } else {
+      focus = "Urgent: Customer Acquisition";
+      focusReason = "Significantly behind - need aggressive growth";
+    }
+    
+    return {
+      uniqueCustomers,
+      servicesToBreakEven,
+      yearlyBreakEven,
+      expectedByNow,
+      currentMonth,
+      focus,
+      focusReason,
+      progressVsExpected,
+      progressPercent,
+      neededPerMonth
+    };
+  }, [allAppts]);
 
   // Metrics
   const { revenue, cancelledValue, uniqueCustomers, avgCustomerValue, expectedCogs, targetValue, progressPct, topServices, netProfit, grossProfit, margin, breakEvenStatus, growthMetrics } = useMemo(() => {
@@ -209,12 +323,21 @@ export default function AnalyticsHome() {
     // Exclude appointments cancelled for edits from cancellation metrics
     const cancelled = appts.filter((a) => a.status === 'cancelled' && !a.cancelledForEdit);
 
+    console.log(`📊 [ANALYTICS] Calculating metrics from ${appts.length} appointments:`);
+    console.log(`  - Confirmed/Pending/Completed: ${confirmed.length}`);
+    console.log(`  - Cancelled: ${cancelled.length}`);
+
     const sum = (rows: Appointment[]) => rows.reduce((acc, a) => acc + (a.totalPrice ?? a.bookedPrice ?? services[a.serviceId]?.price ?? 0), 0);
     const revenue = sum(confirmed);
     const cancelledValue = sum(cancelled);
 
     const uniqueCustomers = new Set(confirmed.map((a) => a.customerId)).size || 0;
     const avgCustomerValue = uniqueCustomers ? revenue / uniqueCustomers : 0;
+    
+    console.log(`📊 [ANALYTICS] Metrics calculated:`);
+    console.log(`  - Revenue: $${revenue.toFixed(2)}`);
+    console.log(`  - Unique customers: ${uniqueCustomers}`);
+    console.log(`  - Avg customer value: $${avgCustomerValue.toFixed(2)}`);
 
     const cogsRate = (targets?.defaultCogsRate ?? 0) / 100;
     const expectedCogs = revenue * cogsRate;
@@ -233,7 +356,7 @@ export default function AnalyticsHome() {
       above: netProfit > 0 ? Math.floor(netProfit / avgCustomerValue) : 0
     };
 
-    // Growth-focused metrics
+    // Growth-focused metrics (for current period display)
     const monthlyBreakEven = 34; // Based on your overhead analysis
     const servicesToBreakEven = Math.max(0, monthlyBreakEven - uniqueCustomers);
     const profitPerService = avgCustomerValue > 0 ? avgCustomerValue - (expectedCogs / Math.max(1, uniqueCustomers)) : 0;
@@ -513,6 +636,7 @@ export default function AnalyticsHome() {
     return aIndex - bIndex;
   });
 
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
     <div className="grid gap-6">
@@ -639,13 +763,35 @@ export default function AnalyticsHome() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span>Focus on:</span>
-                    <span className="font-semibold">Customer acquisition</span>
+                    <span className="font-semibold">{currentYearMetrics.focus}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mb-2">
+                    {currentYearMetrics.focusReason}
                   </div>
                   <div className="flex justify-between">
-                    <span>Goal this month:</span>
-                    <span className="font-semibold">{growthMetrics.servicesToBreakEven} more clients</span>
+                    <span>Goal this year:</span>
+                    <span className="font-semibold">{currentYearMetrics.servicesToBreakEven} more clients</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
+                    <span>Current progress ({new Date().getFullYear()}):</span>
+                    <span className="font-semibold">{currentYearMetrics.uniqueCustomers}/{currentYearMetrics.yearlyBreakEven} clients</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>Expected by now:</span>
+                    <span className={currentYearMetrics.progressVsExpected >= 0 ? 'text-green-600' : 'text-orange-600'}>
+                      {currentYearMetrics.expectedByNow} clients 
+                      {currentYearMetrics.progressVsExpected !== 0 && (
+                        <span> ({currentYearMetrics.progressVsExpected > 0 ? '+' : ''}{currentYearMetrics.progressVsExpected})</span>
+                      )}
+                    </span>
+                  </div>
+                  {currentYearMetrics.servicesToBreakEven > 0 && (
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span>Needed per month:</span>
+                      <span>{Math.ceil(currentYearMetrics.neededPerMonth)} clients/month</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between mt-3 pt-3 border-t">
                     <span>Switch to detailed view:</span>
                     <button 
                       onClick={() => setGrowthMode(false)}
@@ -660,20 +806,26 @@ export default function AnalyticsHome() {
           ) : (
             <div className="grid md:grid-cols-2 gap-6">
               <div>
-                <h4 className="font-semibold mb-3">Revenue Calculation</h4>
+                <h4 className="font-semibold mb-3">Revenue Summary</h4>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span>Confirmed appointments:</span>
+                    <span>Completed appointments:</span>
+                    <span className="font-semibold">{appts.filter(a => a.status === 'completed').length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Confirmed/Pending:</span>
                     <span>{appts.filter(a => a.status === 'confirmed' || a.status === 'pending').length}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Total revenue:</span>
-                    <span className="font-semibold">{fmtCurrency(revenue)}</span>
+                    <span className="font-semibold text-green-600">{fmtCurrency(revenue)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Cancelled value (excluded):</span>
-                    <span>{fmtCurrency(cancelledValue)}</span>
-                  </div>
+                  {cancelledValue > 0 && (
+                    <div className="flex justify-between text-slate-500">
+                      <span>Cancelled (excluded):</span>
+                      <span>{fmtCurrency(cancelledValue)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -699,23 +851,48 @@ export default function AnalyticsHome() {
                 </div>
               </div>
 
-              <div>
-                <h4 className="font-semibold mb-3">Target Progress</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Target for {period}:</span>
-                    <span>{fmtCurrency(targetValue)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Progress:</span>
-                    <span className="font-semibold">{progressPct}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Remaining to target:</span>
-                    <span>{fmtCurrency(Math.max(0, targetValue - revenue))}</span>
+              {period !== 'all' && targetValue > 0 ? (
+                <div>
+                  <h4 className="font-semibold mb-3">Target Progress</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Target for {period}:</span>
+                      <span>{fmtCurrency(targetValue)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Progress:</span>
+                      <span className="font-semibold">{progressPct}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Remaining to target:</span>
+                      <span>{fmtCurrency(Math.max(0, targetValue - revenue))}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <h4 className="font-semibold mb-3">Period Summary</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Period:</span>
+                      <span className="font-semibold capitalize">{period}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total appointments:</span>
+                      <span>{appts.length}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Completed:</span>
+                      <span>{appts.filter(a => a.status === 'completed').length}</span>
+                    </div>
+                    {period === 'all' && (
+                      <div className="text-xs text-slate-500 mt-2 pt-2 border-t">
+                        Targets are not applicable for the "All" period. Switch to a specific period (Day, Week, Month, Year) to see target progress.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <h4 className="font-semibold mb-3">Customer Metrics</h4>
@@ -796,11 +973,17 @@ function computeRange(period: Period) {
       from = startOfYear(now); to = endOfYear(now); break;
     case 'all':
     default:
-      // show last 365 days as "All" by default (tunable)
-      from = startOfDay(new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000));
-      to = endOfDay(now);
+      // "All" means ALL data - use a date far in the past to get everything
+      // Using 2020-01-01 as a safe starting point (before most businesses started)
+      // Use a date far in the future (2099) to include all future appointments
+      from = new Date('2020-01-01T00:00:00.000Z');
+      to = new Date('2099-12-31T23:59:59.999Z');
+      console.log(`📊 [ANALYTICS] "All" period: from ${from.toISOString()} to ${to.toISOString()}`);
+      break;
   }
-  return { fromISO: from.toISOString(), toISO: to.toISOString(), from, to } as any;
+  const result = { fromISO: from.toISOString(), toISO: to.toISOString(), from, to };
+  console.log(`📊 [ANALYTICS] Period "${period}": ${result.fromISO} to ${result.toISO}`);
+  return result as any;
 }
 
 function computeTargetForPeriod(period: Period, t: AnalyticsTargets | null, fromISO: string, toISO: string) {
@@ -809,7 +992,9 @@ function computeTargetForPeriod(period: Period, t: AnalyticsTargets | null, from
   if (period === 'week') return t.weeklyTarget;
   if (period === 'month') return t.monthlyTarget;
   if (period === 'year') return t.monthlyTarget * 12; // simple approx
-  // All = prorate daily target across range length
+  // "All" period doesn't have a meaningful target - return 0 to hide target progress
+  if (period === 'all') return 0;
+  // Fallback: prorate daily target across range length
   const days = Math.max(1, differenceInDays(new Date(toISO), new Date(fromISO)) + 1);
   return t.dailyTarget * days;
 }

@@ -460,20 +460,20 @@ export default function CostMonitoring() {
             
             return (
               <div key={service} className="border border-slate-200 rounded-lg p-4 hover:border-terracotta transition-colors">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-slate-800 capitalize">
-                    {service.replace(/([A-Z])/g, ' $1').trim()}
-                  </h3>
-                  <div className="text-lg font-bold text-terracotta">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-slate-800 capitalize">
+                  {service.replace(/([A-Z])/g, ' $1').trim()}
+                </h3>
+                <div className="text-lg font-bold text-terracotta">
                     {formatCurrency(serviceCost)}
                   </div>
                 </div>
                 
                 {/* Usage Metrics */}
                 <div className="space-y-2 text-sm text-slate-600 mb-3 pb-3 border-b border-slate-100">
-                  {Object.entries(data).filter(([key]) => key !== 'cost').map(([key, value]) => (
-                    <div key={key} className="flex justify-between">
-                      <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                {Object.entries(data).filter(([key]) => key !== 'cost').map(([key, value]) => (
+                  <div key={key} className="flex justify-between">
+                    <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
                       <span className="font-medium">{typeof value === 'number' ? value.toLocaleString() : String(value)}</span>
                     </div>
                   ))}

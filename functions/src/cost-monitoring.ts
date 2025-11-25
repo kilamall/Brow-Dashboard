@@ -214,10 +214,15 @@ export const getCurrentUsage = onCall(
     }
 
     try {
+      console.error(`🚀 [COST] getCurrentUsage called, starting...`);
       const usageStats = await getCurrentUsageStats();
+      console.error(`✅ [COST] getCurrentUsageStats returned, calculating costs...`);
       const costMetrics = await calculateCosts(usageStats);
+      console.error(`✅ [COST] Costs calculated, calculating efficiency...`);
       const efficiency = await calculateEfficiency(costMetrics);
+      console.error(`✅ [COST] Efficiency calculated, getting recommendations...`);
       const recommendations = await getOptimizationRecommendations(usageStats, costMetrics);
+      console.error(`✅ [COST] ALL DONE! Returning response...`);
       
       return {
         success: true,
@@ -229,8 +234,9 @@ export const getCurrentUsage = onCall(
           timestamp: new Date().toISOString()
         }
       };
-    } catch (error) {
-      console.error('Error getting current usage:', error);
+    } catch (error: any) {
+      console.error(`❌ [COST] FATAL ERROR in getCurrentUsage: ${error.message}`);
+      console.error(`❌ [COST] Error stack: ${error.stack}`);
       throw new HttpsError('internal', 'Failed to fetch usage data');
     }
   }
@@ -395,8 +401,10 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthKey = startOfMonth.toISOString().slice(0, 7); // YYYY-MM format
     
-    // Create Firestore Timestamp for querying (Firestore uses Timestamp objects, not ISO strings)
-    const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+    console.error(`📊 [COST] Calculating costs for ${monthKey} (from ${startOfMonth.toISOString()})`);
+    
+    // For querying: most collections use ISO string timestamps
+    const startOfMonthISO = startOfMonth.toISOString();
     
     // Get Firestore usage from tracking document (we'll create this)
     let firestoreStats = {
@@ -406,38 +414,66 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
       storage: 0
     };
     
+    console.error('💾 [COST] Step 1: Checking Firestore usage...');
+    // Always query actual collections for accurate tracking
     try {
-      const usageDoc = await db.collection('_usage_tracking').doc(monthKey).get();
-      if (usageDoc.exists) {
-        const data = usageDoc.data();
-        firestoreStats = {
-          reads: data?.firestoreReads || 0,
-          writes: data?.firestoreWrites || 0,
-          deletes: data?.firestoreDeletes || 0,
-          storage: data?.firestoreStorageGB || 0
-        };
-      }
-    } catch (err) {
-      console.log('Using estimated Firestore stats:', err);
-      // Fallback: estimate from collection sizes
-      const collections = ['appointments', 'customers', 'services', 'settings', 'bookingHolds'];
+      console.error('🔍 [COST] Querying all major collections for accurate counts...');
+      const collections = [
+        'appointments', 'customers', 'services', 'settings', 'bookingHolds',
+        'email_logs', 'sms_logs', 'sms_conversations', 'ai_conversations',
+        'ai_sms_conversations', 'skinAnalyses', 'customerConsents', 'slideshow'
+      ];
       let totalDocs = 0;
+      const collectionCounts: Record<string, number> = {};
       
       for (const collName of collections) {
-        const snapshot = await db.collection(collName).count().get();
-        totalDocs += snapshot.data().count;
+        try {
+          const snapshot = await db.collection(collName).count().get();
+          const count = snapshot.data().count;
+          totalDocs += count;
+          collectionCounts[collName] = count;
+          console.error(`  [COST] ${collName}: ${count} docs`);
+        } catch (countErr: any) {
+          console.error(`  [COST] ${collName}: count failed - ${countErr.message}`);
+          collectionCounts[collName] = 0;
+        }
       }
       
-      // Rough estimates based on typical usage patterns
+      // More accurate estimates based on actual document counts and typical usage patterns
+      // Reads: Each document is read multiple times per month (queries, fetches, etc.)
+      // Writes: Documents are updated/created regularly
+      // Storage: Estimate based on document size (average ~1-2KB per doc)
+      const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+      
+      // Count documents created this month for more accurate write estimates
+      let monthlyWrites = 0;
+      const writeCollections = ['appointments', 'email_logs', 'sms_logs', 'sms_conversations', 'ai_conversations', 'ai_sms_conversations', 'skinAnalyses'];
+      for (const collName of writeCollections) {
+        try {
+          const field = collName === 'sms_conversations' || collName === 'ai_sms_conversations' ? 'timestamp' : 'createdAt';
+          const snapshot = await db.collection(collName)
+            .where(field, '>=', collName.includes('sms') || collName.includes('email') ? startOfMonthISO : startOfMonthTimestamp)
+            .count()
+            .get();
+          monthlyWrites += snapshot.data().count;
+        } catch (err) {
+          // Skip if query fails
+        }
+      }
+      
       firestoreStats = {
-        reads: totalDocs * 50, // assume ~50 reads per doc per month
-        writes: totalDocs * 5,  // assume ~5 writes per doc per month
-        deletes: Math.floor(totalDocs * 0.1), // assume 10% deletion rate
-        storage: totalDocs * 0.001 // assume ~1KB per doc on average
+        reads: totalDocs * 30 + monthlyWrites * 10, // ~30 reads per doc per month + 10 reads per new write
+        writes: monthlyWrites || Math.floor(totalDocs * 0.2), // Use actual monthly writes or estimate 20% of docs written
+        deletes: Math.floor(totalDocs * 0.05), // ~5% deletion rate
+        storage: totalDocs * 0.002 // ~2KB per document average (more accurate)
       };
+      console.error(`✅ [COST] Firestore stats: ${totalDocs} total docs, ${monthlyWrites} monthly writes`);
+      console.error(`  [COST] Estimated: ${firestoreStats.reads} reads, ${firestoreStats.writes} writes, ${firestoreStats.storage.toFixed(3)} GB storage`);
+    } catch (err: any) {
+      console.error(`❌ [COST] Firestore tracking failed: ${err.message}`);
     }
     
-    // Get function invocations from tracking
+    console.error('⚡ [COST] Step 2: Checking function invocations...');
     let functionStats = { invocations: 0, computeTime: 0 };
     try {
       const funcDoc = await db.collection('_usage_tracking').doc(`${monthKey}_functions`).get();
@@ -447,282 +483,307 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
           invocations: data?.invocations || 0,
           computeTime: data?.computeTimeSeconds || 0
         };
+        console.error('✅ [COST] Using manual function tracking');
+      } else {
+        throw new Error('No manual tracking');
       }
-    } catch (err) {
-      // Estimate from appointment count
-      const apptSnapshot = await db.collection('appointments')
-        .where('createdAt', '>=', startOfMonthTimestamp)
-        .count()
-        .get();
-      const monthlyAppts = apptSnapshot.data().count;
-      
-      functionStats = {
-        invocations: monthlyAppts * 15, // ~15 function calls per appointment
-        computeTime: monthlyAppts * 2    // ~2 seconds compute per appointment
-      };
+    } catch (err: any) {
+      console.error('⚠️ [COST] Estimating from appointments:', err.message);
+      try {
+        // Estimate from appointment count using Timestamp (createdAt is stored as Firestore Timestamp)
+        const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+        const apptSnapshot = await db.collection('appointments')
+          .where('createdAt', '>=', startOfMonthTimestamp)
+          .count()
+          .get();
+        const monthlyAppts = apptSnapshot.data().count;
+        console.error(`📅 [COST] Appointments this month: ${monthlyAppts}`);
+        
+        functionStats = {
+          invocations: monthlyAppts * 15,
+          computeTime: monthlyAppts * 2
+        };
+      } catch (apptErr: any) {
+        console.error(`❌ [COST] Appointment count failed: ${apptErr.message}`);
+      }
     }
     
+    console.error('💾 [COST] Step 3: Checking storage usage...');
     // Get storage usage - count profile pictures, consent forms, and images
     let storageStats = { totalGB: 0, downloadsGB: 0 };
+    // Always query actual collections for accurate tracking
     try {
-      const storageDoc = await db.collection('_usage_tracking').doc(`${monthKey}_storage`).get();
-      if (storageDoc.exists) {
-        const data = storageDoc.data();
-        storageStats = {
-          totalGB: data?.totalGB || 0,
-          downloadsGB: data?.downloadsGB || 0
-        };
-      }
-    } catch (err) {
-      // Estimate from actual uploaded files across all collections
+      console.error('🔍 [COST] Querying collections for storage files...');
+      let totalSizeMB = 0;
+      let downloadsMB = 0;
+      
+      // Customer profile pictures (~1MB each, compressed)
       try {
-        let totalSizeMB = 0;
-        let downloadsMB = 0;
-        
-        // Customer profile pictures (~1MB each)
         const customersWithPhotos = await db.collection('customers')
           .where('profilePictureUrl', '!=', null)
           .count()
           .get();
-        totalSizeMB += customersWithPhotos.data().count * 1;
-        downloadsMB += customersWithPhotos.data().count * 0.1; // 10% downloaded
-        
-        // Consent forms (~200KB each, 2 files per form)
+        const photoCount = customersWithPhotos.data().count;
+        totalSizeMB += photoCount * 1;
+        downloadsMB += photoCount * 0.1; // 10% downloaded per month
+        console.error(`  [COST] Customer photos: ${photoCount} files (~${photoCount} MB)`);
+      } catch (err: any) {
+        console.error(`  [COST] Customer photos query failed: ${err.message}`);
+      }
+      
+      // Consent forms (~200KB each, 2 files per form: before + after)
+      try {
         const consentForms = await db.collection('customerConsents')
           .count()
           .get();
-        totalSizeMB += (consentForms.data().count * 0.2 * 2);
-        downloadsMB += (consentForms.data().count * 0.2 * 0.05); // 5% downloaded
-        
-        // Skin analysis images (~2MB each, auto-deleted after 30 days)
-        const thirtyDaysAgo = Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-        const skinAnalyses = await db.collection('skinAnalyses')
-          .where('createdAt', '>=', thirtyDaysAgo)
+        const consentCount = consentForms.data().count;
+        totalSizeMB += consentCount * 0.2 * 2; // 2 files per consent
+        downloadsMB += consentCount * 0.2 * 0.05; // 5% downloaded
+        console.error(`  [COST] Consent forms: ${consentCount} forms (~${(consentCount * 0.4).toFixed(2)} MB)`);
+      } catch (err: any) {
+        console.error(`  [COST] Consent forms query failed: ${err.message}`);
+      }
+      
+      // Skin analysis images (~2MB each, auto-deleted after 30 days)
+      try {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgoTimestamp = Timestamp.fromDate(thirtyDaysAgo);
+        const skinAnalysesSnapshot = await db.collection('skinAnalyses')
+          .where('createdAt', '>=', thirtyDaysAgoTimestamp)
           .count()
           .get();
-        totalSizeMB += skinAnalyses.data().count * 2;
-        downloadsMB += skinAnalyses.data().count * 0.5; // 25% downloaded
-        
-        // Service images (~500KB each)
+        const skinCount = skinAnalysesSnapshot.data().count;
+        totalSizeMB += skinCount * 2;
+        downloadsMB += skinCount * 0.5; // 25% downloaded
+        console.error(`  [COST] Skin analyses (last 30 days): ${skinCount} images (~${(skinCount * 2).toFixed(2)} MB)`);
+      } catch (err: any) {
+        console.error(`  [COST] Skin analyses query failed: ${err.message}`);
+      }
+      
+      // Service images (~500KB each)
+      try {
         const services = await db.collection('services')
           .where('imageUrl', '!=', null)
           .count()
           .get();
-        totalSizeMB += services.data().count * 0.5;
-        downloadsMB += services.data().count * 1; // Frequently accessed
-        
-        // Gallery/slideshow images (~3MB each)
+        const serviceCount = services.data().count;
+        totalSizeMB += serviceCount * 0.5;
+        downloadsMB += serviceCount * 1; // Frequently accessed (viewed often)
+        console.error(`  [COST] Service images: ${serviceCount} images (~${(serviceCount * 0.5).toFixed(2)} MB)`);
+      } catch (err: any) {
+        console.error(`  [COST] Service images query failed: ${err.message}`);
+      }
+      
+      // Gallery/slideshow images (~3MB each, high quality)
+      try {
         const slideshow = await db.collection('slideshow')
           .count()
           .get();
-        totalSizeMB += slideshow.data().count * 3;
-        downloadsMB += slideshow.data().count * 2; // Frequently accessed
-        
-        storageStats = {
-          totalGB: totalSizeMB / 1024,
-          downloadsGB: downloadsMB / 1024
-        };
-        
-        console.log(`💾 Storage usage: ${(totalSizeMB / 1024).toFixed(2)} GB, Downloads: ${(downloadsMB / 1024).toFixed(2)} GB`);
-      } catch (storageErr) {
-        console.log('Could not fetch storage usage, using basic estimate:', storageErr);
-        // Fallback to simple estimate
-        const customersWithPhotos = await db.collection('customers')
-          .where('profilePictureUrl', '!=', null)
-          .count()
-          .get();
-        
-        storageStats = {
-          totalGB: (customersWithPhotos.data().count * 0.5) / 1024,
-          downloadsGB: (customersWithPhotos.data().count * 0.1) / 1024
-        };
+        const galleryCount = slideshow.data().count;
+        totalSizeMB += galleryCount * 3;
+        downloadsMB += galleryCount * 2; // Frequently accessed (shown on website)
+        console.error(`  [COST] Gallery images: ${galleryCount} images (~${(galleryCount * 3).toFixed(2)} MB)`);
+      } catch (err: any) {
+        console.error(`  [COST] Gallery images query failed: ${err.message}`);
       }
+      
+      storageStats = {
+        totalGB: totalSizeMB / 1024,
+        downloadsGB: downloadsMB / 1024
+      };
+      
+      console.error(`✅ [COST] Storage usage: ${(totalSizeMB / 1024).toFixed(3)} GB total, ${(downloadsMB / 1024).toFixed(3)} GB downloads`);
+    } catch (storageErr: any) {
+      console.error(`❌ [COST] Storage tracking failed: ${storageErr.message}`);
     }
     
+    console.error('🤖 [COST] Step 4: Checking Gemini AI usage...');
     // Get Gemini AI usage
     let geminiStats = { requests: 0, tokens: 0 };
+    // Always query actual collections, ignore manual tracking
     try {
-      const geminiDoc = await db.collection('_usage_tracking').doc(`${monthKey}_gemini`).get();
-      if (geminiDoc.exists) {
-        const data = geminiDoc.data();
-        geminiStats = {
-          requests: data?.requests || 0,
-          tokens: data?.tokens || 0
-        };
-      }
-    } catch (err) {
-      // Get actual AI usage from multiple sources
-      try {
-        let totalRequests = 0;
-        
-        // Count AI chatbot conversations (web messaging)
-        const aiChatbotSnapshot = await db.collection('ai_conversations')
-          .where('createdAt', '>=', startOfMonthTimestamp)
-          .count()
-          .get();
-        totalRequests += aiChatbotSnapshot.data().count;
-        
-        // Count SMS AI conversations
-        const smsAiSnapshot = await db.collection('ai_sms_conversations')
-          .where('createdAt', '>=', startOfMonthTimestamp)
-          .count()
-          .get();
-        totalRequests += smsAiSnapshot.data().count;
-        
-        // Count skin analyses (these use Gemini for image analysis)
-        const skinAnalysesSnapshot = await db.collection('skinAnalyses')
-          .where('createdAt', '>=', startOfMonthTimestamp)
-          .where('status', '==', 'completed')
-          .count()
-          .get();
-        totalRequests += skinAnalysesSnapshot.data().count * 2; // Usually 2 API calls per analysis
-        
-        geminiStats = {
-          requests: totalRequests,
-          tokens: totalRequests * 500  // ~500 tokens average per request
-        };
-        
-        console.log(`🤖 Gemini AI usage this month: ${totalRequests} requests`);
-      } catch (aiErr) {
-        console.log('Could not fetch AI usage, using zero values:', aiErr);
-      }
+      let totalRequests = 0;
+      const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+      
+      console.error(`🤖 [COST] Querying ai_conversations...`);
+      // Count AI chatbot conversations (uses Timestamp)
+      const aiChatbotSnapshot = await db.collection('ai_conversations')
+        .where('createdAt', '>=', startOfMonthTimestamp)
+        .count()
+        .get();
+      totalRequests += aiChatbotSnapshot.data().count;
+      console.error(`🤖 [COST] AI chatbot conversations: ${aiChatbotSnapshot.data().count}`);
+      
+      console.error(`💬 [COST] Querying ai_sms_conversations...`);
+      // Count SMS AI conversations (uses Date, stored as Timestamp)
+      const smsAiSnapshot = await db.collection('ai_sms_conversations')
+        .where('timestamp', '>=', startOfMonthTimestamp)
+        .count()
+        .get();
+      totalRequests += smsAiSnapshot.data().count;
+      console.error(`💬 [COST] SMS AI conversations: ${smsAiSnapshot.data().count}`);
+      
+      console.error(`🧴 [COST] Querying skinAnalyses...`);
+      // Count skin analyses (uses Timestamp) - filter status in memory
+      const skinAnalysesSnapshot = await db.collection('skinAnalyses')
+        .where('createdAt', '>=', startOfMonthTimestamp)
+        .get();
+      const completedAnalyses = skinAnalysesSnapshot.docs.filter(doc => 
+        doc.data().status === 'completed'
+      ).length;
+      totalRequests += completedAnalyses * 2; // Usually 2 API calls per analysis
+      console.error(`🧴 [COST] Skin analyses: ${completedAnalyses}`);
+      
+      geminiStats = {
+        requests: totalRequests,
+        tokens: totalRequests * 500  // ~500 tokens average per request
+      };
+      
+      console.error(`🤖 [COST] Gemini AI usage this month: ${totalRequests} requests`);
+      console.error(`✅ [COST] Step 4 completed successfully`);
+    } catch (aiErr: any) {
+      console.error(`❌ [COST] Could not fetch AI usage, using zero values: ${aiErr.message}`);
+      console.error(`❌ [COST] AI error stack: ${aiErr.stack}`);
     }
     
+    console.error('📧 [COST] Step 5: Checking SendGrid email usage...');
     // Get SendGrid email count from actual email_logs collection
     let sendGridStats = { emails: 0 };
+    // Always query actual collections, ignore manual tracking
     try {
-      const emailDoc = await db.collection('_usage_tracking').doc(`${monthKey}_sendgrid`).get();
-      if (emailDoc.exists) {
-        const data = emailDoc.data();
-        sendGridStats = { emails: data?.emails || 0 };
-      }
-    } catch (err) {
-      // Get ACTUAL email count from email_logs collection
+      console.error(`🔍 [COST] Querying email_logs where timestamp >= ${startOfMonthISO}`);
+      
+      // Query without compound index - get all this month, filter status in memory
+      const emailLogsSnapshot = await db.collection('email_logs')
+        .where('timestamp', '>=', startOfMonthISO)
+        .get();
+      
+      console.error(`📊 [COST] Query returned ${emailLogsSnapshot.size} documents`);
+      
+      // Filter by status in memory (avoids need for compound index)
+      const sentEmails = emailLogsSnapshot.docs.filter(doc => doc.data().status === 'sent');
+      const totalEmails = sentEmails.length;
+      console.error(`✅ [COST] Filtered to ${totalEmails} sent emails`);
+      
+      // Break down by type for debugging
+      const byType: Record<string, number> = {};
+      emailLogsSnapshot.forEach(doc => {
+        const data = doc.data();
+        const type = data.type || 'unknown';
+        byType[type] = (byType[type] || 0) + 1;
+      });
+      
+      sendGridStats = { emails: totalEmails };
+      
+      console.error(`📧 [COST] SendGrid emails this month: ${totalEmails} emails`);
+      console.error(`📧 [COST] Breakdown:`, JSON.stringify(byType));
+    } catch (emailErr: any) {
+      console.error(`❌ [COST] Could not fetch email_logs, using appointment estimate: ${emailErr.message}`);
+      // Fallback to appointment-based estimate only if email_logs fails
       try {
-        const emailLogsSnapshot = await db.collection('email_logs')
-          .where('timestamp', '>=', startOfMonthTimestamp)
-          .where('status', '==', 'sent')
+        let totalEmails = 0;
+        const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
+        
+        // Count appointments (uses Timestamp) - single where clause, filter status in memory
+        const appts = await db.collection('appointments')
+          .where('createdAt', '>=', startOfMonthTimestamp)
           .get();
         
-        const totalEmails = emailLogsSnapshot.size;
+        const confirmedCount = appts.docs.filter(doc => 
+          ['confirmed', 'completed'].includes(doc.data().status)
+        ).length;
+        const cancelledCount = appts.docs.filter(doc => 
+          doc.data().status === 'cancelled'
+        ).length;
         
-        // Break down by type for debugging
-        const byType: Record<string, number> = {};
-        emailLogsSnapshot.forEach(doc => {
-          const data = doc.data();
-          const type = data.type || 'unknown';
-          byType[type] = (byType[type] || 0) + 1;
-        });
+        totalEmails += confirmedCount * 3; // confirmation + 2 reminders
+        totalEmails += cancelledCount; // 1 cancellation email
         
         sendGridStats = { emails: totalEmails };
-        
-        console.log(`📧 SendGrid emails this month: ${totalEmails} emails`);
-        console.log(`📧 Breakdown:`, byType);
-      } catch (emailErr) {
-        console.log('Could not fetch email_logs, using appointment estimate:', emailErr);
-        // Fallback to appointment-based estimate only if email_logs fails
-        try {
-          let totalEmails = 0;
-          
-          // Count appointment-related emails (confirmations + reminders)
-          const confirmedAppts = await db.collection('appointments')
-            .where('createdAt', '>=', startOfMonthTimestamp)
-            .where('status', 'in', ['confirmed', 'completed'])
-            .count()
-            .get();
-          totalEmails += confirmedAppts.data().count * 3; // confirmation + 2 reminders
-          
-          // Count cancelled appointments (1 cancellation email each)
-          const cancelledAppts = await db.collection('appointments')
-            .where('createdAt', '>=', startOfMonthTimestamp)
-            .where('status', '==', 'cancelled')
-            .count()
-            .get();
-          totalEmails += cancelledAppts.data().count;
-          
-          sendGridStats = { emails: totalEmails };
-          console.log(`📧 SendGrid (estimated) emails this month: ${totalEmails} emails`);
-        } catch (fallbackErr) {
-          console.log('Complete email tracking failure:', fallbackErr);
-        }
+        console.error(`📧 [COST] SendGrid (estimated) emails this month: ${totalEmails} emails`);
+      } catch (fallbackErr) {
+        console.error('❌ [COST] Complete email tracking failure:', fallbackErr);
       }
     }
     
+    console.error('📱 [COST] Step 6: Checking Twilio SMS usage...');
     // Get Twilio SMS usage from both sms_logs AND sms_conversations collections
     let twilioStats = { smsSent: 0, smsReceived: 0 };
+    // Always query actual collections, ignore manual tracking
     try {
-      const twilioDoc = await db.collection('_usage_tracking').doc(`${monthKey}_twilio`).get();
-      if (twilioDoc.exists) {
-        const data = twilioDoc.data();
-        twilioStats = {
-          smsSent: data?.smsSent || 0,
-          smsReceived: data?.smsReceived || 0
-        };
-      }
-    } catch (err) {
-      // Get actual SMS usage from BOTH sms_logs and sms_conversations
+      let sentCount = 0;
+      let receivedCount = 0;
+      console.error(`📱 [COST] Starting SMS queries...`);
+      
+      // Check sms_logs collection (uses ISO string timestamps)
       try {
-        let sentCount = 0;
-        let receivedCount = 0;
+        const smsLogsSnapshot = await db.collection('sms_logs')
+          .where('timestamp', '>=', startOfMonthISO)
+          .get();
         
-        // Check sms_logs collection (direct sendSMS calls)
-        try {
-          const smsLogsSnapshot = await db.collection('sms_logs')
-            .where('timestamp', '>=', startOfMonthTimestamp)
-            .get();
-          
-          smsLogsSnapshot.forEach(doc => {
-            const data = doc.data();
-            // Count Twilio messages only (provider === 'twilio')
-            if (data.provider === 'twilio') {
-              if (data.type === 'admin_message' || data.direction === 'outbound') {
-                sentCount++;
-              } else if (data.direction === 'inbound') {
-                receivedCount++;
-              }
-            }
-          });
-          
-          console.log(`📱 SMS from sms_logs: ${sentCount} sent, ${receivedCount} received`);
-        } catch (logsErr) {
-          console.log('Could not fetch sms_logs:', logsErr);
-        }
-        
-        // Check sms_conversations collection (webhook messages)
-        try {
-          const conversationsSnapshot = await db.collection('sms_conversations')
-            .where('timestamp', '>=', startOfMonthTimestamp)
-            .get();
-          
-          conversationsSnapshot.forEach(doc => {
-            const data = doc.data();
-            if (data.direction === 'outbound') {
+        smsLogsSnapshot.forEach(doc => {
+          const data = doc.data();
+          // Count Twilio messages only (provider === 'twilio')
+          if (data.provider === 'twilio') {
+            if (data.type === 'admin_message' || data.direction === 'outbound') {
               sentCount++;
             } else if (data.direction === 'inbound') {
               receivedCount++;
             }
-          });
-          
-          console.log(`📱 SMS from sms_conversations: ${sentCount} total sent, ${receivedCount} total received`);
-        } catch (convoErr) {
-          console.log('Could not fetch sms_conversations:', convoErr);
-        }
+          }
+        });
         
-        twilioStats = {
-          smsSent: sentCount,
-          smsReceived: receivedCount
-        };
-        
-        console.log(`📱 TOTAL Twilio SMS usage this month: ${sentCount} sent, ${receivedCount} received`);
-      } catch (smsErr) {
-        console.log('Could not fetch SMS data, using zero values:', smsErr);
+        console.error(`📱 [COST] SMS from sms_logs: ${sentCount} sent, ${receivedCount} received`);
+      } catch (logsErr: any) {
+        console.error(`❌ [COST] Could not fetch sms_logs: ${logsErr.message}`);
       }
+      
+      // Check sms_conversations collection (uses ISO string timestamps)
+      try {
+        console.error(`🔍 [COST] Querying sms_conversations where timestamp >= ${startOfMonthISO}`);
+        
+        const conversationsSnapshot = await db.collection('sms_conversations')
+          .where('timestamp', '>=', startOfMonthISO)
+          .get();
+        
+        console.error(`📊 [COST] Query returned ${conversationsSnapshot.size} documents`);
+        
+        let outboundCount = 0, inboundCount = 0;
+        conversationsSnapshot.forEach(doc => {
+          const data = doc.data();
+          
+          if (data.direction === 'outbound') {
+            sentCount++;
+            outboundCount++;
+          } else if (data.direction === 'inbound') {
+            receivedCount++;
+            inboundCount++;
+          }
+        });
+        
+        console.error(`📱 [COST] SMS from sms_conversations: ${outboundCount} outbound, ${inboundCount} inbound (total sent: ${sentCount}, received: ${receivedCount})`);
+      } catch (convoErr: any) {
+        console.error(`❌ [COST] Could not fetch sms_conversations: ${convoErr.message}`);
+      }
+      
+      twilioStats = {
+        smsSent: sentCount,
+        smsReceived: receivedCount
+      };
+      
+      console.error(`📱 [COST] TOTAL Twilio SMS usage this month: ${sentCount} sent, ${receivedCount} received`);
+    } catch (smsErr: any) {
+      console.error(`❌ [COST] Could not fetch SMS data, using zero values: ${smsErr.message}`);
     }
     
     // Hosting bandwidth - rough estimate
     const hostingStats = {
       bandwidthGB: storageStats.downloadsGB + 0.5 // storage downloads + general traffic
     };
+    
+    console.error(`✅ [COST] getCurrentUsageStats COMPLETED! Returning data:`);
+    console.error(`  - SendGrid: ${sendGridStats.emails} emails`);
+    console.error(`  - Twilio: ${twilioStats.smsSent} sent, ${twilioStats.smsReceived} received`);
     
     return {
       firestore: firestoreStats,
@@ -733,8 +794,9 @@ async function getCurrentUsageStats(): Promise<UsageStats> {
       sendGrid: sendGridStats,
       twilio: twilioStats
     };
-  } catch (error) {
-    console.error('Error getting usage stats:', error);
+  } catch (error: any) {
+    console.error(`❌ [COST] FATAL ERROR in getCurrentUsageStats: ${error.message}`);
+    console.error(`❌ [COST] Error stack: ${error.stack}`);
     // Return minimal safe values rather than random
     return {
       firestore: { reads: 0, writes: 0, deletes: 0, storage: 0 },
@@ -927,29 +989,27 @@ async function calculateEfficiency(costs: Omit<CostMetrics, 'date' | 'createdAt'
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfMonthTimestamp = Timestamp.fromDate(startOfMonth);
     
-    // Get appointment count for the month
+    // Get appointment count for the month (uses Timestamp)
     const appointmentsSnapshot = await db.collection('appointments')
       .where('createdAt', '>=', startOfMonthTimestamp)
       .count()
       .get();
     const totalAppointments = appointmentsSnapshot.data().count;
     
-    // Get completed appointments
-    const completedSnapshot = await db.collection('appointments')
+    // Get appointments this month - filter status in memory to avoid compound index
+    const appointmentsThisMonth = await db.collection('appointments')
       .where('createdAt', '>=', startOfMonthTimestamp)
-      .where('status', '==', 'completed')
-      .count()
-      .get();
-    const completedAppointments = completedSnapshot.data().count;
-    
-    // Get total revenue for the month
-    const revenueSnapshot = await db.collection('appointments')
-      .where('createdAt', '>=', startOfMonthTimestamp)
-      .where('status', '==', 'completed')
       .get();
     
+    // Filter by status in memory
+    const completedApptDocs = appointmentsThisMonth.docs.filter(doc => 
+      doc.data().status === 'completed'
+    );
+    const completedAppointments = completedApptDocs.length;
+    
+    // Calculate revenue from completed appointments
     let totalRevenue = 0;
-    revenueSnapshot.forEach(doc => {
+    completedApptDocs.forEach(doc => {
       const data = doc.data();
       totalRevenue += data.totalPrice || 0;
       totalRevenue += data.tipAmount || 0;

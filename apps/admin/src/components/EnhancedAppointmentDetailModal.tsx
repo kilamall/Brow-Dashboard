@@ -35,6 +35,8 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
   const [editedServicePrices, setEditedServicePrices] = useState<Record<string, string>>({});
   const [tipAmount, setTipAmount] = useState('');
   const [savingPrice, setSavingPrice] = useState(false);
+  const [generatingReceipt, setGeneratingReceipt] = useState(false);
+  const [sendingReceiptSMS, setSendingReceiptSMS] = useState(false);
   const functions = getFunctions();
 
   // Load business hours for timezone-aware formatting
@@ -474,6 +476,87 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     } catch (error) {
       console.error('Failed to delete note:', error);
       alert('❌ Failed to delete note');
+    }
+  };
+
+  const handleGenerateReceipt = async () => {
+    if (!appointment.id) {
+      alert('Cannot generate receipt: Appointment ID is missing.');
+      return;
+    }
+
+    if (!appointment.customerEmail) {
+      alert('Cannot generate receipt: Customer email is required.');
+      return;
+    }
+
+    if (!confirm('Generate receipt for this appointment? The receipt will be emailed to the customer.')) {
+      return;
+    }
+
+    setGeneratingReceipt(true);
+    try {
+      const generateReceiptFn = httpsCallable(functions, 'generateReceipt');
+      const result = await generateReceiptFn({ appointmentId: appointment.id });
+      const data = result.data as any;
+      
+      if (data.success) {
+        // Update appointment with receipt URL
+        await updateDoc(doc(db, 'appointments', appointment.id), {
+          receiptUrl: data.receiptUrl,
+          receiptGeneratedAt: new Date().toISOString(),
+          receiptNumber: `RCP-${appointment.id.substring(0, 8).toUpperCase()}`
+        });
+        
+        alert('✅ Receipt generated successfully! The receipt has been emailed to the customer.');
+        onClose(); // Close modal to refresh data
+      } else {
+        throw new Error(data.error || 'Failed to generate receipt');
+      }
+    } catch (error: any) {
+      console.error('Error generating receipt:', error);
+      alert(`❌ Failed to generate receipt: ${error.message}`);
+    } finally {
+      setGeneratingReceipt(false);
+    }
+  };
+
+  const handleSendReceiptSMS = async () => {
+    if (!appointment.id) {
+      alert('Cannot send receipt SMS: Appointment ID is missing.');
+      return;
+    }
+
+    if (!appointment.receiptUrl) {
+      alert('Cannot send receipt SMS: Receipt has not been generated yet. Please generate receipt first.');
+      return;
+    }
+
+    if (!customer?.phone) {
+      alert('Cannot send receipt SMS: Customer does not have a phone number on file.');
+      return;
+    }
+
+    if (!confirm(`Send receipt link via SMS to ${customer.phone}?\n\nThis will send a text message with the receipt link.`)) {
+      return;
+    }
+
+    setSendingReceiptSMS(true);
+    try {
+      const sendReceiptSMSFn = httpsCallable(functions, 'sendReceiptSMS');
+      const result = await sendReceiptSMSFn({ appointmentId: appointment.id });
+      const data = result.data as any;
+      
+      if (data.success) {
+        alert(`✅ Receipt SMS sent successfully to ${customer.phone}!`);
+      } else {
+        throw new Error(data.error || 'Failed to send receipt SMS');
+      }
+    } catch (error: any) {
+      console.error('Error sending receipt SMS:', error);
+      alert(`❌ Failed to send receipt SMS: ${error.message}`);
+    } finally {
+      setSendingReceiptSMS(false);
     }
   };
 
@@ -1210,6 +1293,62 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                       <span className="text-lg">🔔</span>
                       <span>{sendingReminder ? 'Sending...' : 'Send Reminder'}</span>
                     </button>
+                  )}
+                  
+                  {/* Generate Receipt with SMS option - show for any appointment with customer email */}
+                  {appointment.customerEmail && (
+                    <div className="flex gap-0 rounded-lg overflow-hidden">
+                      <button
+                        onClick={handleGenerateReceipt}
+                        disabled={generatingReceipt || !appointment.customerEmail}
+                        className={`flex-1 rounded-l-lg px-4 py-3 transition-colors text-left flex items-center gap-3 disabled:opacity-50 ${
+                          appointment.receiptUrl
+                            ? 'border border-green-300 text-green-700 hover:bg-green-50'
+                            : 'bg-purple-600 text-white hover:bg-purple-700'
+                        }`}
+                        title={
+                          !appointment.customerEmail 
+                            ? 'Cannot generate receipt: Customer email is required'
+                            : appointment.receiptUrl 
+                              ? 'Regenerate receipt and email to customer' 
+                              : 'Generate receipt and email to customer'
+                        }
+                      >
+                        <span className="text-lg">📄</span>
+                        <span>
+                          {generatingReceipt 
+                            ? 'Generating...' 
+                            : appointment.receiptUrl 
+                              ? 'Regenerate Receipt' 
+                              : 'Generate Receipt'}
+                        </span>
+                      </button>
+                      
+                      {/* SMS button - only show when receipt exists and customer has phone */}
+                      {appointment.receiptUrl && customer?.phone && (
+                        <button
+                          onClick={handleSendReceiptSMS}
+                          disabled={sendingReceiptSMS || generatingReceipt}
+                          className={`px-3 py-3 transition-colors flex items-center justify-center disabled:opacity-50 border-t border-r border-b ${
+                            appointment.receiptUrl
+                              ? 'border-green-300 text-blue-600 hover:bg-blue-50 bg-white'
+                              : 'border-purple-600 text-white hover:bg-purple-700 bg-purple-600'
+                          }`}
+                          title={`Send receipt link via SMS to ${customer.phone}`}
+                        >
+                          <span className="text-lg">
+                            {sendingReceiptSMS ? '⏳' : '📱'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Debug: Show why receipt button might not be showing */}
+                  {false && (
+                    <div className="text-xs text-gray-500 p-2 bg-gray-100 rounded">
+                      Debug: status={appointment.status}, attendance={appointment.attendance}, hasEmail={!!appointment.customerEmail}
+                    </div>
                   )}
                   
                   {/* Cancel Appointment - show for any non-cancelled appointment */}

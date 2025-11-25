@@ -5,6 +5,7 @@ import { doc, onSnapshot, collection, query, where, orderBy } from 'firebase/fir
 import type { Customer, Appointment, Service } from '@buenobrows/shared/types';
 import { format, parseISO } from 'date-fns';
 import CustomerNotes from '../components/CustomerNotes';
+import { updateCustomer } from '@buenobrows/shared/firestoreActions';
 
 export default function CustomerProfile() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -16,6 +17,11 @@ export default function CustomerProfile() {
   const [services, setServices] = useState<Record<string, Service>>({});
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedCustomer, setEditedCustomer] = useState<Partial<Customer>>({});
+  const [saving, setSaving] = useState(false);
 
   // Load customer data
   useEffect(() => {
@@ -23,7 +29,18 @@ export default function CustomerProfile() {
     
     const unsubscribe = onSnapshot(doc(db, 'customers', customerId), (doc) => {
       if (doc.exists()) {
-        setCustomer({ id: doc.id, ...doc.data() } as Customer);
+        const customerData = { id: doc.id, ...doc.data() } as Customer;
+        setCustomer(customerData);
+        // Update editedCustomer if not currently editing
+        if (!isEditing) {
+          setEditedCustomer({
+            name: customerData.name,
+            email: customerData.email || '',
+            phone: customerData.phone || '',
+            birthday: customerData.birthday || '',
+            status: customerData.status || 'pending'
+          });
+        }
       } else {
         setCustomer(null);
       }
@@ -31,7 +48,39 @@ export default function CustomerProfile() {
     });
 
     return unsubscribe;
-  }, [customerId, db, refreshTrigger]);
+  }, [customerId, db, refreshTrigger, isEditing]);
+  
+  const handleSaveCustomer = async () => {
+    if (!customer || !editedCustomer.name?.trim()) {
+      alert('Customer name is required');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateCustomer(db, customer.id, editedCustomer as Customer);
+      setIsEditing(false);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error('Failed to save customer:', error);
+      alert('Failed to save customer. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    if (customer) {
+      setEditedCustomer({
+        name: customer.name,
+        email: customer.email || '',
+        phone: customer.phone || '',
+        birthday: customer.birthday || '',
+        status: customer.status || 'pending'
+      });
+    }
+    setIsEditing(false);
+  };
 
   // Load customer appointments
   useEffect(() => {
@@ -139,16 +188,115 @@ export default function CustomerProfile() {
 
       {/* Customer Info */}
       <div className="bg-white rounded-xl shadow-soft p-6">
-        <h2 className="font-serif text-xl mb-4">Customer Information</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-serif text-xl">Customer Information</h2>
+          {!isEditing && (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="px-3 py-1.5 text-sm bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit
+            </button>
+          )}
+        </div>
+        {isEditing ? (
+          <div className="space-y-4">
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
+                <input
+                  type="text"
+                  value={editedCustomer.name || ''}
+                  onChange={(e) => setEditedCustomer({ ...editedCustomer, name: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  placeholder="Customer name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={editedCustomer.email || ''}
+                  onChange={(e) => setEditedCustomer({ ...editedCustomer, email: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  placeholder="email@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                <input
+                  type="tel"
+                  value={editedCustomer.phone || ''}
+                  onChange={(e) => setEditedCustomer({ ...editedCustomer, phone: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Birthday</label>
+                <input
+                  type="date"
+                  value={editedCustomer.birthday || ''}
+                  onChange={(e) => setEditedCustomer({ ...editedCustomer, birthday: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                <select
+                  value={editedCustomer.status || 'pending'}
+                  onChange={(e) => setEditedCustomer({ ...editedCustomer, status: e.target.value as any })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                >
+                  <option value="pending">Pending Approval</option>
+                  <option value="active">Active</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+              {customer.createdAt && (
+                <div>
+                  <div className="text-sm text-slate-500 mb-1">Member Since</div>
+                  <div className="font-medium">
+                    {format(
+                      customer.createdAt?.toDate 
+                        ? customer.createdAt.toDate() 
+                        : new Date(customer.createdAt || new Date()), 
+                      'MMMM d, yyyy'
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleSaveCustomer}
+                disabled={saving || !editedCustomer.name?.trim()}
+                className="px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                disabled={saving}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="grid md:grid-cols-2 gap-6">
           <div>
             <div className="text-sm text-slate-500 mb-1">Name</div>
-            <div className="font-medium">{customer.name}</div>
+              <div className="font-medium break-all">{customer.name}</div>
           </div>
           {customer.email && (
             <div>
               <div className="text-sm text-slate-500 mb-1">Email</div>
-              <div className="font-medium">{customer.email}</div>
+                <div className="font-medium break-all">{customer.email}</div>
             </div>
           )}
           {customer.phone && (
@@ -157,6 +305,14 @@ export default function CustomerProfile() {
               <div className="font-medium">{customer.phone}</div>
             </div>
           )}
+            {customer.birthday && (
+              <div>
+                <div className="text-sm text-slate-500 mb-1">Birthday</div>
+                <div className="font-medium">
+                  {format(new Date(customer.birthday), 'MMMM d, yyyy')}
+                </div>
+              </div>
+            )}
           {customer.createdAt && (
             <div>
               <div className="text-sm text-slate-500 mb-1">Member Since</div>
@@ -171,6 +327,7 @@ export default function CustomerProfile() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Admin Notes */}

@@ -25,6 +25,10 @@ export default function AttendanceConfirmationModal({
   const [actualPrice, setActualPrice] = useState('');
   const [tipAmount, setTipAmount] = useState('');
   const [notes, setNotes] = useState('');
+  const [showEmailPrompt, setShowEmailPrompt] = useState(false);
+  const [receiptEmail, setReceiptEmail] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [appointmentIdForEmail, setAppointmentIdForEmail] = useState<string | null>(null);
 
   // Initialize values when appointment changes
   useEffect(() => {
@@ -41,13 +45,23 @@ export default function AttendanceConfirmationModal({
     setLoading(true);
     try {
       const markAttendanceFn = httpsCallable(functions, 'markAttendance');
-      await markAttendanceFn({ 
+      const result = await markAttendanceFn({ 
         appointmentId: appointment.id, 
         attendance: 'attended',
         actualPrice: parseFloat(actualPrice) || 0,
         tipAmount: parseFloat(tipAmount) || 0,
         notes: notes.trim() || undefined
-      });
+      }) as any;
+      
+      const data = result.data;
+      
+      // Check if email is required
+      if (data?.emailRequired) {
+        setAppointmentIdForEmail(appointment.id);
+        setShowEmailPrompt(true);
+        setLoading(false);
+        return;
+      }
       
       onConfirmed();
       onClose();
@@ -59,6 +73,49 @@ export default function AttendanceConfirmationModal({
     }
   };
 
+  const handleSendReceiptEmail = async () => {
+    if (!appointmentIdForEmail || !receiptEmail.trim()) {
+      alert('Please enter a valid email address');
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(receiptEmail.trim())) {
+      alert('Please enter a valid email address');
+      return;
+    }
+
+    setSendingEmail(true);
+    try {
+      const sendReceiptEmailFn = httpsCallable(functions, 'sendReceiptEmail');
+      await sendReceiptEmailFn({
+        appointmentId: appointmentIdForEmail,
+        email: receiptEmail.trim()
+      });
+      
+      alert('✅ Receipt email sent successfully!');
+      setShowEmailPrompt(false);
+      setReceiptEmail('');
+      setAppointmentIdForEmail(null);
+      onConfirmed();
+      onClose();
+    } catch (error: any) {
+      console.error('Error sending receipt email:', error);
+      alert(`Failed to send receipt email: ${error.message}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  const handleSkipEmail = () => {
+    setShowEmailPrompt(false);
+    setReceiptEmail('');
+    setAppointmentIdForEmail(null);
+    onConfirmed();
+    onClose();
+  };
+
   const expectedPrice = service?.price || 0;
   const actualPriceNum = parseFloat(actualPrice) || 0;
   const tipNum = parseFloat(tipAmount) || 0;
@@ -66,6 +123,69 @@ export default function AttendanceConfirmationModal({
   const priceDifference = actualPriceNum - expectedPrice;
 
   if (!open || !appointment || !service) return null;
+
+  // Email prompt modal
+  if (showEmailPrompt) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Send Receipt Email
+              </h2>
+              <button
+                onClick={handleSkipEmail}
+                className="text-gray-400 hover:text-gray-600 text-2xl"
+                disabled={sendingEmail}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm text-blue-800">
+                <strong>Receipt Generated!</strong> The receipt has been created, but the customer doesn't have an email on file. 
+                Please enter an email address to send the receipt.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Customer Email Address
+              </label>
+              <input
+                type="email"
+                value={receiptEmail}
+                onChange={(e) => setReceiptEmail(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-terracotta focus:border-transparent"
+                placeholder="customer@example.com"
+                disabled={sendingEmail}
+                autoFocus
+              />
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={handleSkipEmail}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                disabled={sendingEmail}
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleSendReceiptEmail}
+                disabled={sendingEmail || !receiptEmail.trim()}
+                className="flex-1 px-4 py-2 bg-terracotta text-white rounded-md hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sendingEmail ? 'Sending...' : 'Send Receipt'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

@@ -1267,7 +1267,7 @@ async function checkSlotAvailableForDuration(
 }
 
 // Send SMS (prioritizes Twilio if configured, falls back to AWS SNS)
-async function sendSMS(message: SMSMessage, twilioConfig?: { accountSid: string; authToken: string; phoneNumber: string; messagingServiceSid?: string }): Promise<boolean> {
+export async function sendSMS(message: SMSMessage, twilioConfig?: { accountSid: string; authToken: string; phoneNumber: string; messagingServiceSid?: string }): Promise<boolean> {
   try {
     // Option 1: Use Twilio (preferred - A2P approved)
     if (twilioConfig?.accountSid && twilioConfig?.authToken) {

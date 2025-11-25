@@ -77,19 +77,55 @@ export async function sendEmail(msg: {
   from: { email: string; name: string };
   subject: string;
   html: string;
-}): Promise<boolean> {
+}): Promise<{ success: boolean; error?: string; sendGridResponse?: any }> {
   if (!initSendGrid()) {
-    console.error('Cannot send email: SENDGRID_API_KEY not configured');
-    return false;
+    const errorMsg = 'Cannot send email: SENDGRID_API_KEY not configured';
+    console.error(errorMsg);
+    return { success: false, error: errorMsg };
+  }
+
+  // Validate email address
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(msg.to)) {
+    const errorMsg = `Invalid email address: ${msg.to}`;
+    console.error('❌', errorMsg);
+    return { success: false, error: errorMsg };
   }
 
   try {
-    await sgMail.send(msg);
+    const response = await sgMail.send(msg);
     console.log('✅ Email sent successfully to:', msg.to);
-    return true;
-  } catch (error) {
-    console.error('❌ Error sending email:', error);
-    return false;
+    console.log('📧 SendGrid response status:', response[0]?.statusCode);
+    return { success: true, sendGridResponse: response };
+  } catch (error: any) {
+    console.error('❌ Error sending email to:', msg.to);
+    console.error('❌ Error details:', error);
+    
+    // Extract detailed error information
+    let errorMessage = error.message || 'Unknown error';
+    let errorDetails: any = {};
+    
+    if (error.response) {
+      errorDetails = {
+        statusCode: error.response.statusCode,
+        body: error.response.body,
+        headers: error.response.headers
+      };
+      console.error('📧 SendGrid error response:', JSON.stringify(error.response.body, null, 2));
+      console.error('📧 SendGrid error status:', error.response.statusCode);
+      
+      // Extract specific error messages from SendGrid
+      if (error.response.body?.errors) {
+        const sendGridErrors = error.response.body.errors.map((e: any) => e.message).join('; ');
+        errorMessage = `SendGrid: ${sendGridErrors}`;
+      }
+    }
+    
+    return { 
+      success: false, 
+      error: errorMessage,
+      sendGridResponse: errorDetails
+    };
   }
 }
 
@@ -223,6 +259,15 @@ export async function sendAppointmentConfirmationEmail(
         </div>
       </div>
       ${notes ? `<div style="background: #3a3a3a; border-left: 4px solid #FFC107; padding: 15px; margin: 20px 0; border-radius: 4px; color: #ffffff;"><strong>Note:</strong> ${notes}</div>` : ''}
+      <div style="background-color: #3a3a3a; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #FFC107;">
+        <p style="margin: 0 0 12px 0; color: #FFC107; font-weight: 600; font-size: 16px;">💳 Accepted Payment Methods:</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Cash</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Zelle</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Venmo</span>
+          <span style="background-color: #4a4a4a; color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500;">Apple Cash</span>
+        </div>
+      </div>
       <div style="text-align: center;"><a href="https://bueno-brows-7cce7.web.app/dashboard" class="cta-button">Manage Your Booking</a></div>
       <p style="margin-top: 20px; font-size: 14px; color: #aaa;">Need to reschedule or cancel? Please call us at (650) 613-8455</p>
     </div>
@@ -1254,6 +1299,27 @@ export async function sendAppointmentReminderEmail(
         .footer-text {
           color: #6b7280;
         }
+        .payment-methods {
+          background-color: #fffbeb;
+          border-radius: 8px;
+          padding: 20px;
+          margin: 20px 0;
+          border-left: 4px solid #D8A14A;
+        }
+        .payment-methods-title {
+          margin: 0 0 12px 0;
+          color: #804d00;
+          font-weight: 600;
+          font-size: 16px;
+        }
+        .payment-badge {
+          background-color: #fef3c7;
+          color: #804d00;
+          padding: 8px 16px;
+          border-radius: 6px;
+          font-size: 14px;
+          font-weight: 500;
+        }
 
         /* Dark mode styles */
         @media (prefers-color-scheme: dark) {
@@ -1291,6 +1357,17 @@ export async function sendAppointmentReminderEmail(
           .footer-text {
             color: #a0a0a0;
           }
+          .payment-methods {
+            background-color: #1f1f1f;
+            border-left-color: #ffcc33;
+          }
+          .payment-methods-title {
+            color: #ffcc33;
+          }
+          .payment-badge {
+            background-color: #2a2a2a;
+            color: #ffffff;
+          }
         }
 
         /* Light mode specific adjustments */
@@ -1325,6 +1402,16 @@ export async function sendAppointmentReminderEmail(
           <p style="margin: 5px 0;"><strong class="label-text">Service:</strong> ${serviceName}</p>
           <p style="margin: 5px 0;"><strong class="label-text">Date:</strong> ${formattedDate}</p>
           <p style="margin: 5px 0;"><strong class="label-text">Time:</strong> ${time}</p>
+        </div>
+
+        <div class="payment-methods">
+          <p class="payment-methods-title">💳 Accepted Payment Methods:</p>
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+            <span class="payment-badge">Cash</span>
+            <span class="payment-badge">Zelle</span>
+            <span class="payment-badge">Venmo</span>
+            <span class="payment-badge">Apple Cash</span>
+          </div>
         </div>
 
         <p>We look forward to seeing you!</p>
@@ -1809,14 +1896,14 @@ export const sendInitialRequest = onCall(
   </body>
 </html>`;
 
-      const sent = await sendEmail({
+      const emailResult = await sendEmail({
         to: customerEmail,
         from: { email: FROM_EMAIL, name: FROM_NAME },
         subject,
         html,
       });
 
-      return { success: !!sent };
+      return { success: emailResult.success };
     } catch (err: any) {
       console.error('Error sending initial request:', err);
       throw new HttpsError('internal', 'Failed to send initial request');

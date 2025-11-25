@@ -64,6 +64,10 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
   
+  // Check if signed out due to idle session
+  const searchParams = new URLSearchParams(window.location.search);
+  const reason = searchParams.get('reason');
+  
   // 2FA state
   const [needs2FA, setNeeds2FA] = useState(false);
   const [totpCode, setTotpCode] = useState('');
@@ -235,6 +239,22 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
     <div className="min-h-screen grid place-items-center bg-cream">
       <div className="bg-white shadow-soft rounded-xl p-6 w-[380px]">
         <h1 className="text-2xl font-serif text-slate-800 mb-4">Admin Sign In</h1>
+        
+        {/* Idle Session Message */}
+        {reason === 'idle' && (
+          <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <p className="text-sm text-amber-800 font-medium">Session Expired</p>
+                <p className="text-xs text-amber-700 mt-1">You were automatically signed out due to inactivity.</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {error && <p className="text-sm text-red-600 mb-3 p-2 bg-red-50 rounded">{error}</p>}
         
         {/* Google Sign In */}

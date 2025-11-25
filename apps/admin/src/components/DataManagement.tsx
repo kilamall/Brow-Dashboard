@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
+import { runCanonicalFieldsMigrationClient } from '@buenobrows/shared/functionsClient';
 
 export default function DataManagement() {
   const { db } = useFirebase();
@@ -17,6 +18,11 @@ export default function DataManagement() {
   const [homepageContent, setHomepageContent] = useState<any>(null);
   const [undoBackup, setUndoBackup] = useState<any>(null);
   const [undoTimestamp, setUndoTimestamp] = useState<Date | null>(null);
+  const [migrating, setMigrating] = useState(false);
+  const [checkingOrphaned, setCheckingOrphaned] = useState(false);
+  const [orphanedData, setOrphanedData] = useState<any>(null);
+  const [showOrphanedModal, setShowOrphanedModal] = useState(false);
+  const [fixingOrphaned, setFixingOrphaned] = useState(false);
 
   // Load initial data
   useEffect(() => {
@@ -551,6 +557,165 @@ export default function DataManagement() {
         </div>
       </div>
 
+      {/* Customer Management Utilities */}
+      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-lg p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold text-blue-800 flex items-center gap-2">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              Customer Management Utilities
+            </h3>
+            <p className="text-sm text-blue-700 mt-1">Tools for managing customer data and fixing data issues</p>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button 
+            className="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={async () => {
+              if (!confirm('This will add canonical email/phone fields to all existing customers. Continue?')) {
+                return;
+              }
+              setMigrating(true);
+              try {
+                const result = await runCanonicalFieldsMigrationClient();
+                const data = result.data as any;
+                alert(`Migration completed! Processed ${data.processedCount} customers. Found ${data.duplicateCount} potential duplicates.`);
+              } catch (error: any) {
+                console.error('Migration failed:', error);
+                alert(`Migration failed: ${error.message}`);
+              } finally {
+                setMigrating(false);
+              }
+            }}
+            disabled={migrating}
+          >
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Run Migration</div>
+              <div className="text-xs text-slate-600">Add canonical fields to customers</div>
+            </div>
+            {migrating && <div className="text-blue-600">⏳</div>}
+          </button>
+          
+          <button 
+            className="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={async () => {
+              try {
+                const confirmed = confirm(
+                  'This will fix all customers with migratedTo pointing to themselves (self-references).\n\n' +
+                  'These customers will be made visible again in the customer list.\n\n' +
+                  'Continue?'
+                );
+                if (!confirmed) return;
+                const functions = getFunctions();
+                const fixFn = httpsCallable(functions, 'fixSelfReferenceMigrations');
+                const result = await fixFn({});
+                const data = result.data as any;
+                alert(`✅ ${data.message}\n\nFixed ${data.fixed} customer(s) with self-referencing migratedTo.`);
+                window.location.reload();
+              } catch (error: any) {
+                console.error('Fix failed:', error);
+                alert(`Fix failed: ${error.message}`);
+              }
+            }}
+          >
+            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Fix Self-References</div>
+              <div className="text-xs text-slate-600">Fix customers with invalid migratedTo</div>
+            </div>
+          </button>
+          
+          <button 
+            className="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={async () => {
+              try {
+                const functions = getFunctions();
+                const cleanupFn = httpsCallable(functions, 'cleanupOrphanedMigrations');
+                const result = await cleanupFn({});
+                const data = result.data as any;
+                if (data.orphanedCount === 0) {
+                  alert('✅ No orphaned migrations found! All migrated customers have valid targets.');
+                  return;
+                }
+                const confirmed = confirm(
+                  `Found ${data.orphanedCount} orphaned migrated customer(s).\n\n` +
+                  `These customers have migratedTo pointing to non-existent targets.\n\n` +
+                  `Would you like to clear the migratedTo field to fix them?\n\n` +
+                  `This will make them visible again in the customer list.`
+                );
+                if (confirmed) {
+                  const fixResult = await cleanupFn({ action: 'clear_migratedTo' });
+                  const fixData = fixResult.data as any;
+                  alert(`✅ Fixed ${fixData.cleaned} orphaned migrated customers!`);
+                  window.location.reload();
+                }
+              } catch (error: any) {
+                console.error('Cleanup failed:', error);
+                alert(`Cleanup failed: ${error.message}`);
+              }
+            }}
+          >
+            <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Clean Orphaned Migrations</div>
+              <div className="text-xs text-slate-600">Fix customers with invalid migratedTo targets</div>
+            </div>
+          </button>
+          
+          <button 
+            className="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-lg p-4 flex items-center gap-3 transition-all shadow-sm hover:shadow-md"
+            onClick={async () => {
+              setCheckingOrphaned(true);
+              try {
+                const functions = getFunctions();
+                const checkFn = httpsCallable(functions, 'fixOrphanedCustomers');
+                const result = await checkFn({});
+                const data = result.data as any;
+                if (data.orphanedCount > 0) {
+                  setOrphanedData(data);
+                  setShowOrphanedModal(true);
+                } else {
+                  alert('✅ No orphaned customers found! All appointments have valid customer documents.');
+                }
+              } catch (error: any) {
+                console.error('Check orphaned failed:', error);
+                alert(`Check orphaned failed: ${error.message}`);
+              } finally {
+                setCheckingOrphaned(false);
+              }
+            }}
+            disabled={checkingOrphaned}
+          >
+            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div className="text-left flex-1">
+              <div className="font-medium text-slate-800">Check Orphaned</div>
+              <div className="text-xs text-slate-600">Find appointments with missing customers</div>
+            </div>
+            {checkingOrphaned && <div className="text-orange-600">⏳</div>}
+          </button>
+        </div>
+      </div>
+
       {/* Smart Cleanup Center */}
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-lg p-6">
         <div className="flex items-center justify-between mb-6">
@@ -1000,6 +1165,165 @@ export default function DataManagement() {
               >
                 {purgeLoading ? '⏳ Purging...' : `⚠️ Purge ${selectedCollections.size} Selected Collection${selectedCollections.size !== 1 ? 's' : ''}`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Orphaned Appointments Modal */}
+      {showOrphanedModal && orphanedData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Orphaned Appointments Found
+                </h2>
+                <button
+                  onClick={() => setShowOrphanedModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-2xl"
+                  disabled={fixingOrphaned}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-md">
+                <p className="text-sm text-amber-800">
+                  <strong>Found {orphanedData.orphanedCount} appointment(s) with missing customer documents.</strong>
+                </p>
+                <p className="text-sm text-amber-700 mt-2">
+                  This usually happens when customer documents are deleted but appointments still reference them.
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <h3 className="font-medium text-gray-900 mb-2">Missing Customer IDs:</h3>
+                <div className="bg-gray-50 rounded-md p-3 mb-4">
+                  <p className="text-sm font-mono text-gray-700 break-all">
+                    {orphanedData.missingCustomerIds.slice(0, 5).join(', ')}
+                    {orphanedData.missingCustomerIds.length > 5 && ` ... and ${orphanedData.missingCustomerIds.length - 5} more`}
+                  </p>
+                </div>
+
+                <h3 className="font-medium text-gray-900 mb-2">Affected Appointments:</h3>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {orphanedData.orphanedAppointments.slice(0, 10).map((apt: any) => (
+                    <div key={apt.appointmentId || apt.id} className="bg-gray-50 rounded-md p-3 text-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {apt.customerName || 'Unknown Customer'}
+                          </p>
+                          <p className="text-gray-600 text-xs mt-1">
+                            {apt.customerEmail && `📧 ${apt.customerEmail}`}
+                            {apt.customerPhone && ` 📱 ${apt.customerPhone}`}
+                          </p>
+                          <p className="text-gray-500 text-xs mt-1">
+                            Appointment: {new Date(apt.start).toLocaleString()} • Status: {apt.status}
+                          </p>
+                        </div>
+                        <span className="text-xs text-gray-500 font-mono">
+                          {(apt.appointmentId || apt.id).substring(0, 8)}...
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {orphanedData.orphanedAppointments.length > 10 && (
+                    <p className="text-sm text-gray-500 text-center">
+                      ... and {orphanedData.orphanedAppointments.length - 10} more
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setShowOrphanedModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  disabled={fixingOrphaned}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!orphanedData || !orphanedData.orphanedAppointments) return;
+                    const appointmentIds = orphanedData.orphanedAppointments.map((apt: any) => apt.appointmentId || apt.id);
+                    if (appointmentIds.length === 0) {
+                      alert('No appointment IDs found to fix.');
+                      return;
+                    }
+                    if (!confirm(`Are you sure you want to delete ${appointmentIds.length} orphaned appointment(s)?`)) {
+                      return;
+                    }
+                    setFixingOrphaned(true);
+                    try {
+                      const functions = getFunctions();
+                      const fixFn = httpsCallable(functions, 'fixOrphanedAppointments');
+                      const result = await fixFn({ appointmentIds, action: 'delete_appointment' });
+                      const data = result.data as any;
+                      if (data.success) {
+                        alert(`✅ Successfully deleted ${data.results.filter((r: any) => r.success).length} appointment(s)!`);
+                        setShowOrphanedModal(false);
+                        setOrphanedData(null);
+                        window.location.reload();
+                      } else {
+                        alert(`⚠️ Some errors occurred:\n\n${data.errors.map((e: any) => `${e.appointmentId}: ${e.error}`).join('\n')}`);
+                      }
+                    } catch (error: any) {
+                      console.error('Fix orphaned failed:', error);
+                      alert(`Failed to fix orphaned appointments: ${error.message}`);
+                    } finally {
+                      setFixingOrphaned(false);
+                    }
+                  }}
+                  disabled={fixingOrphaned}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {fixingOrphaned ? 'Deleting...' : 'Delete Appointments'}
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!orphanedData || !orphanedData.orphanedAppointments) return;
+                    const appointmentIds = orphanedData.orphanedAppointments.map((apt: any) => apt.appointmentId || apt.id);
+                    if (appointmentIds.length === 0) {
+                      alert('No appointment IDs found to fix.');
+                      return;
+                    }
+                    if (!confirm(`Are you sure you want to create missing customer documents for ${appointmentIds.length} appointment(s)?`)) {
+                      return;
+                    }
+                    setFixingOrphaned(true);
+                    try {
+                      const functions = getFunctions();
+                      const fixFn = httpsCallable(functions, 'fixOrphanedAppointments');
+                      const result = await fixFn({ appointmentIds, action: 'create_customer' });
+                      const data = result.data as any;
+                      if (data.success) {
+                        alert(`✅ Successfully created ${data.results.filter((r: any) => r.success).length} customer(s)!`);
+                        setShowOrphanedModal(false);
+                        setOrphanedData(null);
+                        window.location.reload();
+                      } else {
+                        alert(`⚠️ Some errors occurred:\n\n${data.errors.map((e: any) => `${e.appointmentId}: ${e.error}`).join('\n')}`);
+                      }
+                    } catch (error: any) {
+                      console.error('Fix orphaned failed:', error);
+                      alert(`Failed to fix orphaned appointments: ${error.message}`);
+                    } finally {
+                      setFixingOrphaned(false);
+                    }
+                  }}
+                  disabled={fixingOrphaned}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {fixingOrphaned ? 'Creating...' : 'Create Missing Customers'}
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-500 mt-4 text-center">
+                <strong>Recommended:</strong> Create Missing Customers - This will recreate customer records from appointment data.
+              </p>
             </div>
           </div>
         </div>

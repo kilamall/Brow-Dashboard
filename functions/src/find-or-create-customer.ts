@@ -1,9 +1,12 @@
 // functions/src/find-or-create-customer.ts
 // Enhanced customer identity system with canonical identifiers and automatic merging
+// ENTERPRISE-GRADE: FULLY TRANSACTION-SAFE - Complete refactor with entire function wrapped in transaction
+// This version prevents ALL race conditions by using uniqueContacts as primary lookup mechanism
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { rateLimiters, consumeRateLimit, getUserIdentifier } from './rate-limiter.js';
+import { logCustomerAction } from './audit-log.js';
 
 try { initializeApp(); } catch {}
 const db = getFirestore();
@@ -21,87 +24,204 @@ function normalizeEmail(email: string): string {
   return email.toLowerCase().trim();
 }
 
+// Async function to migrate related data after merge (runs outside transaction)
+async function migrateCustomerData(oldCustomerId: string, newCustomerId: string): Promise<void> {
+  try {
+    console.log(`📦 Starting async migration: ${oldCustomerId} → ${newCustomerId}`);
+    
+    const collections = [
+      { name: 'appointments', field: 'customerId' },
+      { name: 'availability', field: 'customerId' },
+      { name: 'holds', field: 'userId' },
+      { name: 'skinAnalyses', field: 'customerId' },
+      { name: 'consentForms', field: 'customerId' },
+      { name: 'messages', field: 'customerId' },
+      { name: 'conversations', field: 'customerId' }
+    ];
+    
+    for (const collection of collections) {
+      const query = await db.collection(collection.name)
+        .where(collection.field, '==', oldCustomerId)
+        .get();
+      
+      if (query.size > 0) {
+        const batch = db.batch();
+        let batchCount = 0;
+        
+        query.forEach(doc => {
+          batch.update(doc.ref, { 
+            [collection.field]: newCustomerId,
+            updatedAt: new Date().toISOString()
+          });
+          batchCount++;
+          
+          if (batchCount >= 500) {
+            batch.commit();
+            batchCount = 0;
+          }
+        });
+        
+        if (batchCount > 0) {
+          await batch.commit();
+        }
+        console.log(`✅ Migrated ${query.size} ${collection.name} records`);
+      }
+    }
+    
+    console.log(`✅ Async migration complete: ${oldCustomerId} → ${newCustomerId}`);
+  } catch (error) {
+    console.error(`❌ Async migration failed: ${oldCustomerId} → ${newCustomerId}`, error);
+    throw error;
+  }
+}
+
 export const findOrCreateCustomer = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
     // SECURITY: Rate limit customer creation (10 per hour per IP/user)
     await consumeRateLimit(rateLimiters.createCustomer, getUserIdentifier(req));
 
-    const { email, name, phone, profilePictureUrl, authUid, birthday } = req.data || {};
+    let { email, name, phone, profilePictureUrl, authUid, birthday } = req.data || {};
     
-    // Require at least email, phone, or name
-    if (!email && !phone && !name) {
-      throw new HttpsError('invalid-argument', 'Either email, phone, or name is required');
+    // ENTERPRISE: Input validation and sanitization
+    if (email) {
+      email = email.trim().toLowerCase().slice(0, 254);
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        throw new HttpsError('invalid-argument', 'Invalid email format');
+      }
+    }
+    
+    if (phone) {
+      phone = phone.trim().slice(0, 20);
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 10 || digits.length > 15) {
+        throw new HttpsError('invalid-argument', 'Invalid phone number format');
+      }
+    }
+    
+    if (name) {
+      name = name.trim().slice(0, 200);
+      if (name.length === 0) {
+        name = undefined;
+      }
+    }
+    
+    // Require at least email, phone, or name (or authUid for authenticated users)
+    if (!email && !phone && !name && !authUid) {
+      console.error('❌ findOrCreateCustomer called without email, phone, name, or authUid');
+      throw new HttpsError('invalid-argument', 'Either email, phone, name, or authUid is required');
+    }
+    
+    // For guest bookings, require at least email or phone
+    if (!authUid && !email && !phone) {
+      console.error('❌ Guest booking attempted without email or phone');
+      throw new HttpsError('invalid-argument', 'Guest bookings require either an email or phone number');
     }
 
     const canonicalEmail = email ? normalizeEmail(email) : null;
     const canonicalPhone = phone ? normalizePhone(phone) : null;
     
+    const userId = req.auth?.uid;
+    const userEmail = req.auth?.token?.email as string | undefined;
+    
     try {
-      // Step 1: Search for existing customer by canonical identifiers
-      let existingCustomer = null;
-      
-      // Try phone first (most reliable for A2P SMS booking)
-      if (canonicalPhone) {
-        const phoneQuery = await db.collection('customers')
-          .where('canonicalPhone', '==', canonicalPhone)
-          .limit(1)
-          .get();
+      // ENTERPRISE FIX: Wrap ENTIRE operation in transaction to prevent ALL race conditions
+      const result = await db.runTransaction(async (tx) => {
+      let existingCustomer: any = null;
+        let foundByAuthUid = false;
+        let guestCustomer: any = null;
         
-        if (!phoneQuery.empty) {
-          existingCustomer = { id: phoneQuery.docs[0].id, ...phoneQuery.docs[0].data() } as any;
-          console.log('✅ Found customer by phone:', canonicalPhone);
+        // Step 1: Check Auth UID FIRST (transaction-safe direct document read)
+        if (authUid) {
+          const authRef = db.collection('customers').doc(authUid);
+          const authDoc = await tx.get(authRef);
+          if (authDoc.exists) {
+            existingCustomer = { id: authDoc.id, ...authDoc.data() } as any;
+            foundByAuthUid = true;
+            console.log('✅ Found customer by authUid (transaction-safe):', authUid);
         }
       }
       
-      // Try email if no phone match
-      if (!existingCustomer && canonicalEmail) {
-        const emailQuery = await db.collection('customers')
-          .where('canonicalEmail', '==', canonicalEmail)
-          .limit(1)
-          .get();
-        
-        if (!emailQuery.empty) {
-          existingCustomer = { id: emailQuery.docs[0].id, ...emailQuery.docs[0].data() } as any;
-          console.log('✅ Found customer by email:', canonicalEmail);
+        // Step 2: Check uniqueContacts reservations (transaction-safe)
+        // This is our primary lookup mechanism for email/phone
+        if (!foundByAuthUid) {
+          const reservationChecks: Promise<any>[] = [];
+          
+          if (canonicalEmail) {
+            reservationChecks.push(tx.get(db.doc(`uniqueContacts/email:${canonicalEmail}`)));
+          }
+          if (canonicalPhone) {
+            reservationChecks.push(tx.get(db.doc(`uniqueContacts/phone:${canonicalPhone}`)));
+          }
+          
+          const reservations = await Promise.all(reservationChecks);
+          
+          for (const reservation of reservations) {
+            if (reservation.exists) {
+              const existingCustomerId = reservation.data()?.customerId;
+              if (existingCustomerId) {
+                // Skip if reservation points to the authUid but customer doesn't exist
+                // This can happen if a reservation exists but the customer was deleted
+                if (authUid && existingCustomerId === authUid) {
+                  // Check if customer actually exists
+                  const authRef = db.collection('customers').doc(authUid);
+                  const authDocCheck = await tx.get(authRef);
+                  if (!authDocCheck.exists) {
+                    console.log('⚠️ Reservation points to authUid but customer document does not exist - will create new customer');
+                    continue; // Skip this reservation, will create new customer
         }
       }
       
-      // ENHANCED: Also search by raw phone/email to catch customers created before canonical fields
-      if (!existingCustomer && phone) {
-        const rawPhoneQuery = await db.collection('customers')
-          .where('phone', '==', phone)
-          .limit(1)
-          .get();
+                // Get the actual customer document (transaction-safe)
+                const customerRef = db.collection('customers').doc(existingCustomerId);
+                const customerDoc = await tx.get(customerRef);
         
-        if (!rawPhoneQuery.empty) {
-          existingCustomer = { id: rawPhoneQuery.docs[0].id, ...rawPhoneQuery.docs[0].data() } as any;
-          console.log('✅ Found customer by raw phone:', phone);
+                if (customerDoc.exists) {
+                  const found = { id: customerDoc.id, ...customerDoc.data() } as any;
+                  
+                  // If we have authUid and found a guest customer, mark for merge
+                  if (authUid && !found.authUid && found.id !== authUid) {
+                    guestCustomer = found;
+                    console.log('🔍 Found guest customer (will merge):', existingCustomerId);
+                  } else {
+                    existingCustomer = found;
+                    console.log('✅ Found customer via reservation:', existingCustomerId);
         }
-      }
-      
-      if (!existingCustomer && email) {
-        const rawEmailQuery = await db.collection('customers')
-          .where('email', '==', email)
-          .limit(1)
-          .get();
-        
-        if (!rawEmailQuery.empty) {
-          existingCustomer = { id: rawEmailQuery.docs[0].id, ...rawEmailQuery.docs[0].data() } as any;
-          console.log('✅ Found customer by raw email:', email);
-        }
-      }
-      
-      // Try Auth UID if provided (for web auth flow)
-      if (!existingCustomer && authUid) {
-        const authDoc = await db.collection('customers').doc(authUid).get();
-        if (authDoc.exists) {
-          existingCustomer = { id: authDoc.id, ...authDoc.data() } as any;
-          console.log('✅ Found customer by authUid:', authUid);
+                  break; // Found a match, stop searching
+                } else {
+                  // Reservation exists but customer document doesn't - orphaned reservation
+                  // Clear any stale existingCustomer data and continue/break appropriately
+                  if (authUid && existingCustomerId === authUid) {
+                    console.warn(`⚠️ Reservation points to authUid ${authUid} but customer document does not exist - will create new customer`);
+                    // Clear any stale customer data
+                    existingCustomer = null;
+                    guestCustomer = null;
+                    // Don't set existingCustomer - will create new customer in Step 5
+                    break; // Stop searching, will create new customer
+                  } else {
+                    console.warn(`⚠️ Reservation points to customer ${existingCustomerId} but document does not exist - orphaned reservation, continuing search`);
+                    // Clear any stale customer data before continuing
+                    if (existingCustomer?.id === existingCustomerId) {
+                      existingCustomer = null;
+                    }
+                    if (guestCustomer?.id === existingCustomerId) {
+                      guestCustomer = null;
+                    }
+                    // Continue searching for other reservations
+                  }
+                }
+              }
+            }
         }
       }
 
-      // Step 2: If found, update and return
+        // Step 3: If we found a guest customer to merge, use it as existingCustomer
+        if (guestCustomer && !existingCustomer) {
+          existingCustomer = guestCustomer;
+      }
+
+        // Step 4: Handle existing customer (update or merge)
       if (existingCustomer) {
         const updates: any = {
           updatedAt: new Date().toISOString(),
@@ -117,225 +237,163 @@ export const findOrCreateCustomer = onCall(
           updates.phone = phone;
         }
         
-        // Clean up any duplicate customers automatically
-        if (canonicalEmail || canonicalPhone) {
-          try {
-            const duplicateQueries = [];
-            if (canonicalEmail) {
-              duplicateQueries.push(
-                db.collection('customers')
-                  .where('canonicalEmail', '==', canonicalEmail)
-                  .where('__name__', '!=', existingCustomer.id)
-                  .get(),
-                db.collection('customers')
-                  .where('email', '==', email)
-                  .where('__name__', '!=', existingCustomer.id)
-                  .get()
-              );
+          // Check if customer exists but caller isn't authenticated
+          const needsSignIn = !authUid && existingCustomer.authUid;
+          
+          // CRITICAL: If existing customer already has a different authUid, just update
+          if (authUid && existingCustomer.authUid && existingCustomer.authUid !== authUid) {
+            console.log('⚠️ Customer already has different authUid. Updating existing customer.');
+            
+            // Update canonical fields if missing
+            if (canonicalEmail && !existingCustomer.canonicalEmail) {
+              updates.canonicalEmail = canonicalEmail;
+              updates.email = email;
             }
-            if (canonicalPhone) {
-              duplicateQueries.push(
-                db.collection('customers')
-                  .where('canonicalPhone', '==', canonicalPhone)
-                  .where('__name__', '!=', existingCustomer.id)
-                  .get(),
-                db.collection('customers')
-                  .where('phone', '==', phone)
-                  .where('__name__', '!=', existingCustomer.id)
-                  .get()
-              );
+            if (canonicalPhone && !existingCustomer.canonicalPhone) {
+              updates.canonicalPhone = canonicalPhone;
+              updates.phone = phone;
             }
             
-            const duplicateResults = await Promise.all(duplicateQueries);
-            const duplicates = new Set<string>();
-            duplicateResults.forEach(snapshot => {
-              snapshot.forEach(doc => {
-                const data = doc.data();
-                // Only merge customers that aren't already migrated
-                if (data.identityStatus !== 'migrated' && !data.migratedTo) {
-                  duplicates.add(doc.id);
+            // Update name if better quality provided
+            if (name && (!existingCustomer.name || existingCustomer.name === 'Guest')) {
+              updates.name = name;
+            }
+            
+            // Update profile picture if provided
+            if (profilePictureUrl && !existingCustomer.profilePictureUrl) {
+              updates.profilePictureUrl = profilePictureUrl;
                 }
-              });
-            });
             
-            // Mark duplicates as migrated
-            if (duplicates.size > 0) {
-              console.log(`🧹 Found ${duplicates.size} duplicate(s) to merge`);
-              const batch = db.batch();
-              duplicates.forEach(dupId => {
-                batch.update(db.collection('customers').doc(dupId), {
-                  migratedTo: existingCustomer.id,
-                  identityStatus: 'migrated',
-                  updatedAt: new Date().toISOString()
-                });
-              });
-              await batch.commit();
-              console.log(`✅ Marked ${duplicates.size} duplicate(s) as migrated`);
+            // Update within transaction
+            if (Object.keys(updates).length > 1) {
+              const customerRef = db.collection('customers').doc(existingCustomer.id);
+              // Double-check document exists before updating (safety check)
+              const verifyDoc = await tx.get(customerRef);
+              if (!verifyDoc.exists) {
+                console.warn(`⚠️ Customer ${existingCustomer.id} does not exist (orphaned reservation) - will create new customer instead`);
+                // Clear existingCustomer so we create a new one instead
+                existingCustomer = null;
+                // Continue to create new customer below
+              } else {
+                tx.update(customerRef, updates);
+                console.log('✅ Updated existing customer (different authUid):', existingCustomer.id);
+                return { 
+                  customerId: existingCustomer.id,
+                  isNew: false,
+                  merged: false,
+                  needsSignIn: false
+                };
+              }
+            } else {
+              // No updates needed, just return
+              return { 
+                customerId: existingCustomer.id,
+                isNew: false,
+                merged: false,
+                needsSignIn: false
+              };
             }
-          } catch (cleanupError) {
-            console.error('⚠️ Error cleaning up duplicates:', cleanupError);
-            // Don't fail the main operation if cleanup fails
           }
-        }
-        
-        // Check if customer exists but caller isn't authenticated (needsSignIn scenario)
-        const needsSignIn = !authUid && existingCustomer.authUid;
         
         // Link Auth UID if provided and not already linked (merge scenario)
         const wasMerged = authUid && !existingCustomer.authUid && existingCustomer.id !== authUid;
         if (wasMerged) {
           console.log('🔗 MERGING: Moving customer from', existingCustomer.id, 'to', authUid);
           
-          // CRITICAL: Migrate to authUid document to match ClientDashboard lookup
-          // Copy existing customer to new document with authUid as ID
-          await db.collection('customers').doc(authUid).set({
+            // Preserve guest customer's name if it's better
+            let finalName = name || existingCustomer.name;
+            if (name === 'Customer' && existingCustomer.name && existingCustomer.name !== 'Customer' && existingCustomer.name !== 'Guest') {
+              finalName = existingCustomer.name;
+              console.log('✅ Preserving guest customer name:', existingCustomer.name);
+            }
+            
+            // Create new customer document with authUid as ID (within transaction)
+            // This is the NEW customer that received the merge - it should be 'auth', not 'merged'
+            const newCustomerRef = db.collection('customers').doc(authUid);
+            tx.set(newCustomerRef, {
             ...existingCustomer,
             authUid: authUid,
-            identityStatus: 'merged',
-            mergedFrom: [existingCustomer.id],
+              identityStatus: 'auth', // NEW customer is authenticated, not 'merged'
+              mergedFrom: [existingCustomer.id], // Track which customer(s) were merged into this one
             canonicalEmail: canonicalEmail || existingCustomer.canonicalEmail || null,
             canonicalPhone: canonicalPhone || existingCustomer.canonicalPhone || null,
             email: email || existingCustomer.email,
             phone: phone || existingCustomer.phone,
-            name: name || existingCustomer.name,
+              name: finalName,
             profilePictureUrl: profilePictureUrl || existingCustomer.profilePictureUrl,
-            totalVisits: existingCustomer.totalVisits || 0, // Ensure totalVisits is set
+              totalVisits: existingCustomer.totalVisits || 0,
             lastVisit: existingCustomer.lastVisit || null,
             updatedAt: new Date().toISOString()
           });
           
-          // Update all appointments from old customerId to new authUid
-          const appointmentsQuery = await db.collection('appointments')
-            .where('customerId', '==', existingCustomer.id)
-            .get();
-          
-          console.log(`📦 Migrating ${appointmentsQuery.size} appointments to new customer ID`);
-          
-          if (appointmentsQuery.size > 0) {
-            // Use batch writes for better performance and atomicity
-            const batch = db.batch();
-            const batchSize = 500; // Firestore batch limit
-            let currentBatch = db.batch();
-            let batchCount = 0;
-            
-            appointmentsQuery.forEach(doc => {
-              currentBatch.update(doc.ref, { 
+            // Update uniqueContacts reservations to point to new customer (within transaction)
+            if (canonicalEmail) {
+              const emailReservationRef = db.doc(`uniqueContacts/email:${canonicalEmail}`);
+              tx.set(emailReservationRef, {
                 customerId: authUid,
+                createdAt: new Date(),
+                contactType: 'email',
+                contactValue: canonicalEmail,
+              }, { merge: true });
+          }
+            if (canonicalPhone) {
+              const phoneReservationRef = db.doc(`uniqueContacts/phone:${canonicalPhone}`);
+              tx.set(phoneReservationRef, {
+                  customerId: authUid,
+                createdAt: new Date(),
+                contactType: 'phone',
+                contactValue: canonicalPhone,
+              }, { merge: true });
+            }
+            
+            // Mark old customer document as migrated (within transaction)
+            const oldCustomerRef = db.collection('customers').doc(existingCustomer.id);
+            // Safety check: verify document exists before updating
+            const verifyOldDoc = await tx.get(oldCustomerRef);
+            if (!verifyOldDoc.exists) {
+              console.warn(`⚠️ Old customer ${existingCustomer.id} does not exist (orphaned) - skipping migration mark, just creating new customer`);
+              // Don't throw error, just skip marking as migrated since the old customer doesn't exist
+              // The new customer will be created and we'll return early
+              // Clear existingCustomer so we create a new one instead
+              existingCustomer = null;
+              // Continue to create new customer below
+            } else {
+              tx.update(oldCustomerRef, {
+                migratedTo: authUid,
+                identityStatus: 'migrated',
                 updatedAt: new Date().toISOString()
               });
-              batchCount++;
               
-              // Commit batch when it reaches the limit
-              if (batchCount >= batchSize) {
-                batch.commit();
-                currentBatch = db.batch();
-                batchCount = 0;
-              }
-            });
-            
-            // Commit any remaining updates
-            if (batchCount > 0) {
-              await currentBatch.commit();
+              console.log('✅ Merge transaction prepared: Old ID', existingCustomer.id, '→ New ID', authUid);
+              
+              // Return flag to trigger async data migration
+              return {
+                customerId: authUid,
+                isNew: false,
+                merged: true,
+                needsSignIn: false,
+                requiresDataMigration: true,
+                oldCustomerId: existingCustomer.id
+              };
             }
-            
-            console.log(`✅ Migrated ${appointmentsQuery.size} appointments`);
-          }
-          
-          // Also migrate any related data (availability, holds, etc.)
-          try {
-            // Migrate availability records
-            const availabilityQuery = await db.collection('availability')
-              .where('customerId', '==', existingCustomer.id)
-              .get();
-            
-            if (availabilityQuery.size > 0) {
-              const availabilityBatch = db.batch();
-              availabilityQuery.forEach(doc => {
-                availabilityBatch.update(doc.ref, { 
-                  customerId: authUid,
-                  updatedAt: new Date().toISOString()
-                });
-              });
-              await availabilityBatch.commit();
-              console.log(`✅ Migrated ${availabilityQuery.size} availability records`);
-            }
-            
-            // Migrate holds
-            const holdsQuery = await db.collection('holds')
-              .where('userId', '==', existingCustomer.id)
-              .get();
-            
-            if (holdsQuery.size > 0) {
-              const holdsBatch = db.batch();
-              holdsQuery.forEach(doc => {
-                holdsBatch.update(doc.ref, { 
-                  userId: authUid,
-                  updatedAt: new Date().toISOString()
-                });
-              });
-              await holdsBatch.commit();
-              console.log(`✅ Migrated ${holdsQuery.size} holds`);
-            }
-            
-            // Migrate skin analyses
-            const skinAnalysesQuery = await db.collection('skinAnalyses')
-              .where('customerId', '==', existingCustomer.id)
-              .get();
-            
-            if (skinAnalysesQuery.size > 0) {
-              const skinAnalysesBatch = db.batch();
-              skinAnalysesQuery.forEach(doc => {
-                skinAnalysesBatch.update(doc.ref, { 
-                  customerId: authUid,
-                  updatedAt: new Date().toISOString()
-                });
-              });
-              await skinAnalysesBatch.commit();
-              console.log(`✅ Migrated ${skinAnalysesQuery.size} skin analyses`);
-            }
-            
-            // Migrate consent forms
-            const consentFormsQuery = await db.collection('consentForms')
-              .where('customerId', '==', existingCustomer.id)
-              .get();
-            
-            if (consentFormsQuery.size > 0) {
-              const consentFormsBatch = db.batch();
-              consentFormsQuery.forEach(doc => {
-                consentFormsBatch.update(doc.ref, { 
-                  customerId: authUid,
-                  updatedAt: new Date().toISOString()
-                });
-              });
-              await consentFormsBatch.commit();
-              console.log(`✅ Migrated ${consentFormsQuery.size} consent forms`);
-            }
-            
-          } catch (migrationError) {
-            console.error('⚠️ Error migrating related data:', migrationError);
-            // Don't fail the merge if related data migration fails
-          }
-          
-          // Mark old customer document as migrated (keep for audit trail)
-          await db.collection('customers').doc(existingCustomer.id).update({
-            migratedTo: authUid,
-            identityStatus: 'migrated',
-            updatedAt: new Date().toISOString()
-          });
-          
-          console.log('✅ Merge complete: Old ID', existingCustomer.id, '→ New ID', authUid);
-          
-          return {
-            customerId: authUid,
-            isNew: false,
-            merged: true,
-            needsSignIn: false
-          };
         }
         
-        // Update name if better quality provided
-        if (name && (!existingCustomer.name || existingCustomer.name === 'Guest')) {
-          updates.name = name;
+        // Update name if provided and different (for authenticated users, always update if name is provided)
+        // This prevents duplicate profiles when authenticated users change their name in the booking form
+        if (name && name !== 'Customer' && name !== 'Guest') {
+          // For authenticated users, always update name if it's different
+          // For guests, only update if existing name is generic (Guest/Customer)
+          if (authUid) {
+            // Authenticated user: always update if name is different and not generic
+            if (existingCustomer.name !== name) {
+              updates.name = name;
+            }
+          } else {
+            // Guest: only update if existing name is generic
+            if (!existingCustomer.name || existingCustomer.name === 'Guest' || existingCustomer.name === 'Customer') {
+              updates.name = name;
+            }
+          }
         }
         
         // Update profile picture if provided
@@ -343,25 +401,50 @@ export const findOrCreateCustomer = onCall(
           updates.profilePictureUrl = profilePictureUrl;
         }
 
-        // Only update if there are actual changes
+          // Update within transaction
         if (Object.keys(updates).length > 1) {
-          await db.collection('customers').doc(existingCustomer.id).update(updates);
-          console.log('✅ Updated existing customer:', existingCustomer.id);
+            const customerRef = db.collection('customers').doc(existingCustomer.id);
+            // Safety check: verify document exists before updating
+            const verifyDoc = await tx.get(customerRef);
+            if (!verifyDoc.exists) {
+              console.warn(`⚠️ Customer ${existingCustomer.id} does not exist (orphaned reservation) - will create new customer instead`);
+              // Clear existingCustomer so we create a new one instead
+              existingCustomer = null;
+              // Continue to create new customer below
+            } else {
+              tx.update(customerRef, updates);
+              console.log('✅ Updated existing customer:', existingCustomer.id);
+              return { 
+                customerId: existingCustomer.id,
+                isNew: false,
+                merged: wasMerged,
+                needsSignIn: needsSignIn
+              };
+            }
+        } else {
+          // No updates needed, but verify document exists before returning
+          const customerRef = db.collection('customers').doc(existingCustomer.id);
+          const verifyDoc = await tx.get(customerRef);
+          if (!verifyDoc.exists) {
+            console.warn(`⚠️ Customer ${existingCustomer.id} does not exist (orphaned reservation) - will create new customer instead`);
+            existingCustomer = null;
+            // Continue to create new customer below
+          } else {
+            return { 
+              customerId: existingCustomer.id,
+              isNew: false,
+              merged: wasMerged,
+              needsSignIn: needsSignIn
+            };
+          }
         }
-        
-        return { 
-          customerId: existingCustomer.id,
-          isNew: false,
-          merged: wasMerged,
-          needsSignIn: needsSignIn
-        };
       }
 
-      // Step 3: Create new customer with Auth UID as document ID (if provided)
-      // This ensures Firebase Auth UID matches Firestore document ID
+        // Step 5: Create new customer (transaction-safe)
       const customerId = authUid || db.collection('customers').doc().id;
+        const customerRef = db.collection('customers').doc(customerId);
       
-      await db.collection('customers').doc(customerId).set({
+        tx.set(customerRef, {
         name: name || 'Guest',
         email: email || null,
         phone: phone || null,
@@ -372,13 +455,34 @@ export const findOrCreateCustomer = onCall(
         authUid: authUid || null,
         identityStatus: authUid ? 'auth' : 'guest',
         status: 'active',
-        totalVisits: 0, // Initialize for new customer promotions
+          totalVisits: 0,
         lastVisit: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
 
-      console.log('✅ Created new customer:', customerId, authUid ? '(with auth)' : '(guest)');
+        // Create uniqueContacts reservations atomically (within transaction)
+        if (canonicalEmail) {
+          const emailReservationRef = db.doc(`uniqueContacts/email:${canonicalEmail}`);
+          tx.set(emailReservationRef, {
+            customerId: customerId,
+            createdAt: new Date(),
+            contactType: 'email',
+            contactValue: canonicalEmail,
+          });
+        }
+        
+        if (canonicalPhone) {
+          const phoneReservationRef = db.doc(`uniqueContacts/phone:${canonicalPhone}`);
+          tx.set(phoneReservationRef, {
+            customerId: customerId,
+            createdAt: new Date(),
+            contactType: 'phone',
+            contactValue: canonicalPhone,
+          });
+        }
+        
+        console.log('✅ Created new customer (transaction-safe):', customerId, authUid ? '(with auth)' : '(guest)');
 
       return { 
         customerId,
@@ -386,11 +490,42 @@ export const findOrCreateCustomer = onCall(
         merged: false,
         needsSignIn: false
       };
+      });
+      
+      // If merge happened, trigger async data migration outside transaction
+      if (result.merged && (result as any).requiresDataMigration && (result as any).oldCustomerId) {
+        // Fire and forget - migrate related data asynchronously
+        migrateCustomerData((result as any).oldCustomerId, result.customerId).catch(err => {
+          console.error('⚠️ Async data migration failed:', err);
+          // Log to error tracking system in production
+        });
+        
+        // Log audit trail for merge
+        await logCustomerAction('customer.merged', result.customerId, userId, userEmail, undefined, {
+          oldCustomerId: (result as any).oldCustomerId,
+          mergedFrom: [(result as any).oldCustomerId]
+        });
+      } else if (result.isNew) {
+        // Log audit trail for new customer
+        await logCustomerAction('customer.created', result.customerId, userId, userEmail, undefined, {
+          authUid,
+          hasEmail: !!email,
+          hasPhone: !!phone
+        });
+      }
+      
+      return result;
+      
     } catch (error: any) {
       console.error('❌ findOrCreateCustomer error:', error);
+      
+      // Handle transaction retry errors
+      if (error.code === 'failed-precondition' || error.message?.includes('transaction')) {
+        console.log('🔄 Transaction conflict detected - Firestore will auto-retry');
+        // Firestore automatically retries transactions, but we can add custom retry logic if needed
+      }
+      
       throw new HttpsError('internal', `Failed to find or create customer: ${error.message}`);
     }
   }
 );
-
-

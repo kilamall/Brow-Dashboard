@@ -14,7 +14,8 @@ import type { Appointment, BusinessHours, Customer, Service, DayClosure, Special
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { fromZonedTime } from 'date-fns-tz';
-import { collection, getDocs, limit, query, where, type Firestore } from 'firebase/firestore';
+import { collection, getDocs, limit, query, type Firestore } from 'firebase/firestore';
+import { filterActiveCustomers, sortCustomersByName, filterCustomersBySearch } from '@buenobrows/shared/customerFilters';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 
@@ -165,11 +166,25 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     if (!open) return;
     let alive = true;
     (async () => {
-      const q = query(collection(db, 'customers'), limit(100));
+      // Fetch ALL customers without orderBy to avoid excluding customers without names
+      const q = query(collection(db, 'customers'), limit(1000));
       const snap = await getDocs(q);
-      const customers: Customer[] = [];
-      snap.forEach((d) => customers.push({ id: d.id, ...(d.data() as any) }));
-      if (alive) setAllCustomers(customers.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      let customers: Customer[] = [];
+      snap.forEach((d) => {
+        const customer = { id: d.id, ...(d.data() as any) } as Customer;
+        customers.push(customer);
+      });
+      
+      // Apply the same filtering logic as the Customers page
+      customers = filterActiveCustomers(customers);
+      
+      // Sort by name (handles customers without names)
+      customers = sortCustomersByName(customers);
+      
+      if (alive) {
+        setAllCustomers(customers);
+        console.log(`[AddAppointmentModal] Loaded ${customers.length} active customers`);
+      }
     })();
     return () => { alive = false; };
   }, [open, db]);
@@ -184,12 +199,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       return; 
     }
     
-    // Filter existing customers by name or email
-    const filtered = allCustomers.filter(c => 
-      (c.name || '').toLowerCase().includes(t) || 
-      (c.email || '').toLowerCase().includes(t) ||
-      (c.phone || '').includes(t)
-    ).slice(0, 10);
+    // Use shared search filter function for consistency
+    const filtered = filterCustomersBySearch(allCustomers, t).slice(0, 10);
     
     setSuggestions(filtered);
   }, [customerTerm, allCustomers]);

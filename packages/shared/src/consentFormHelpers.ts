@@ -1,5 +1,5 @@
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, Firestore, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import type { ConsentFormTemplate, CustomerConsent } from './types';
+import type { ConsentFormTemplate, CustomerConsent, Service } from './types';
 
 /**
  * Get the active consent form for a specific category
@@ -320,6 +320,148 @@ export async function initializeDefaultConsentForms(db: Firestore): Promise<void
   } catch (error) {
     console.error('Error initializing default consent forms:', error);
     throw error;
+  }
+}
+
+/**
+ * Map service category to consent form category
+ * This determines which consent form is needed for a service
+ */
+export function getConsentCategoryForService(service: Service): string {
+  // Map service categories to consent categories
+  // Default to 'brow_services' for most services
+  const category = service.category?.toLowerCase() || '';
+  
+  // You can add more mappings here as needed
+  // For example: 'lash_services' -> 'lash_services'
+  // For now, all services use 'brow_services' consent
+  return 'brow_services';
+}
+
+/**
+ * Check if customer has any previous appointments (completed or confirmed)
+ * Returns true if customer is a returning customer, false if first visit
+ */
+export async function hasPreviousAppointments(
+  db: Firestore,
+  customerId: string
+): Promise<boolean> {
+  try {
+    if (!customerId || customerId.trim() === '') {
+      return false;
+    }
+    
+    const appointmentsRef = collection(db, 'appointments');
+    const q = query(
+      appointmentsRef,
+      where('customerId', '==', customerId),
+      where('status', 'in', ['confirmed', 'completed']),
+      limit(1)
+    );
+    
+    const snapshot = await getDocs(q);
+    return !snapshot.empty;
+  } catch (error: any) {
+    // Permission errors are expected for non-customer users or during auth transitions
+    if (error?.code === 'permission-denied') {
+      return false;
+    }
+    console.error('Error checking previous appointments:', error);
+    return false;
+  }
+}
+
+/**
+ * Check if customer has consent for any of the services they're booking
+ * Returns the consent category needed, or null if no consent needed
+ */
+export async function getRequiredConsentCategory(
+  db: Firestore,
+  customerId: string,
+  services: Service[]
+): Promise<{ category: string; hasConsent: boolean; isNewService: boolean } | null> {
+  try {
+    if (!customerId || customerId.trim() === '' || services.length === 0) {
+      return null;
+    }
+    
+    // Get consent categories for all services
+    const consentCategories = new Set(
+      services.map(service => getConsentCategoryForService(service))
+    );
+    
+    // For now, we'll use the first category (most services use 'brow_services')
+    // In the future, you might need to handle multiple categories
+    const category = Array.from(consentCategories)[0];
+    
+    if (!category) {
+      return null;
+    }
+    
+    // Check if customer has consent for this category
+    const hasConsent = await hasValidConsent(db, customerId, category);
+    
+    // Check if customer has previous appointments with this category
+    const hasPrevious = await hasPreviousAppointments(db, customerId);
+    
+    // If they have previous appointments but no consent for this category, it's a new service
+    const isNewService = hasPrevious && !hasConsent;
+    
+    return {
+      category,
+      hasConsent,
+      isNewService
+    };
+  } catch (error) {
+    console.error('Error getting required consent category:', error);
+    return null;
+  }
+}
+
+/**
+ * Record a quick update consent (one-question form for returning customers)
+ */
+export async function recordQuickUpdateConsent(
+  db: Firestore,
+  customerId: string,
+  consentCategory: string,
+  customerName: string,
+  initials: string,
+  customerEmail?: string,
+  customerPhone?: string
+): Promise<string> {
+  try {
+    // Get the active consent form for this category
+    const activeForm = await getActiveConsentForm(db, consentCategory);
+    if (!activeForm) {
+      throw new Error('No active consent form found for category');
+    }
+    
+    // Record the quick update consent
+    const consentData: any = {
+      customerId,
+      customerName,
+      consentFormId: activeForm.id,
+      consentFormVersion: activeForm.version,
+      consentFormCategory: consentCategory,
+      agreed: true,
+      signature: initials, // Store initials as signature for quick updates
+      userAgent: navigator.userAgent,
+      consentedAt: new Date().toISOString(),
+      isQuickUpdate: true, // Flag to indicate this is a quick update, not full consent
+    };
+    
+    if (customerEmail) {
+      consentData.customerEmail = customerEmail;
+    }
+    if (customerPhone) {
+      consentData.customerPhone = customerPhone;
+    }
+    
+    return await recordCustomerConsent(db, consentData);
+  } catch (error) {
+    console.error('Error recording quick update consent:', error);
+    throw new Error('Failed to record quick update consent');
   }
 }
 

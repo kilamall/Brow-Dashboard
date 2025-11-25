@@ -183,7 +183,9 @@ export const sendEmailVerificationCode = onCall(
       };
       await verificationRef.set(verificationData);
 
-      // Send verification email
+      // Send verification email using SendGrid
+      console.log(`📧 Attempting to send verification code to ${email}`);
+      
       const htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -350,17 +352,43 @@ Bueno Brows
         html: htmlContent,
       };
 
-      await sgMail.send(msg);
-      console.log(`✅ Email verification code sent to ${email}`);
+      try {
+        await sgMail.send(msg);
+        console.log(`✅ Email verification code sent to ${email}`);
+        
+        // Log successful email send
+        await db.collection('email_logs').add({
+          to: email,
+          subject: '🔐 Verify your email - Bueno Brows',
+          type: 'verification-code',
+          status: 'sent',
+          timestamp: new Date().toISOString()
+        });
 
-      return {
-        success: true,
-        message: 'Verification code sent to your email'
-      };
+        return {
+          success: true,
+          message: 'Verification code sent to your email'
+        };
+      } catch (emailError: any) {
+        console.error('❌ Error sending email verification:', emailError);
+        
+        // Log failed email send with detailed error
+        await db.collection('email_logs').add({
+          to: email,
+          subject: '🔐 Verify your email - Bueno Brows',
+          type: 'verification-code',
+          status: 'failed',
+          error: emailError.message || 'Unknown error',
+          sendGridResponse: emailError.response?.body || null,
+          timestamp: new Date().toISOString()
+        });
+        
+        throw new HttpsError('internal', `Failed to send verification email: ${emailError.message || 'Unknown error'}`);
+      }
 
-    } catch (error) {
-      console.error('❌ Error sending email verification:', error);
-      throw new HttpsError('internal', 'Failed to send verification email');
+    } catch (error: any) {
+      console.error('❌ Error in sendEmailVerificationCode:', error);
+      throw new HttpsError('internal', `Failed to send verification email: ${error.message || 'Unknown error'}`);
     }
   }
 );
@@ -401,16 +429,39 @@ export const sendSMSVerificationCode = onCall(
       });
 
       // Send SMS (will automatically use Twilio once A2P 10DLC is approved)
-      await sendVerificationSMS(phoneNumber, code);
+      console.log(`📱 Attempting to send SMS verification code to ${phoneNumber}`);
+      const smsResult = await sendVerificationSMS(phoneNumber, code);
+      
+      if (!smsResult.success) {
+        console.error(`❌ Failed to send SMS verification code to ${phoneNumber}`);
+        throw new HttpsError('internal', 'Failed to send verification SMS. Please check SMS configuration.');
+      }
+      
+      console.log(`✅ SMS verification code sent to ${phoneNumber}`);
 
       return {
         success: true,
         message: 'Verification code sent to your phone'
       };
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error sending SMS verification:', error);
-      throw new HttpsError('internal', 'Failed to send verification SMS');
+      
+      // Log failed SMS send (code may not be available in catch block)
+      try {
+        await db.collection('sms_logs').add({
+          to: phoneNumber,
+          body: 'Verification code (failed to send)',
+          type: 'verification',
+          status: 'failed',
+          error: error.message || 'Unknown error',
+          timestamp: new Date().toISOString()
+        });
+      } catch (logError) {
+        console.error('Failed to log SMS error:', logError);
+      }
+      
+      throw new HttpsError('internal', `Failed to send verification SMS: ${error.message || 'Unknown error'}`);
     }
   }
 );

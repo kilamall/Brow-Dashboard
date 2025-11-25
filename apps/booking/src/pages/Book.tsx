@@ -34,6 +34,9 @@ import {
   getActiveConsentForm,
   recordCustomerConsent,
   hasValidConsent,
+  getRequiredConsentCategory,
+  hasPreviousAppointments,
+  recordQuickUpdateConsent,
 } from '@buenobrows/shared/consentFormHelpers';
 
 import { format } from 'date-fns';
@@ -42,6 +45,7 @@ import { collection, addDoc, doc, getDoc, onSnapshot } from 'firebase/firestore'
 import { isMagicLink, completeMagicLinkSignIn } from '@buenobrows/shared/authHelpers';
 import CustomerMessaging from '../components/CustomerMessaging';
 import ConsentForm from '../components/ConsentForm';
+import QuickUpdateConsentForm from '../components/QuickUpdateConsentForm';
 
 type Slot = { startISO: string; endISO?: string; resourceId?: string | null };
 type Hold = { id: string; expiresAt: string; status?: string }; // from Cloud Function
@@ -798,10 +802,12 @@ export default function Book() {
   // Get customer ID when user changes
   useEffect(() => {
     if (user?.email || user?.phoneNumber) {
+      // IMPORTANT: Always pass authUid for authenticated users to prevent duplicate profiles
       findOrCreateCustomerClient({
         email: user.email || undefined,
         name: user.displayName || 'Customer',
         phone: user.phoneNumber || undefined,
+        authUid: user.uid, // Always pass authUid for authenticated users
       }).then(result => {
         setCustomerId(result.customerId);
       }).catch(err => {
@@ -1251,39 +1257,78 @@ export default function Book() {
   // ---------- Consent form ----------
   const [consentForm, setConsentForm] = useState<ConsentFormTemplate | null>(null);
   const [showConsentForm, setShowConsentForm] = useState(false);
+  const [showQuickUpdateForm, setShowQuickUpdateForm] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [hasExistingConsent, setHasExistingConsent] = useState(false);
+  const [consentCategory, setConsentCategory] = useState<string | null>(null);
+  const [isFirstVisit, setIsFirstVisit] = useState<boolean | null>(null);
+  const [isNewService, setIsNewService] = useState<boolean>(false);
 
-  // Load active consent form
+  // Load active consent form based on selected services
   useEffect(() => {
-    getActiveConsentForm(db, 'brow_services').then(form => {
+    if (selectedServices.length === 0) {
+      // No services selected yet, load default
+      getActiveConsentForm(db, 'brow_services').then(form => {
+        setConsentForm(form);
+        setConsentCategory('brow_services');
+      }).catch(error => {
+        console.warn('Failed to load consent form:', error);
+        setConsentForm(null);
+      });
+      return;
+    }
+
+    // Determine consent category from selected services
+    const category = selectedServices[0]?.category 
+      ? (selectedServices[0].category.toLowerCase() === 'lash services' ? 'lash_services' : 'brow_services')
+      : 'brow_services';
+    
+    setConsentCategory(category);
+    getActiveConsentForm(db, category).then(form => {
       setConsentForm(form);
     }).catch(error => {
       console.warn('Failed to load consent form:', error);
-      // Set to null so booking can proceed without consent form
       setConsentForm(null);
     });
-  }, [db]);
+  }, [db, selectedServices]);
 
-  // Check if customer already has consent when customerId changes
+  // Check consent status when customerId or selected services change
   useEffect(() => {
-    if (customerId) {
-      hasValidConsent(db, customerId, 'brow_services').then(valid => {
-        setHasExistingConsent(valid);
-        setConsentGiven(valid);
+    if (customerId && selectedServices.length > 0 && consentCategory) {
+      // Check if customer has previous appointments
+      hasPreviousAppointments(db, customerId).then(hasPrevious => {
+        setIsFirstVisit(!hasPrevious);
+        
+        // Check if customer has consent for this category
+        hasValidConsent(db, customerId, consentCategory).then(hasConsent => {
+          setHasExistingConsent(hasConsent);
+          
+          // Determine if this is a new service (returning customer but no consent for this category)
+          const newService = hasPrevious && !hasConsent;
+          setIsNewService(newService);
+          
+          // If they have consent, they don't need to fill out forms again
+          setConsentGiven(hasConsent);
+        }).catch(error => {
+          if (error?.code !== 'permission-denied') {
+            console.error('Error checking consent:', error);
+          }
+          setHasExistingConsent(false);
+          setConsentGiven(false);
+        });
       }).catch(error => {
-        // Permission errors are expected during auth transitions or for non-customer users
-        // Silently handle them and default to no existing consent
         if (error?.code !== 'permission-denied') {
-          console.error('Error checking consent:', error);
+          console.error('Error checking previous appointments:', error);
         }
-        setHasExistingConsent(false);
-        setConsentGiven(false);
+        setIsFirstVisit(null);
       });
     } else {
       setHasExistingConsent(false);
+      setConsentGiven(false);
+      setIsFirstVisit(null);
+      setIsNewService(false);
     }
-  }, [customerId, db]);
+  }, [customerId, db, selectedServices, consentCategory]);
 
   // ensure we use a Customers doc id (not auth uid)
   async function ensureCustomerId(): Promise<string> {
@@ -1351,7 +1396,7 @@ export default function Book() {
   }
 
   async function handleConsentAgree(signature: string) {
-    if (!consentForm) return;
+    if (!consentForm || !consentCategory) return;
     
     try {
       // Get customer ID first (create guest customer if needed)
@@ -1363,17 +1408,13 @@ export default function Book() {
         throw new Error('Customer ID is required for consent');
       }
       
-      // ALWAYS use customer doc ID for consent (not auth.uid)
-      // This ensures consistency whether user is authenticated or guest
-      const consentCustomerId = custId;
-      
-      // Record consent
+      // Record full consent
       const consentData: any = {
-        customerId: consentCustomerId,
+        customerId: custId,
         customerName: user?.displayName || gName || 'Guest',
         consentFormId: consentForm.id,
         consentFormVersion: consentForm.version,
-        consentFormCategory: consentForm.category,
+        consentFormCategory: consentCategory,
         agreed: true,
         signature,
         userAgent: navigator.userAgent,
@@ -1388,7 +1429,7 @@ export default function Book() {
         consentData.customerPhone = gPhone;
       }
       
-      console.log('Recording consent with data:', consentData);
+      console.log('Recording full consent with data:', consentData);
       await recordCustomerConsent(db, consentData);
       console.log('Consent recorded successfully');
       
@@ -1399,6 +1440,43 @@ export default function Book() {
       await proceedWithBooking(custId);
     } catch (error: any) {
       console.error('Error recording consent:', error);
+      setError('Failed to record consent. Please try again.');
+    }
+  }
+
+  async function handleQuickUpdateAgree(initials: string) {
+    if (!consentCategory) return;
+    
+    try {
+      // Get customer ID first (create guest customer if needed)
+      console.log('Getting customer ID for quick update consent...');
+      const custId = await ensureCustomerId();
+      console.log('Customer ID for quick update:', custId);
+      
+      if (!custId) {
+        throw new Error('Customer ID is required for consent');
+      }
+      
+      // Record quick update consent
+      await recordQuickUpdateConsent(
+        db,
+        custId,
+        consentCategory,
+        user?.displayName || gName || 'Guest',
+        initials,
+        user?.email || gEmail,
+        gPhone
+      );
+      
+      console.log('Quick update consent recorded successfully');
+      
+      setConsentGiven(true);
+      setShowQuickUpdateForm(false);
+      
+      // Now proceed with booking
+      await proceedWithBooking(custId);
+    } catch (error: any) {
+      console.error('Error recording quick update consent:', error);
       setError('Failed to record consent. Please try again.');
     }
   }
@@ -1546,8 +1624,24 @@ export default function Book() {
       const needsConsent = consentForm && !consentGiven;
       
       if (needsConsent) {
-        // Show consent form instead of booking immediately
-        setShowConsentForm(true);
+        // Determine which form to show based on customer history
+        // Show quick update form if:
+        // - Customer is NOT on first visit (has previous appointments)
+        // - Customer has existing consent for this category
+        // - This is NOT a new service category
+        if (isFirstVisit === false && hasExistingConsent && !isNewService) {
+          // Returning customer with existing consent - show quick update form
+          console.log('Showing quick update form for returning customer');
+          setShowQuickUpdateForm(true);
+        } else {
+          // First visit OR new service category - show full consent form
+          console.log('Showing full consent form (first visit or new service)', {
+            isFirstVisit,
+            hasExistingConsent,
+            isNewService
+          });
+          setShowConsentForm(true);
+        }
         return;
       }
       
@@ -2745,6 +2839,17 @@ export default function Book() {
         />
       )}
 
+      {/* Quick Update Consent Form Modal */}
+      <QuickUpdateConsentForm
+        customerName={user?.displayName || gName || 'Guest'}
+        onAgree={handleQuickUpdateAgree}
+        onDecline={() => {
+          setShowQuickUpdateForm(false);
+          setError('Consent confirmation is required to proceed with booking.');
+        }}
+        isOpen={showQuickUpdateForm}
+      />
+
       {/* Authentication Prompt Modal */}
       {showAuthPrompt && existingCustomer && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowAuthPrompt(false)}>
@@ -2880,33 +2985,26 @@ export default function Book() {
                 onClick={async () => {
                   if (!customerId || !db) return;
                   
-                  // Validate that all required fields are filled
-                  const isComplete = missingFields.every(field => {
-                    if (field === 'birthday') return !!profileFormData.birthday;
-                    if (field === 'phone') return !!profileFormData.phone;
-                    if (field === 'email') return !!profileFormData.email;
-                    return true;
-                  });
+                  // Prepare update data - only include fields that have values
+                  const updates: any = {};
+                  if (missingFields.includes('birthday') && profileFormData.birthday) {
+                    updates.birthday = profileFormData.birthday;
+                  }
+                  if (missingFields.includes('phone') && profileFormData.phone) {
+                    updates.phone = profileFormData.phone;
+                  }
+                  if (missingFields.includes('email') && profileFormData.email) {
+                    updates.email = profileFormData.email;
+                  }
 
-                  if (!isComplete) {
-                    alert('Please fill in all required fields.');
+                  // Check if at least one field was filled
+                  if (Object.keys(updates).length === 0) {
+                    alert('Please fill in at least one field to save.');
                     return;
                   }
                   
                   try {
-                    // Prepare update data
-                    const updates: any = {};
-                    if (missingFields.includes('birthday') && profileFormData.birthday) {
-                      updates.birthday = profileFormData.birthday;
-                    }
-                    if (missingFields.includes('phone') && profileFormData.phone) {
-                      updates.phone = profileFormData.phone;
-                    }
-                    if (missingFields.includes('email') && profileFormData.email) {
-                      updates.email = profileFormData.email;
-                    }
-
-                    // Update customer profile
+                    // Update customer profile with whatever fields were filled
                     await updateCustomer(db, customerId, updates);
                     
                     // Mark as shown for this session

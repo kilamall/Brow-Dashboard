@@ -16,6 +16,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { Appointment, AppointmentEditRequest, AnalyticsTargets, BusinessHours, Customer, Service, ServiceCategory, BusinessInfo, HomePageContent, Staff, DayClosure, SpecialHours, Promotion, PromotionUsage, BirthdayPromoUsage } from './types';
+import { filterActiveCustomers, sortCustomersByName, filterCustomersBySearch } from './customerFilters';
 
 export const E_OVERLAP = 'E_OVERLAP';
 
@@ -269,9 +270,24 @@ export async function createCustomer(db: Firestore, input: Partial<Customer>): P
   return ref.id;
 }
 
+// Normalize phone to E.164 format for consistent querying
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`; // US number
+  if (digits.length === 11 && digits[0] === '1') return `+${digits}`;
+  return `+${digits}`;
+}
+
+// Normalize email for consistent querying
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
 export async function updateCustomer(db: Firestore, id: string, patch: Partial<Customer>) {
   const ref = doc(db, 'customers', id);
-  await updateDoc(ref, {
+  
+  // ENTERPRISE FIX: Update canonical fields when email/phone changes
+  const updates: any = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.email !== undefined ? { email: patch.email ?? null } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
@@ -283,7 +299,17 @@ export async function updateCustomer(db: Firestore, id: string, patch: Partial<C
     ...(patch.lastVisit !== undefined ? { lastVisit: patch.lastVisit ?? null } : {}),
     ...(patch.totalVisits !== undefined ? { totalVisits: patch.totalVisits ?? 0 } : {}),
     updatedAt: serverTimestamp(),
-  });
+  };
+  
+  // Update canonical fields when email/phone changes
+  if (patch.email !== undefined) {
+    updates.canonicalEmail = patch.email ? normalizeEmail(patch.email) : null;
+  }
+  if (patch.phone !== undefined) {
+    updates.canonicalPhone = patch.phone ? normalizePhone(patch.phone) : null;
+  }
+  
+  await updateDoc(ref, updates);
 }
 
 // ========================= Customer Notes Management =========================
@@ -518,36 +544,52 @@ export async function findCustomerByPhone(db: Firestore, phone: string): Promise
 
 export function watchCustomers(db: Firestore, term: string | undefined, cb: (rows: Customer[]) => void) {
   const base = collection(db, 'customers');
-  const searchTerm = term?.trim().toLowerCase() || '';
+  const searchTerm = term?.trim() || '';
 
-  // Fetch limited customers and filter client-side for case-insensitive search
-  // Limit to 500 to reduce read costs (configurable based on needs)
-  const all = query(base, orderBy('name', 'asc'), limit(500));
-  return onSnapshot(all, (snap) => {
-    let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Customer);
-    
-    // Filter out migrated customers to prevent confusion in admin UI
-    // Only show the "canonical" version of each customer (not the migrated duplicates)
-    const beforeFilter = customers.length;
-    customers = customers.filter(customer => {
-      // Hide customers that have been migrated (they're duplicates/old versions)
-      const isMigrated = customer.identityStatus === 'migrated' || customer.migratedTo;
-      return !isMigrated;
-    });
-    
-    
-    
-    // Case-insensitive filtering
-    if (searchTerm) {
-      customers = customers.filter(c => 
-        c.name?.toLowerCase().includes(searchTerm) ||
-        c.email?.toLowerCase().includes(searchTerm) ||
-        c.phone?.includes(searchTerm)
-      );
+  // Fetch ALL customers without any orderBy or constraints
+  // This ensures we get every customer, regardless of field values
+  const all = query(base, limit(1000));
+  
+  return onSnapshot(
+    all,
+    (snap) => {
+      try {
+        console.log(`[watchCustomers] Fetched ${snap.size} customers from Firestore`);
+        
+        let customers = snap.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, ...data } as Customer;
+        });
+        
+        console.log(`[watchCustomers] Mapped ${customers.length} customers`);
+        
+        // Apply shared filtering logic
+        const beforeFilter = customers.length;
+        customers = filterActiveCustomers(customers);
+        console.log(`[watchCustomers] After filter: ${customers.length} customers (filtered out ${beforeFilter - customers.length})`);
+        
+        // Sort by name
+        customers = sortCustomersByName(customers);
+        
+        // Apply search filter if provided
+        if (searchTerm) {
+          const beforeSearch = customers.length;
+          customers = filterCustomersBySearch(customers, searchTerm);
+          console.log(`[watchCustomers] After search "${searchTerm}": ${customers.length} customers (filtered from ${beforeSearch})`);
+        }
+        
+        console.log(`[watchCustomers] Returning ${customers.length} customers to UI`);
+        cb(customers);
+      } catch (error) {
+        console.error('[watchCustomers] Error processing customers:', error);
+        cb([]); // Return empty array on error
+      }
+    },
+    (error) => {
+      console.error('[watchCustomers] Firestore snapshot error:', error);
+      cb([]); // Return empty array on error
     }
-    
-    cb(customers);
-  });
+  );
 }
 
 // ========================= Appointments =========================

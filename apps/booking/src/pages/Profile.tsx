@@ -454,35 +454,7 @@ export default function Profile() {
           </div>
         )}
 
-        {/* Re-authentication Warning */}
-        {user && (() => {
-          const lastSignIn = user.metadata.lastSignInTime;
-          const now = new Date();
-          const lastSignInTime = new Date(lastSignIn || 0);
-          const timeDiff = now.getTime() - lastSignInTime.getTime();
-          const hoursSinceSignIn = timeDiff / (1000 * 60 * 60);
-          return hoursSinceSignIn > 1;
-        })() && (
-          <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
-            <div className="flex items-start gap-3">
-              <svg className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div className="flex-1">
-                <h3 className="font-semibold text-blue-900 mb-1">Security Notice</h3>
-                <p className="text-sm text-blue-800 mb-3">
-                  For security reasons, you'll need to sign out and sign back in before changing your email address.
-                </p>
-                <button
-                  onClick={handleSignOut}
-                  className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                >
-                  Sign Out & Sign Back In
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Note: Re-authentication is now handled automatically via idle session timeout */}
 
         {/* Success/Error Messages */}
         {success && (

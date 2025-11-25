@@ -523,10 +523,14 @@ export const sendEditApprovalEmail = onCall(
         html: emailContent,
       };
 
-      await sendEmail(msg);
+      const emailResult = await sendEmail(msg);
+      if (emailResult.success) {
       console.log('Edit approval email sent successfully to:', customerData.email);
-      
       return { success: true, message: 'Email sent successfully' };
+      } else {
+        console.error('Failed to send edit approval email:', emailResult.error);
+        throw new Error(`Failed to send email: ${emailResult.error}`);
+      }
     } catch (error) {
       console.error('Error sending edit approval email:', error);
       throw error;

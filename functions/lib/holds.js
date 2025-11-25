@@ -226,6 +226,31 @@ export const finalizeBookingFromHold = onCall({ region: 'us-central1', cors: tru
             return { appointmentId: apptRef.id, appliedPromotions };
         });
         console.log('✅ Booking finalized successfully (PENDING admin confirmation):', result.appointmentId);
+        // Update customer profile name if it changed (for authenticated users)
+        // This prevents duplicate profiles when users change their name in the booking form
+        try {
+            if (customer && customer.name && finalCustomerIdForPromos) {
+                const customerRef = db.collection('customers').doc(finalCustomerIdForPromos);
+                const customerDoc = await customerRef.get();
+                if (customerDoc.exists) {
+                    const customerData = customerDoc.data();
+                    // Only update if name is different and not generic
+                    if (customerData && customer.name !== customerData.name &&
+                        customer.name !== 'Guest' && customer.name !== 'Customer' &&
+                        customerData.name !== customer.name) {
+                        await customerRef.update({
+                            name: customer.name,
+                            updatedAt: new Date().toISOString()
+                        });
+                        console.log('✅ Updated customer profile name from', customerData.name, 'to', customer.name);
+                    }
+                }
+            }
+        }
+        catch (updateError) {
+            console.error('⚠️ Error updating customer name during booking finalization:', updateError);
+            // Don't fail the booking if name update fails
+        }
         // Record promotion usage after appointment is created (outside transaction for performance)
         if (appliedPromotions && Array.isArray(appliedPromotions) && appliedPromotions.length > 0 && finalCustomerIdForPromos) {
             try {

@@ -2,6 +2,12 @@
 
 A comprehensive monorepo for managing a beauty salon business with integrated customer messaging system.
 
+**📚 Documentation:** See [DOCUMENTATION_INDEX.md](./DOCUMENTATION_INDEX.md) for complete documentation index.
+
+**🌐 Live Apps:**
+- **Admin Dashboard**: https://bueno-brows-admin.web.app
+- **Customer Booking**: https://bueno-brows-7cce7.web.app
+
 ## 🏗️ Architecture
 
 This monorepo contains:
