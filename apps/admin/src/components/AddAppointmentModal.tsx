@@ -560,6 +560,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   }
 
   return (
+    <>
     <Transition show={open} as={Fragment}>
       <Dialog onClose={onClose} className="relative z-50">
         <Transition.Child as={Fragment} enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100" leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0">
@@ -1228,5 +1229,6 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           </div>
         </div>
       )}
+    </>
   );
 }
