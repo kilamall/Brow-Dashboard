@@ -49,6 +49,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
 
   // Form - Initialize with prefilled data if provided
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({}); // Phase 2: Quantity tracking
   const [customerTerm, setCustomerTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [timeHHMM, setTimeHHMM] = useState('10:00');
@@ -100,6 +101,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       setPhone('');
       setNotes('');
       setSelectedServiceIds([]);
+      setServiceQuantities({}); // Phase 2: Clear quantities
       setTimeHHMM('09:00'); // Default time
       setSelectedDate(format(date, 'yyyy-MM-dd')); // Reset to prop date
       setErr('');
@@ -124,18 +126,62 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     }
   }, [open, prefillData, allCustomers]);
 
+  // Check if we're using quantities or legacy selection
+  const hasQuantities = Object.keys(serviceQuantities).length > 0;
+  
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
     [services, selectedServiceIds]
   );
-  const totalDuration = useMemo(
-    () => selectedServices.reduce((sum, service) => sum + service.duration, 0),
-    [selectedServices]
-  );
-  const totalPrice = useMemo(
-    () => selectedServices.reduce((sum, service) => sum + service.price, 0),
-    [selectedServices]
-  );
+  
+  const totalDuration = useMemo(() => {
+    if (hasQuantities) {
+      // Use quantity-based calculation
+      return Object.entries(serviceQuantities).reduce((sum, [serviceId, quantity]) => {
+        const service = services.find(s => s.id === serviceId);
+        return sum + (service ? service.duration * quantity : 0);
+      }, 0);
+    } else {
+      // Fall back to legacy calculation
+      return selectedServices.reduce((sum, service) => sum + service.duration, 0);
+    }
+  }, [hasQuantities, serviceQuantities, services, selectedServices]);
+  
+  const totalPrice = useMemo(() => {
+    if (hasQuantities) {
+      // Use quantity-based calculation
+      return Object.entries(serviceQuantities).reduce((sum, [serviceId, quantity]) => {
+        const service = services.find(s => s.id === serviceId);
+        return sum + (service ? service.price * quantity : 0);
+      }, 0);
+    } else {
+      // Fall back to legacy calculation
+      return selectedServices.reduce((sum, service) => sum + service.price, 0);
+    }
+  }, [hasQuantities, serviceQuantities, services, selectedServices]);
+
+  // Quantity control handlers for Phase 2
+  const handleIncreaseQuantity = (serviceId: string) => {
+    const current = serviceQuantities[serviceId] || 0;
+    setServiceQuantities({
+      ...serviceQuantities,
+      [serviceId]: current + 1
+    });
+  };
+  
+  const handleDecreaseQuantity = (serviceId: string) => {
+    const current = serviceQuantities[serviceId] || 0;
+    if (current <= 1) {
+      // Remove service entirely
+      const { [serviceId]: removed, ...rest } = serviceQuantities;
+      setServiceQuantities(rest);
+    } else {
+      setServiceQuantities({
+        ...serviceQuantities,
+        [serviceId]: current - 1
+      });
+    }
+  };
 
   // Group services by category
   const servicesByCategory = useMemo(() => {
@@ -234,8 +280,12 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     try {
       setSaving(true); setErr('');
       
-      // Validate that at least one service is selected
-      if (selectedServiceIds.length === 0) {
+      // Validate that at least one service is selected (check both legacy and quantity-based)
+      const hasServices = hasQuantities 
+        ? Object.keys(serviceQuantities).length > 0
+        : selectedServiceIds.length > 0;
+      
+      if (!hasServices) {
         setErr('Please select at least one service');
         return;
       }
@@ -280,18 +330,39 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       // Convert from business timezone to UTC for storage
       const start = fromZonedTime(localTimeStr, businessTimezone);
 
+      // Expand quantities to service IDs array for Phase 2
+      const finalServiceIds = hasQuantities
+        ? Object.entries(serviceQuantities).flatMap(([serviceId, quantity]) =>
+            Array(quantity).fill(serviceId)
+          )
+        : selectedServiceIds;
+      
+      console.log('🎯 Creating appointment with service IDs:', {
+        hasQuantities,
+        serviceQuantities: hasQuantities ? serviceQuantities : 'using legacy',
+        finalServiceIds
+      });
+
       const id = await createAppointmentTx(db, {
         customerId,
-        serviceIds: selectedServiceIds,
-        serviceId: selectedServiceIds[0], // Keep for backward compatibility
+        serviceIds: finalServiceIds,
+        serviceId: finalServiceIds[0], // Keep for backward compatibility
         start: start.toISOString(),
         duration: totalDuration,
         status: 'confirmed',
         bookedPrice: totalPrice, // Legacy field - total price for all services
-        servicePrices: selectedServices.reduce((acc, service) => {
-          acc[service.id] = service.price; // Store individual service prices
-          return acc;
-        }, {} as Record<string, number>),
+        servicePrices: hasQuantities
+          ? Object.entries(serviceQuantities).reduce((acc, [serviceId, quantity]) => {
+              const service = services.find(s => s.id === serviceId);
+              if (service) {
+                acc[serviceId] = service.price; // Store price per service (not multiplied)
+              }
+              return acc;
+            }, {} as Record<string, number>)
+          : selectedServices.reduce((acc, service) => {
+              acc[service.id] = service.price; // Store individual service prices
+              return acc;
+            }, {} as Record<string, number>),
         totalPrice: totalPrice, // Initially same as bookedPrice
         tip: 0, // Default tip amount
         isPriceEdited: false, // Not edited initially
@@ -309,7 +380,12 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           customerName: name || selectedCustomer?.name || customerTerm,
           start: start.toISOString(),
           duration: totalDuration,
-          serviceNames: selectedServices.map(s => s.name).join(', '),
+          serviceNames: hasQuantities
+            ? Object.entries(serviceQuantities).map(([serviceId, quantity]) => {
+                const service = services.find(s => s.id === serviceId);
+                return `${service?.name || 'Service'}${quantity > 1 ? ` (×${quantity})` : ''}`;
+              }).join(', ')
+            : selectedServices.map(s => s.name).join(', '),
           totalPrice: totalPrice
         });
         // Confirmation email sent
@@ -448,7 +524,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   {/* Services */}
                   <div>
                     <label className="text-sm font-medium text-slate-700 mb-2 block">
-                      Select Services {selectedServices.length > 0 && <span className="text-terracotta">({selectedServices.length} selected)</span>}
+                      Select Services {(() => {
+                        const totalQty = Object.values(serviceQuantities).reduce((sum, qty) => sum + qty, 0);
+                        return totalQty > 0 && <span className="text-terracotta">({totalQty} service{totalQty !== 1 ? 's' : ''})</span>;
+                      })()}
                     </label>
                     
                     {/* Service Cards by Category */}
@@ -486,27 +565,20 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                               <div className="p-3 bg-white">
                                 <div className="grid gap-2">
                                   {categoryServices.map((s) => {
-                                    const isSelected = selectedServiceIds.includes(s.id);
+                                    const quantity = serviceQuantities[s.id] || 0;
+                                    const isSelected = quantity > 0;
                                     return (
-                                      <button
+                                      <div
                                         key={s.id}
-                                        type="button"
-                                        onClick={() => {
-                                          if (isSelected) {
-                                            setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
-                                          } else {
-                                            setSelectedServiceIds(prev => [...prev, s.id]);
-                                          }
-                                        }}
                                         className={`
-                                          relative p-3 rounded-lg border-2 text-left transition-all
+                                          relative p-3 rounded-lg border-2 transition-all
                                           ${isSelected 
                                             ? 'border-terracotta bg-terracotta/5 shadow-sm' 
-                                            : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                                            : 'border-slate-200 bg-white'
                                           }
                                         `}
                                       >
-                                        <div className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start justify-between gap-3">
                                           <div className="flex-1">
                                             <div className="font-medium text-slate-800 mb-1">{s.name}</div>
                                             <div className="flex items-center gap-3 text-xs text-slate-600">
@@ -521,20 +593,35 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                                 </svg>
                                                 ${s.price.toFixed(2)}
+                                                {quantity > 1 && (
+                                                  <span className="text-terracotta font-bold">× {quantity} = ${(s.price * quantity).toFixed(2)}</span>
+                                                )}
                                               </span>
                                             </div>
                                           </div>
-                                          {isSelected && (
-                                            <div className="flex-shrink-0">
-                                              <div className="w-5 h-5 rounded-full bg-terracotta flex items-center justify-center">
-                                                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                                </svg>
-                                              </div>
-                                            </div>
-                                          )}
+                                          {/* Quantity Controls */}
+                                          <div className="flex items-center gap-1.5 bg-white rounded-lg shadow-sm p-1 flex-shrink-0">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDecreaseQuantity(s.id)}
+                                              disabled={quantity <= 0}
+                                              className="w-7 h-7 rounded-md border border-slate-300 hover:border-terracotta hover:bg-terracotta/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center font-bold text-slate-600 hover:text-terracotta text-sm"
+                                            >
+                                              −
+                                            </button>
+                                            <span className="w-6 text-center font-bold text-sm text-slate-800">
+                                              {quantity}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleIncreaseQuantity(s.id)}
+                                              className="w-7 h-7 rounded-md border border-terracotta bg-terracotta hover:bg-terracotta/90 transition-all flex items-center justify-center font-bold text-white shadow-sm text-sm"
+                                            >
+                                              +
+                                            </button>
+                                          </div>
                                         </div>
-                                      </button>
+                                      </div>
                                     );
                                   })}
                                 </div>
@@ -545,35 +632,45 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                       })}
                     </div>
                     
-                    {/* Selected Services Summary Bar */}
-                    {selectedServices.length > 0 && (
+                    {/* Selected Services Summary Bar with Quantities */}
+                    {Object.keys(serviceQuantities).length > 0 && (
                       <div className="mt-3 p-3 bg-terracotta/10 border border-terracotta/20 rounded-lg">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm font-medium text-slate-700">Selected Services</span>
                           <button
                             type="button"
-                            onClick={() => setSelectedServiceIds([])}
+                            onClick={() => setServiceQuantities({})}
                             className="text-xs text-slate-500 hover:text-red-600 transition-colors"
                           >
                             Clear All
                           </button>
                         </div>
                         <div className="flex flex-wrap gap-2 mb-2">
-                          {selectedServices.map((service) => (
-                            <div
-                              key={service.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-white rounded-md text-xs border border-slate-200"
-                            >
-                              <span className="font-medium">{service.name}</span>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedServiceIds(prev => prev.filter(id => id !== service.id))}
-                                className="ml-1 text-slate-400 hover:text-red-600 transition-colors"
+                          {Object.entries(serviceQuantities).map(([serviceId, quantity]) => {
+                            const service = services.find(s => s.id === serviceId);
+                            if (!service) return null;
+                            return (
+                              <div
+                                key={serviceId}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-md text-xs border border-slate-200"
                               >
-                                ×
-                              </button>
-                            </div>
-                          ))}
+                                <span className="font-medium">{service.name}</span>
+                                {quantity > 1 && (
+                                  <span className="text-terracotta font-bold">× {quantity}</span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const { [serviceId]: removed, ...rest } = serviceQuantities;
+                                    setServiceQuantities(rest);
+                                  }}
+                                  className="ml-1 text-slate-400 hover:text-red-600 transition-colors"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                         <div className="flex items-center justify-between pt-2 border-t border-terracotta/20">
                           <div className="flex items-center gap-4 text-sm">
