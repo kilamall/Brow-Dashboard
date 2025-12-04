@@ -79,9 +79,15 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
     try {
       const markAttendance = httpsCallable(functions, 'markAttendance');
       
+      // Get price/tip from appointment for receipt generation
+      const actualPrice = appointment.bookedPrice || appointment.totalPrice || 0;
+      const tipAmount = appointment.tip || 0;
+      
       const result = await markAttendance({
         appointmentId,
         attendance: newAttendance,
+        actualPrice,
+        tipAmount,
         overrideReason: reason.trim()
       });
       
@@ -934,14 +940,16 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
               </div>
 
               {/* Customer Info */}
-              {appointment.customerName && (
+              {(customer?.name || appointment.customerName || appointment.customerEmail) && (
                 <div className="bg-white border border-slate-200 rounded-xl p-6">
                   <h3 className="font-semibold text-lg text-slate-800 mb-3 flex items-center gap-2">
                     <span className="text-xl">👤</span>
                     Customer
                   </h3>
                   <div className="space-y-2">
-                    <div className="font-medium text-slate-800">{appointment.customerName}</div>
+                    <div className="font-medium text-slate-800">
+                      {customer?.name || appointment.customerName || appointment.customerEmail || 'Unknown Customer'}
+                    </div>
                     {appointment.customerEmail && (
                       <div className="text-sm text-slate-600">📧 {appointment.customerEmail}</div>
                     )}

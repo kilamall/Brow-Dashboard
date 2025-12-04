@@ -1,4 +1,5 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { sendAppointmentReminderEmail, getEmailTemplate, replaceTemplateVariables } from './email.js';
@@ -198,20 +199,36 @@ function calculateTimeUntilAppointment(appointmentStart: string, timezone: strin
 
 // Send 7-day reminder
 async function send7DayReminder(appointment: any & { id: string }, customer: any & { id: string }): Promise<void> {
+  // PREFER EMAIL (low cost) - only use SMS as fallback if no email
+  const customerEmail = customer.email;
   const phoneNumber = customer.phone || customer.phoneNumber;
   
-  if (!phoneNumber) {
-    console.log(`No phone number for customer ${customer.id}, skipping 7-day reminder`);
-    return;
+  let reminderSent = false;
+  
+  // Try email first (preferred due to low cost)
+  if (customerEmail) {
+    try {
+      const emailSent = await sendEmailReminder(appointment, customer, '7 days');
+      if (emailSent) {
+        reminderSent = true;
+        console.log(`✅ 7-day reminder sent via EMAIL to ${customerEmail} for appointment ${appointment.id}`);
+      } else {
+        console.log(`⚠️ Email reminder failed for customer ${customer.id}, will try SMS fallback`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send 7-day email reminder, will try SMS fallback:`, error);
+    }
   }
   
-  // Build reminder message
-  const serviceName = getServiceNames(appointment.services);
-  const dateTime = formatDateTime(appointment.start);
-  const date = formatDate(appointment.start);
-  const time = formatTime(appointment.start);
-  
-  const message = `Hi ${customer.name || 'there'}! 👋
+  // Fallback to SMS only if email failed or doesn't exist
+  if (!reminderSent && phoneNumber) {
+    // Build reminder message
+    const serviceName = getServiceNames(appointment.services);
+    const dateTime = formatDateTime(appointment.start);
+    const date = formatDate(appointment.start);
+    const time = formatTime(appointment.start);
+    
+    const message = `Hi ${customer.name || 'there'}! 👋
 
 Friendly reminder from ${BUSINESS_NAME}:
 
@@ -224,30 +241,31 @@ Need to reschedule? Reply or call us at ${BUSINESS_PHONE_NUMBER}.
 
 - ${BUSINESS_NAME} Team ✨`;
 
-  const smsMessage: SMSMessage = {
-    to: phoneNumber,
-    from: BUSINESS_PHONE_NUMBER,
-    body: message,
-    customerId: customer.id,
-    appointmentId: appointment.id,
-    type: 'reminder'
-  };
+    const smsMessage: SMSMessage = {
+      to: phoneNumber,
+      from: BUSINESS_PHONE_NUMBER,
+      body: message,
+      customerId: customer.id,
+      appointmentId: appointment.id,
+      type: 'reminder'
+    };
+    
+    const sent = await sendSMS(smsMessage);
+    
+    if (sent) {
+      reminderSent = true;
+      console.log(`✅ 7-day reminder sent via SMS to ${phoneNumber} for appointment ${appointment.id}`);
+    }
+  }
   
-  const sent = await sendSMS(smsMessage);
-  
-  if (sent) {
-    // Mark reminder as sent
+  // Mark reminder as sent if either method succeeded
+  if (reminderSent) {
     await db.collection('appointments').doc(appointment.id).update({
       sevenDayReminderSent: true,
       sevenDayReminderSentAt: new Date().toISOString()
     });
-    
-    console.log(`7-day reminder sent to ${phoneNumber} for appointment ${appointment.id}`);
-  }
-  
-  // Also send email reminder if customer has email
-  if (customer.email) {
-    await sendEmailReminder(appointment, customer, '7 days');
+  } else {
+    console.log(`⚠️ No contact method available for customer ${customer.id}, skipping 7-day reminder`);
   }
 }
 
@@ -256,10 +274,10 @@ async function sendEmailReminder(
   appointment: any & { id: string },
   customer: any & { id: string },
   reminderType: '7 days' | '24 hours' | '2 hours'
-): Promise<void> {
+): Promise<boolean> {
   if (!customer.email) {
     console.log(`No email for customer ${customer.id}, skipping email reminder`);
-    return;
+    return false;
   }
 
   try {
@@ -337,7 +355,7 @@ async function sendEmailReminder(
       emailSubject = replaceTemplateVariables(customTemplate.subject, templateVariables);
     } else {
       // Fallback to function call
-      await sendAppointmentReminderEmail(
+      const emailSent = await sendAppointmentReminderEmail(
         customer.email,
         customer.name || 'there',
         {
@@ -346,7 +364,7 @@ async function sendEmailReminder(
           time: formattedTime
         }
       );
-      return;
+      return emailSent;
     }
 
     // Send email using SendGrid
@@ -373,30 +391,49 @@ async function sendEmailReminder(
 
       await sgMail.send(msg);
       console.log(`✅ Reminder email sent to ${customer.email} for appointment ${appointment.id} (${reminderType})`);
+      return true;
     } else {
       console.warn('SENDGRID_API_KEY not configured, skipping email reminder');
+      return false;
     }
   } catch (error) {
     console.error(`Error sending email reminder (${reminderType}):`, error);
+    return false;
   }
 }
 
 // Send 24-hour reminder
 async function send24HourReminder(appointment: any & { id: string }, customer: any & { id: string }): Promise<void> {
+  // PREFER EMAIL (low cost) - only use SMS as fallback if no email
+  const customerEmail = customer.email;
   const phoneNumber = customer.phone || customer.phoneNumber;
   
-  if (!phoneNumber) {
-    console.log(`No phone number for customer ${customer.id}, skipping reminder`);
-    return;
+  let reminderSent = false;
+  
+  // Try email first (preferred due to low cost)
+  if (customerEmail) {
+    try {
+      const emailSent = await sendEmailReminder(appointment, customer, '24 hours');
+      if (emailSent) {
+        reminderSent = true;
+        console.log(`✅ 24-hour reminder sent via EMAIL to ${customerEmail} for appointment ${appointment.id}`);
+      } else {
+        console.log(`⚠️ Email reminder failed for customer ${customer.id}, will try SMS fallback`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send 24-hour email reminder, will try SMS fallback:`, error);
+    }
   }
   
-  // Build reminder message
-  const serviceName = getServiceNames(appointment.services);
-  const dateTime = formatDateTime(appointment.start);
-  const date = formatDate(appointment.start);
-  const time = formatTime(appointment.start);
-  
-  const message = `Hi ${customer.name || 'there'}! 👋
+  // Fallback to SMS only if email failed or doesn't exist
+  if (!reminderSent && phoneNumber) {
+    // Build reminder message
+    const serviceName = getServiceNames(appointment.services);
+    const dateTime = formatDateTime(appointment.start);
+    const date = formatDate(appointment.start);
+    const time = formatTime(appointment.start);
+    
+    const message = `Hi ${customer.name || 'there'}! 👋
 
 This is your friendly reminder from ${BUSINESS_NAME}.
 
@@ -409,71 +446,89 @@ Need to reschedule? Reply or call us at ${BUSINESS_PHONE_NUMBER}.
 
 - ${BUSINESS_NAME} Team ✨`;
 
-  const smsMessage: SMSMessage = {
-    to: phoneNumber,
-    from: BUSINESS_PHONE_NUMBER,
-    body: message,
-    customerId: customer.id,
-    appointmentId: appointment.id,
-    type: 'reminder'
-  };
+    const smsMessage: SMSMessage = {
+      to: phoneNumber,
+      from: BUSINESS_PHONE_NUMBER,
+      body: message,
+      customerId: customer.id,
+      appointmentId: appointment.id,
+      type: 'reminder'
+    };
+    
+    const sent = await sendSMS(smsMessage);
+    
+    if (sent) {
+      reminderSent = true;
+      console.log(`✅ 24-hour reminder sent via SMS to ${phoneNumber} for appointment ${appointment.id}`);
+    }
+  }
   
-  const sent = await sendSMS(smsMessage);
-  
-  if (sent) {
-    // Mark reminder as sent
+  // Mark reminder as sent if either method succeeded
+  if (reminderSent) {
     await db.collection('appointments').doc(appointment.id).update({
       reminderSent: true,
       reminderSentAt: new Date().toISOString()
     });
-    
-    console.log(`24h reminder sent to ${phoneNumber} for appointment ${appointment.id}`);
-  }
-  
-  // Also send email reminder if customer has email
-  if (customer.email) {
-    await sendEmailReminder(appointment, customer, '24 hours');
+  } else {
+    console.log(`⚠️ No contact method available for customer ${customer.id}, skipping 24-hour reminder`);
   }
 }
 
 // Send same-day reminder (2 hours before)
 async function send2HourReminder(appointment: any & { id: string }, customer: any & { id: string }): Promise<void> {
+  // PREFER EMAIL (low cost) - only use SMS as fallback if no email
+  const customerEmail = customer.email;
   const phoneNumber = customer.phone || customer.phoneNumber;
   
-  if (!phoneNumber) {
-    console.log(`No phone number for customer ${customer.id}, skipping reminder`);
-    return;
+  let reminderSent = false;
+  
+  // Try email first (preferred due to low cost)
+  if (customerEmail) {
+    try {
+      const emailSent = await sendEmailReminder(appointment, customer, '2 hours');
+      if (emailSent) {
+        reminderSent = true;
+        console.log(`✅ 2-hour reminder sent via EMAIL to ${customerEmail} for appointment ${appointment.id}`);
+      } else {
+        console.log(`⚠️ Email reminder failed for customer ${customer.id}, will try SMS fallback`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to send 2-hour email reminder, will try SMS fallback:`, error);
+    }
   }
   
-  const serviceName = getServiceNames(appointment.services);
-  const time = formatTime(appointment.start);
-  
-  const message = `Quick reminder! Your ${serviceName} appointment at ${BUSINESS_NAME} is in 2 hours (${time}). See you soon! 💕`;
+  // Fallback to SMS only if email failed or doesn't exist
+  if (!reminderSent && phoneNumber) {
+    const serviceName = getServiceNames(appointment.services);
+    const time = formatTime(appointment.start);
+    
+    const message = `Quick reminder! Your ${serviceName} appointment at ${BUSINESS_NAME} is in 2 hours (${time}). See you soon! 💕`;
 
-  const smsMessage: SMSMessage = {
-    to: phoneNumber,
-    from: BUSINESS_PHONE_NUMBER,
-    body: message,
-    customerId: customer.id,
-    appointmentId: appointment.id,
-    type: 'reminder'
-  };
+    const smsMessage: SMSMessage = {
+      to: phoneNumber,
+      from: BUSINESS_PHONE_NUMBER,
+      body: message,
+      customerId: customer.id,
+      appointmentId: appointment.id,
+      type: 'reminder'
+    };
+    
+    const sent = await sendSMS(smsMessage);
+    
+    if (sent) {
+      reminderSent = true;
+      console.log(`✅ 2-hour reminder sent via SMS to ${phoneNumber} for appointment ${appointment.id}`);
+    }
+  }
   
-  const sent = await sendSMS(smsMessage);
-  
-  if (sent) {
-    // Mark 2-hour reminder as sent
+  // Mark reminder as sent if either method succeeded
+  if (reminderSent) {
     await db.collection('appointments').doc(appointment.id).update({
       twoHourReminderSent: true,
       twoHourReminderSentAt: new Date().toISOString()
     });
-    
-    console.log(`2h reminder sent to ${phoneNumber} for appointment ${appointment.id}`);
-  }
-  
-  // Also send email reminder if customer has email
-  if (customer.email) {
-    await sendEmailReminder(appointment, customer, '2 hours');
+  } else {
+    console.log(`⚠️ No contact method available for customer ${customer.id}, skipping 2-hour reminder`);
   }
 }
 
@@ -559,126 +614,304 @@ export const sendAppointmentReminders = onSchedule({
   timeZone: 'America/Los_Angeles',  // Adjust to your timezone
   region: 'us-central1'
 }, async (event) => {
-    console.log('Running appointment reminder check...');
+  console.log('⏰ Running appointment reminder check...');
+  const startTime = Date.now();
   
   try {
     const now = new Date();
     
-    // Calculate time windows
-    const sevenDaysFromNow = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000));
-    const sevenDaysOneHourFromNow = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000) + (60 * 60 * 1000));
-    const twentyFourHoursFromNow = new Date(now.getTime() + (24 * 60 * 60 * 1000));
-    const twentyFiveHoursFromNow = new Date(now.getTime() + (25 * 60 * 60 * 1000));
-    const twoHoursFromNow = new Date(now.getTime() + (2 * 60 * 60 * 1000));
-    const threeHoursFromNow = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+    // Calculate time windows with buffer to catch appointments
+    // 7-day reminders: between 6 days 23 hours and 7 days 1 hour from now
+    const sevenDaysMin = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000));
+    const sevenDaysMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000) + (1 * 60 * 60 * 1000));
     
-    // Find appointments in the next 7 days + 1 hour that haven't been reminded
-    const appointments7d = await db.collection('appointments')
-      .where('start', '>=', sevenDaysFromNow.toISOString())
-      .where('start', '<=', sevenDaysOneHourFromNow.toISOString())
-      .where('status', '==', 'confirmed')
-      .get();
+    // 24-hour reminders: between 23 hours and 25 hours from now
+    const twentyFourHoursMin = new Date(now.getTime() + (23 * 60 * 60 * 1000));
+    const twentyFourHoursMax = new Date(now.getTime() + (25 * 60 * 60 * 1000));
     
-    console.log(`Found ${appointments7d.size} appointments for 7-day reminders`);
+    // 2-hour reminders: between 1.5 hours and 3 hours from now
+    const twoHoursMin = new Date(now.getTime() + (90 * 60 * 1000));
+    const twoHoursMax = new Date(now.getTime() + (3 * 60 * 60 * 1000));
     
-    // Send 7-day reminders
-    for (const doc of appointments7d.docs) {
-      const appointment: any = { id: doc.id, ...doc.data() };
+    console.log(`📅 Time windows:
+      - 7-day: ${sevenDaysMin.toISOString()} to ${sevenDaysMax.toISOString()}
+      - 24h: ${twentyFourHoursMin.toISOString()} to ${twentyFourHoursMax.toISOString()}
+      - 2h: ${twoHoursMin.toISOString()} to ${twoHoursMax.toISOString()}`);
+    
+    let remindersSent = 0;
+    let errors = 0;
+    
+    // Find appointments for 7-day reminders
+    try {
+      const appointments7d = await db.collection('appointments')
+        .where('status', '==', 'confirmed')
+        .where('start', '>=', sevenDaysMin.toISOString())
+        .where('start', '<=', sevenDaysMax.toISOString())
+        .get();
       
-      // Skip if reminder already sent
-      if (appointment.sevenDayReminderSent) {
-        console.log(`7-day reminder already sent for ${appointment.id}`);
-        continue;
+      console.log(`📧 Found ${appointments7d.size} appointments for 7-day reminders`);
+      
+      // Send 7-day reminders
+      for (const doc of appointments7d.docs) {
+        try {
+          const appointment: any = { id: doc.id, ...doc.data() };
+          
+          // Skip if reminder already sent
+          if (appointment.sevenDayReminderSent) {
+            console.log(`⏭️  7-day reminder already sent for ${appointment.id}`);
+            continue;
+          }
+          
+          // Get customer
+          const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+          if (!customerDoc.exists) {
+            console.log(`⚠️  Customer not found for appointment ${appointment.id}`);
+            continue;
+          }
+          
+          const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+          
+          await send7DayReminder(appointment, customer);
+          remindersSent++;
+          
+          // Add small delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error: any) {
+          errors++;
+          console.error(`❌ Error sending 7-day reminder for appointment ${doc.id}:`, error);
+        }
       }
-      
-      // Get customer
-      const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
-      if (!customerDoc.exists) continue;
-      
-      const customer: any = { id: customerDoc.id, ...customerDoc.data() };
-      
-      await send7DayReminder(appointment, customer);
-      
-      // Add small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error: any) {
+      console.error('❌ Error querying 7-day reminders:', error);
+      errors++;
     }
     
-    // Find appointments in the next 24-25 hours that haven't been reminded
-    const appointments24h = await db.collection('appointments')
-      .where('start', '>=', twentyFourHoursFromNow.toISOString())
-      .where('start', '<=', twentyFiveHoursFromNow.toISOString())
-      .where('status', '==', 'confirmed')
-      .get();
-    
-    console.log(`Found ${appointments24h.size} appointments for 24h reminders`);
-    
-    // Send 24-hour reminders
-    for (const doc of appointments24h.docs) {
-      const appointment: any = { id: doc.id, ...doc.data() };
+    // Find appointments for 24-hour reminders
+    try {
+      const appointments24h = await db.collection('appointments')
+        .where('status', '==', 'confirmed')
+        .where('start', '>=', twentyFourHoursMin.toISOString())
+        .where('start', '<=', twentyFourHoursMax.toISOString())
+        .get();
       
-      // Skip if reminder already sent
-      if (appointment.reminderSent) {
-        console.log(`24h reminder already sent for ${appointment.id}`);
-        continue;
+      console.log(`📧 Found ${appointments24h.size} appointments for 24h reminders`);
+      
+      // Send 24-hour reminders
+      for (const doc of appointments24h.docs) {
+        try {
+          const appointment: any = { id: doc.id, ...doc.data() };
+          
+          // Skip if reminder already sent
+          if (appointment.reminderSent) {
+            console.log(`⏭️  24h reminder already sent for ${appointment.id}`);
+            continue;
+          }
+          
+          // Get customer
+          const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+          if (!customerDoc.exists) {
+            console.log(`⚠️  Customer not found for appointment ${appointment.id}`);
+            continue;
+          }
+          
+          const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+          
+          await send24HourReminder(appointment, customer);
+          remindersSent++;
+          
+          // Add small delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error: any) {
+          errors++;
+          console.error(`❌ Error sending 24h reminder for appointment ${doc.id}:`, error);
+        }
       }
-      
-      // Get customer
-      const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
-      if (!customerDoc.exists) continue;
-      
-      const customer: any = { id: customerDoc.id, ...customerDoc.data() };
-      
-      await send24HourReminder(appointment, customer);
-      
-      // Add small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error: any) {
+      console.error('❌ Error querying 24h reminders:', error);
+      errors++;
     }
     
-    // Find appointments in the next 2-3 hours that haven't been reminded
-    const appointments2h = await db.collection('appointments')
-      .where('start', '>=', twoHoursFromNow.toISOString())
-      .where('start', '<=', threeHoursFromNow.toISOString())
-      .where('status', '==', 'confirmed')
-      .get();
-    
-    console.log(`Found ${appointments2h.size} appointments for 2h reminders`);
-    
-    // Send 2-hour reminders
-    for (const doc of appointments2h.docs) {
-      const appointment: any = { id: doc.id, ...doc.data() };
+    // Find appointments for 2-hour reminders
+    try {
+      const appointments2h = await db.collection('appointments')
+        .where('status', '==', 'confirmed')
+        .where('start', '>=', twoHoursMin.toISOString())
+        .where('start', '<=', twoHoursMax.toISOString())
+        .get();
       
-      // Skip if 2-hour reminder already sent
-      if (appointment.twoHourReminderSent) {
-        console.log(`2h reminder already sent for ${appointment.id}`);
-        continue;
+      console.log(`📧 Found ${appointments2h.size} appointments for 2h reminders`);
+      
+      // Send 2-hour reminders
+      for (const doc of appointments2h.docs) {
+        try {
+          const appointment: any = { id: doc.id, ...doc.data() };
+          
+          // Skip if 2-hour reminder already sent
+          if (appointment.twoHourReminderSent) {
+            console.log(`⏭️  2h reminder already sent for ${appointment.id}`);
+            continue;
+          }
+          
+          // Get customer
+          const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+          if (!customerDoc.exists) {
+            console.log(`⚠️  Customer not found for appointment ${appointment.id}`);
+            continue;
+          }
+          
+          const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+          
+          await send2HourReminder(appointment, customer);
+          remindersSent++;
+          
+          // Add small delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error: any) {
+          errors++;
+          console.error(`❌ Error sending 2h reminder for appointment ${doc.id}:`, error);
+        }
       }
-      
-      // Get customer
-      const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
-      if (!customerDoc.exists) continue;
-      
-      const customer: any = { id: customerDoc.id, ...customerDoc.data() };
-      
-      await send2HourReminder(appointment, customer);
-      
-      // Add small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error: any) {
+      console.error('❌ Error querying 2h reminders:', error);
+      errors++;
     }
     
-    console.log('Appointment reminder check complete');
+    const duration = Date.now() - startTime;
+    console.log(`✅ Appointment reminder check complete: ${remindersSent} reminders sent, ${errors} errors (took ${duration}ms)`);
     
-  } catch (error) {
-    console.error('Error in sendAppointmentReminders:', error);
+    // Log summary to Firestore for monitoring
+    try {
+      await db.collection('reminder_logs').add({
+        timestamp: new Date().toISOString(),
+        remindersSent,
+        errors,
+        duration,
+        status: 'success'
+      });
+    } catch (logError) {
+      console.error('Failed to log reminder run:', logError);
+    }
+    
+  } catch (error: any) {
+    console.error('❌ Fatal error in sendAppointmentReminders:', error);
+    console.error('Stack:', error.stack);
+    
+    // Log fatal error to Firestore
+    try {
+      await db.collection('reminder_logs').add({
+        timestamp: new Date().toISOString(),
+        error: true,
+        errorMessage: error.message,
+        errorStack: error.stack,
+        status: 'failed'
+      });
+    } catch (logError) {
+      // Ignore logging errors
+    }
+    
+    // Re-throw to ensure Firebase knows the function failed
+    throw error;
   }
 });
 
-// Manual trigger for sending a reminder (callable function)
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+// Test function to check reminder system (callable function)
+export const testReminderSystem = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    const userId = req.auth?.uid;
+    
+    if (!userId) {
+      throw new HttpsError('unauthenticated', 'Must be authenticated');
+    }
+    
+    // SECURITY: Require admin role
+    const userToken = req.auth?.token;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+      const now = new Date();
+      const results: any = {
+        timestamp: now.toISOString(),
+        upcomingAppointments: [],
+        reminderStatus: {
+          sevenDay: { count: 0, needsReminder: 0 },
+          twentyFourHour: { count: 0, needsReminder: 0 },
+          twoHour: { count: 0, needsReminder: 0 }
+        }
+      };
+      
+      // Find all confirmed appointments in the next 8 days
+      const eightDaysFromNow = new Date(now.getTime() + (8 * 24 * 60 * 60 * 1000));
+      const upcomingAppointments = await db.collection('appointments')
+        .where('status', '==', 'confirmed')
+        .where('start', '>=', now.toISOString())
+        .where('start', '<=', eightDaysFromNow.toISOString())
+        .orderBy('start', 'asc')
+        .limit(50)
+        .get();
+      
+      console.log(`Found ${upcomingAppointments.size} upcoming appointments`);
+      
+      for (const doc of upcomingAppointments.docs) {
+        const appointment: any = { id: doc.id, ...doc.data() };
+        const appointmentTime = new Date(appointment.start);
+        const timeDiff = appointmentTime.getTime() - now.getTime();
+        const hoursUntil = timeDiff / (1000 * 60 * 60);
+        const daysUntil = hoursUntil / 24;
+        
+        const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+        const customer: any = customerDoc.exists ? { id: customerDoc.id, ...customerDoc.data() } : null;
+        
+        const appointmentInfo: any = {
+          appointmentId: appointment.id,
+          start: appointment.start,
+          hoursUntil: Math.round(hoursUntil * 10) / 10,
+          daysUntil: Math.round(daysUntil * 10) / 10,
+          customerId: appointment.customerId,
+          customerEmail: customer?.email || null,
+          customerPhone: customer?.phone || customer?.phoneNumber || null,
+          sevenDayReminderSent: appointment.sevenDayReminderSent || false,
+          reminderSent: appointment.reminderSent || false,
+          twoHourReminderSent: appointment.twoHourReminderSent || false
+        };
+        
+        // Check which reminders are needed
+        if (daysUntil >= 6.5 && daysUntil <= 7.5 && !appointment.sevenDayReminderSent) {
+          results.reminderStatus.sevenDay.needsReminder++;
+          appointmentInfo.needsSevenDayReminder = true;
+        }
+        if (hoursUntil >= 23 && hoursUntil <= 25 && !appointment.reminderSent) {
+          results.reminderStatus.twentyFourHour.needsReminder++;
+          appointmentInfo.needsTwentyFourHourReminder = true;
+        }
+        if (hoursUntil >= 1.5 && hoursUntil <= 3 && !appointment.twoHourReminderSent) {
+          results.reminderStatus.twoHour.needsReminder++;
+          appointmentInfo.needsTwoHourReminder = true;
+        }
+        
+        results.upcomingAppointments.push(appointmentInfo);
+        
+        if (daysUntil >= 6.5 && daysUntil <= 7.5) results.reminderStatus.sevenDay.count++;
+        if (hoursUntil >= 23 && hoursUntil <= 25) results.reminderStatus.twentyFourHour.count++;
+        if (hoursUntil >= 1.5 && hoursUntil <= 3) results.reminderStatus.twoHour.count++;
+      }
+      
+      return results;
+    } catch (error: any) {
+      console.error('Error testing reminder system:', error);
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', `Error testing reminder system: ${error.message}`);
+    }
+  }
+);
 
+// Manual trigger for sending a reminder (callable function)
 export const sendManualReminder = onCall(
   { region: 'us-central1', cors: true },
   async (req) => {
-    const { appointmentId } = req.data || {};
+    const { appointmentId, reminderType, dryRun } = req.data || {};
     const userId = req.auth?.uid;
     
     if (!userId) {
@@ -694,6 +927,9 @@ export const sendManualReminder = onCall(
     if (!appointmentId) {
       throw new HttpsError('invalid-argument', 'Missing appointment ID');
     }
+    
+    // reminderType: '7-day' | '24-hour' | '2-hour' | 'auto' (default: 'auto' - determines based on time)
+    const type = reminderType || 'auto';
     
     try {
       const appointmentDoc = await db.collection('appointments').doc(appointmentId).get();
@@ -713,21 +949,243 @@ export const sendManualReminder = onCall(
       
       const customer: any = { id: customerDoc.id, ...customerDoc.data() };
       
-      // Send both email and SMS reminders with full appointment details
-      // Send SMS reminder
-      await send24HourReminder(appointment, customer);
+      // Calculate time until appointment
+      const now = new Date();
+      const appointmentTime = new Date(appointment.start);
+      const timeDiff = appointmentTime.getTime() - now.getTime();
+      const hoursUntil = timeDiff / (1000 * 60 * 60);
+      const daysUntil = hoursUntil / 24;
       
-      // Send email reminder if customer has email (sendEmailReminder already called by send24HourReminder, but ensure it's sent)
-      if (customer.email) {
-        await sendEmailReminder(appointment, customer, '24 hours');
+      let reminderFunction: ((appointment: any, customer: any) => Promise<void>) | null = null;
+      let selectedType = type;
+      
+      // Determine which reminder to send
+      if (type === 'auto') {
+        if (daysUntil >= 6.5 && daysUntil <= 7.5) {
+          selectedType = '7-day';
+          reminderFunction = send7DayReminder;
+        } else if (hoursUntil >= 23 && hoursUntil <= 25) {
+          selectedType = '24-hour';
+          reminderFunction = send24HourReminder;
+        } else if (hoursUntil >= 1.5 && hoursUntil <= 3) {
+          selectedType = '2-hour';
+          reminderFunction = send2HourReminder;
+        } else {
+          // Force send based on closest match
+          if (daysUntil > 7) {
+            selectedType = '7-day';
+            reminderFunction = send7DayReminder;
+          } else if (hoursUntil > 25) {
+            selectedType = '24-hour';
+            reminderFunction = send24HourReminder;
+          } else {
+            selectedType = '2-hour';
+            reminderFunction = send2HourReminder;
+          }
+        }
+      } else {
+        switch (type) {
+          case '7-day':
+            reminderFunction = send7DayReminder;
+            break;
+          case '24-hour':
+            reminderFunction = send24HourReminder;
+            break;
+          case '2-hour':
+            reminderFunction = send2HourReminder;
+            break;
+          default:
+            throw new HttpsError('invalid-argument', 'Invalid reminder type. Use: 7-day, 24-hour, or 2-hour');
+        }
       }
       
-      return { success: true, message: 'Reminder sent successfully' };
+      if (!reminderFunction) {
+        throw new HttpsError('internal', 'Could not determine reminder function');
+      }
+      
+      // Dry run mode - just return what would be sent
+      if (dryRun) {
+        return {
+          success: true,
+          dryRun: true,
+          message: `Would send ${selectedType} reminder`,
+          appointmentId,
+          appointmentStart: appointment.start,
+          hoursUntil: Math.round(hoursUntil * 10) / 10,
+          daysUntil: Math.round(daysUntil * 10) / 10,
+          reminderType: selectedType,
+          customerEmail: customer.email || null,
+          customerPhone: customer.phone || customer.phoneNumber || null,
+          wouldSendEmail: !!customer.email,
+          wouldSendSMS: !customer.email && !!(customer.phone || customer.phoneNumber)
+        };
+      }
+      
+      // Actually send the reminder
+      await reminderFunction(appointment, customer);
+      
+      return { 
+        success: true, 
+        message: `${selectedType} reminder sent successfully`,
+        appointmentId,
+        reminderType: selectedType,
+        customerEmail: customer.email || null,
+        customerPhone: customer.phone || customer.phoneNumber || null,
+        sentVia: customer.email ? 'email' : (customer.phone || customer.phoneNumber ? 'sms' : 'none')
+      };
       
     } catch (error) {
       console.error('Error sending manual reminder:', error);
       if (error instanceof HttpsError) throw error;
       throw new HttpsError('internal', 'Error sending reminder');
+    }
+  }
+);
+
+// Force trigger reminder system immediately (for testing)
+export const triggerReminderSystem = onCall(
+  { region: 'us-central1', cors: true },
+  async (req) => {
+    const userId = req.auth?.uid;
+    
+    if (!userId) {
+      throw new HttpsError('unauthenticated', 'Must be authenticated');
+    }
+    
+    // SECURITY: Require admin role
+    const userToken = req.auth?.token;
+    if (!userToken || userToken.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin access required');
+    }
+    
+    try {
+      // This essentially runs the scheduled function logic immediately
+      const now = new Date();
+      
+      // Calculate time windows with buffer
+      const sevenDaysMin = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000));
+      const sevenDaysMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000) + (1 * 60 * 60 * 1000));
+      const twentyFourHoursMin = new Date(now.getTime() + (23 * 60 * 60 * 1000));
+      const twentyFourHoursMax = new Date(now.getTime() + (25 * 60 * 60 * 1000));
+      const twoHoursMin = new Date(now.getTime() + (90 * 60 * 1000));
+      const twoHoursMax = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+      
+      const results: any = {
+        timestamp: now.toISOString(),
+        remindersSent: 0,
+        errors: 0,
+        details: {
+          sevenDay: { found: 0, sent: 0, errors: 0 },
+          twentyFourHour: { found: 0, sent: 0, errors: 0 },
+          twoHour: { found: 0, sent: 0, errors: 0 }
+        }
+      };
+      
+      // 7-day reminders
+      try {
+        const appointments7d = await db.collection('appointments')
+          .where('status', '==', 'confirmed')
+          .where('start', '>=', sevenDaysMin.toISOString())
+          .where('start', '<=', sevenDaysMax.toISOString())
+          .get();
+        
+        results.details.sevenDay.found = appointments7d.size;
+        
+        for (const doc of appointments7d.docs) {
+          try {
+            const appointment: any = { id: doc.id, ...doc.data() };
+            if (appointment.sevenDayReminderSent) continue;
+            
+            const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+            if (!customerDoc.exists) continue;
+            
+            const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+            await send7DayReminder(appointment, customer);
+            results.details.sevenDay.sent++;
+            results.remindersSent++;
+          } catch (error: any) {
+            results.details.sevenDay.errors++;
+            results.errors++;
+            console.error(`Error sending 7-day reminder:`, error);
+          }
+        }
+      } catch (error: any) {
+        console.error('Error querying 7-day reminders:', error);
+        results.errors++;
+      }
+      
+      // 24-hour reminders
+      try {
+        const appointments24h = await db.collection('appointments')
+          .where('status', '==', 'confirmed')
+          .where('start', '>=', twentyFourHoursMin.toISOString())
+          .where('start', '<=', twentyFourHoursMax.toISOString())
+          .get();
+        
+        results.details.twentyFourHour.found = appointments24h.size;
+        
+        for (const doc of appointments24h.docs) {
+          try {
+            const appointment: any = { id: doc.id, ...doc.data() };
+            if (appointment.reminderSent) continue;
+            
+            const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+            if (!customerDoc.exists) continue;
+            
+            const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+            await send24HourReminder(appointment, customer);
+            results.details.twentyFourHour.sent++;
+            results.remindersSent++;
+          } catch (error: any) {
+            results.details.twentyFourHour.errors++;
+            results.errors++;
+            console.error(`Error sending 24h reminder:`, error);
+          }
+        }
+      } catch (error: any) {
+        console.error('Error querying 24h reminders:', error);
+        results.errors++;
+      }
+      
+      // 2-hour reminders
+      try {
+        const appointments2h = await db.collection('appointments')
+          .where('status', '==', 'confirmed')
+          .where('start', '>=', twoHoursMin.toISOString())
+          .where('start', '<=', twoHoursMax.toISOString())
+          .get();
+        
+        results.details.twoHour.found = appointments2h.size;
+        
+        for (const doc of appointments2h.docs) {
+          try {
+            const appointment: any = { id: doc.id, ...doc.data() };
+            if (appointment.twoHourReminderSent) continue;
+            
+            const customerDoc = await db.collection('customers').doc(appointment.customerId).get();
+            if (!customerDoc.exists) continue;
+            
+            const customer: any = { id: customerDoc.id, ...customerDoc.data() };
+            await send2HourReminder(appointment, customer);
+            results.details.twoHour.sent++;
+            results.remindersSent++;
+          } catch (error: any) {
+            results.details.twoHour.errors++;
+            results.errors++;
+            console.error(`Error sending 2h reminder:`, error);
+          }
+        }
+      } catch (error: any) {
+        console.error('Error querying 2h reminders:', error);
+        results.errors++;
+      }
+      
+      return results;
+      
+    } catch (error: any) {
+      console.error('Error triggering reminder system:', error);
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', `Error triggering reminder system: ${error.message}`);
     }
   }
 );

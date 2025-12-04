@@ -49,8 +49,58 @@ export const mergeCustomers = onCall(
         const duplicate = duplicateDoc.data();
 
         // Step 2: Check if duplicate is already merged
-        if (duplicate?.status === 'merged') {
-          throw new HttpsError('failed-precondition', `Customer ${duplicateId} is already merged`);
+        // Allow merge even if already marked as merged (to fix orphaned states)
+        if (duplicate?.status === 'merged' && duplicate?.mergedInto === survivorId) {
+          // Already merged to the same survivor - this is a no-op
+          console.log(`ℹ️ Customer ${duplicateId} is already merged into ${survivorId}. Skipping merge.`);
+          return {
+            success: true,
+            survivorId,
+            duplicateId,
+            subcollectionDocsMoved: 0,
+            appointmentsUpdated: 0,
+            holdsUpdated: 0,
+            availabilityUpdated: 0,
+            skinAnalysesUpdated: 0,
+            consentFormsUpdated: 0,
+            uniqueContactsUpdated: 0,
+            mergeRecordId: null,
+            message: 'Customer already merged to this survivor'
+          };
+        }
+        
+        // If merged to a different customer, allow override to fix orphaned states
+        if (duplicate?.status === 'merged' && duplicate?.mergedInto !== survivorId) {
+          console.log(`⚠️ Customer ${duplicateId} is marked as merged to ${duplicate.mergedInto}, but merging to ${survivorId}. This will fix orphaned state.`);
+        }
+
+        // Step 2.5: Validate customer documents are in a valid state for merging
+        // Check if duplicate has orphaned migratedTo field (points to non-existent customer)
+        if (duplicate?.migratedTo) {
+          const migratedToRef = db.doc(`customers/${duplicate.migratedTo}`);
+          const migratedToDoc = await tx.get(migratedToRef);
+          
+          if (!migratedToDoc.exists) {
+            console.log(`⚠️ Duplicate customer ${duplicateId} has orphaned migratedTo field pointing to non-existent customer ${duplicate.migratedTo}. Clearing it before merge.`);
+            // Clear the orphaned migratedTo field as part of the merge
+            // This will be handled in Step 11 when we update the duplicate
+          } else if (duplicate.migratedTo !== survivorId) {
+            // If migratedTo points to a different customer, warn but allow merge
+            console.log(`⚠️ Duplicate customer ${duplicateId} has migratedTo pointing to ${duplicate.migratedTo}, but merging to ${survivorId}. This will override the previous migration.`);
+          }
+        }
+
+        // Step 2.6: Check if duplicate is already marked as merged (status: 'merged')
+        if (duplicate?.status === 'merged' || duplicate?.identityStatus === 'migrated') {
+          console.log(`⚠️ Duplicate customer ${duplicateId} is already marked as merged (status: ${duplicate.status}, identityStatus: ${duplicate.identityStatus}). Proceeding with merge to clear orphaned state.`);
+        }
+
+        // Step 2.7: Validate that both customer documents have required fields
+        if (!survivor?.name && !survivor?.email && !survivor?.phone) {
+          console.warn(`⚠️ Survivor customer ${survivorId} appears to be missing all identifying information (name, email, phone). Proceeding with merge.`);
+        }
+        if (!duplicate?.name && !duplicate?.email && !duplicate?.phone) {
+          console.warn(`⚠️ Duplicate customer ${duplicateId} appears to be missing all identifying information (name, email, phone). Proceeding with merge.`);
         }
 
         // Step 3: Copy subcollections from duplicate to survivor
@@ -135,12 +185,18 @@ export const mergeCustomers = onCall(
         });
 
         // Step 11: Mark duplicate as merged
-        tx.update(duplicateRef, {
+        // Clear any orphaned migratedTo field and set proper merge status
+        const duplicateUpdate: any = {
           status: 'merged',
           mergedInto: survivorId,
           mergedAt: new Date(),
-          mergedBy: req.auth?.uid
-        });
+          mergedBy: req.auth?.uid,
+          identityStatus: 'migrated',
+          migratedTo: survivorId // Set migratedTo to the survivor (valid customer)
+        };
+        
+        // If duplicate had an orphaned migratedTo, we're already clearing it by setting it to survivorId
+        tx.update(duplicateRef, duplicateUpdate);
 
         // Step 12: Update survivor's last updated timestamp
         tx.update(survivorRef, {

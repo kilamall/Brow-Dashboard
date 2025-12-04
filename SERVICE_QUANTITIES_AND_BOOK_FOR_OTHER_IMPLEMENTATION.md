@@ -74,22 +74,15 @@ const [serviceAssignments, setServiceAssignments] = useState<Record<string, Serv
     {serviceAssignments[service.id]?.quantity || 0}
   </span>
   <button
-    onClick={() => {
-      increaseQuantity(service.id);
-      // If quantity becomes > 1, show guest assignment prompt
-      if (serviceAssignments[service.id]?.quantity === 0) {
-        // First selection - assign to self or prompt
-        assignToSelfOrGuest(service.id);
-      } else {
-        // Additional quantity - prompt for guest assignment
-        promptGuestAssignment(service.id);
-      }
-    }}
+    onClick={() => increaseQuantity(service.id)}
     className="w-8 h-8 rounded border border-slate-300 hover:bg-slate-50"
   >
     +
   </button>
 </div>
+
+{/* Note: All assignment logic is handled INSIDE increaseQuantity function */}
+{/* Do NOT check state after calling increaseQuantity - state updates are async! */}
 ```
 
 **Guest Assignment Modal/Prompt** - Appears when quantity > 1:
@@ -451,24 +444,29 @@ useEffect(() => {
 
 ### 3. Smart Assignment Logic
 
-When quantity increases, intelligently assign:
+**CRITICAL**: All logic must be inside the function, using the CURRENT state to calculate the NEW state. Never check state after setState - state updates are asynchronous!
 
 ```typescript
 function increaseQuantity(serviceId: string) {
+  // Read CURRENT state first
   const current = serviceAssignments[serviceId] || {
     serviceId,
     quantity: 0,
     guestAssignments: []
   };
   
+  // Calculate what the NEW quantity will be
   const newQuantity = current.quantity + 1;
   
-  // If this is the first selection and user is authenticated, assign to self
+  // Make all decisions based on current state + calculated new state
+  // Do NOT check serviceAssignments after setState - it won't have the new value yet!
+  
+  // Case 1: First selection and user is authenticated -> assign to self
   if (newQuantity === 1 && user) {
     setServiceAssignments({
       ...serviceAssignments,
       [serviceId]: {
-        ...current,
+        serviceId,
         quantity: 1,
         guestAssignments: [{ guestId: 'self', serviceId }]
       }
@@ -476,19 +474,18 @@ function increaseQuantity(serviceId: string) {
     return;
   }
   
-  // If quantity > 1, prompt for guest assignment
-  if (newQuantity > current.quantity) {
-    // Check if we have available guests
-    const availableGuests = guests.filter(g => 
-      !current.guestAssignments.some(ga => ga.guestId === g.id)
-    );
+  // Case 2: Additional quantity -> need guest assignment
+  if (newQuantity > 1) {
+    // Check which guests are already assigned to this service
+    const assignedGuestIds = current.guestAssignments.map(ga => ga.guestId);
+    const availableGuests = guests.filter(g => !assignedGuestIds.includes(g.id));
     
-    if (availableGuests.length > 0 && availableGuests.length === 1) {
+    if (availableGuests.length === 1) {
       // Only one available guest, auto-assign
       setServiceAssignments({
         ...serviceAssignments,
         [serviceId]: {
-          ...current,
+          serviceId,
           quantity: newQuantity,
           guestAssignments: [
             ...current.guestAssignments,
@@ -497,10 +494,43 @@ function increaseQuantity(serviceId: string) {
         }
       });
     } else {
-      // Multiple options or no guests, show prompt
+      // Multiple options or no guests available, show assignment prompt
+      // First, update quantity without assignment
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          ...current,
+          quantity: newQuantity,
+          guestAssignments: current.guestAssignments // Keep existing assignments
+        }
+      });
+      // Then show prompt for the unassigned slot
       setPendingServiceAssignment(serviceId);
       setShowGuestAssignment(true);
     }
+  }
+}
+
+function decreaseQuantity(serviceId: string) {
+  const current = serviceAssignments[serviceId];
+  if (!current || current.quantity <= 0) return;
+  
+  const newQuantity = current.quantity - 1;
+  
+  if (newQuantity === 0) {
+    // Remove service entirely
+    const { [serviceId]: removed, ...rest } = serviceAssignments;
+    setServiceAssignments(rest);
+  } else {
+    // Remove last guest assignment
+    setServiceAssignments({
+      ...serviceAssignments,
+      [serviceId]: {
+        ...current,
+        quantity: newQuantity,
+        guestAssignments: current.guestAssignments.slice(0, -1)
+      }
+    });
   }
 }
 ```

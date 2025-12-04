@@ -70,7 +70,17 @@ async function getBusinessData(): Promise<any> {
         .get()
     ]);
 
-    const services = servicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    let services = servicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    // Filter out consultation services and event services (they're not regular bookable services)
+    services = services.filter((s: any) => {
+      const nameLower = (s.name || '').toLowerCase();
+      const categoryLower = (s.category || '').toLowerCase();
+      const isConsultation = nameLower.includes('consultation') || nameLower.includes('consult');
+      const isEvent = categoryLower === 'events';
+      return !isConsultation && !isEvent;
+    });
+    
     const businessHours = businessHoursSnapshot.data() || BUSINESS_CONTEXT.hours;
     const appointments = appointmentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
@@ -199,53 +209,120 @@ async function saveSMSToCache(cacheKey: string, response: string): Promise<void>
 // Call Gemini AI
 export async function callGeminiAI(message: string, context: any, phoneNumber: string, apiKey: string): Promise<string> {
   try {
-    // Check cache first for common queries
-    const cacheKey = generateSMSCacheKey(message, 'generic'); // Use 'generic' for common questions
-    const cachedResponse = await checkSMSCache(cacheKey);
+    // For service questions, don't use cache - always get fresh response with latest services
+    const msgLowerCheck = message.toLowerCase();
+    const isServiceQuestionCheck = msgLowerCheck.includes('service') || 
+                              msgLowerCheck.includes('what do you') ||
+                              msgLowerCheck.includes('what can you') ||
+                              msgLowerCheck.includes('do you do') ||
+                              msgLowerCheck.includes('do you offer') ||
+                              msgLowerCheck.includes('do you have') ||
+                              msgLowerCheck.includes('eyelash') ||
+                              msgLowerCheck.includes('brow') ||
+                              msgLowerCheck.includes('wax') ||
+                              msgLowerCheck.includes('tint') ||
+                              msgLowerCheck.includes('offer') ||
+                              msgLowerCheck.includes('menu');
     
-    if (cachedResponse) {
-      console.log('Using cached SMS response');
-      return cachedResponse;
+    // Only check cache for non-service questions
+    if (!isServiceQuestionCheck) {
+      const cacheKey = generateSMSCacheKey(message, 'generic');
+      const cachedResponse = await checkSMSCache(cacheKey);
+      
+      if (cachedResponse) {
+        console.log('Using cached SMS response');
+        return cachedResponse;
+      }
+    } else {
+      console.log('Service question detected - skipping cache to get fresh response with latest services');
     }
     
     if (!apiKey) {
-      return generateFallbackResponse(message);
+      console.warn('⚠️ GEMINI_API_KEY not provided, using fallback');
+      return generateFallbackResponse(message, context);
     }
 
-    const systemPrompt = `You are an AI assistant for Bueno Brows beauty salon.
+    // Use real-time services from database if available, otherwise fallback to hardcoded
+    let servicesToUse = context.services && context.services.length > 0 
+      ? context.services 
+      : BUSINESS_CONTEXT.services;
+    
+    // Filter out consultation services and event services (they're not regular bookable services)
+    servicesToUse = servicesToUse.filter((s: any) => {
+      const nameLower = (s.name || '').toLowerCase();
+      const categoryLower = (s.category || '').toLowerCase();
+      const isConsultation = nameLower.includes('consultation') || nameLower.includes('consult');
+      const isEvent = categoryLower === 'events';
+      return !isConsultation && !isEvent;
+    });
+    
+    const servicesList = servicesToUse.map((s: any) => 
+      `- ${s.name}: $${s.price || 'N/A'} (${s.duration || 'N/A'} min)`
+    ).join('\n');
+
+    const systemPrompt = `You are an AI assistant for Bueno Brows beauty salon. You embody the brand's philosophy of natural beauty and enhancing what makes each person uniquely beautiful.
 
 BUSINESS INFO:
 - Name: ${BUSINESS_CONTEXT.name}
 - Location: ${BUSINESS_CONTEXT.location}
 - Phone: ${BUSINESS_CONTEXT.phone}
+- Brand Philosophy: Natural beauty enhancements that complement your natural features and keep you looking "bueno" (good/beautiful) longer
 
-SERVICES:
-${BUSINESS_CONTEXT.services.map(s => `- ${s.name}: $${s.price} (${s.duration} min)`).join('\n')}
+SERVICES (use these real-time services from our database):
+${servicesList}
 
 HOURS:
 ${Object.entries(BUSINESS_CONTEXT.hours).map(([day, hours]) => `- ${day}: ${hours}`).join('\n')}
 
 REAL-TIME DATA:
 - Available slots: ${context.availableSlots?.join(', ') || 'Call for availability'}
-- Services: ${context.services?.map((s: any) => s.name).join(', ') || 'All services available'}
 
 CUSTOMER: ${context.customer.phoneNumber} (${context.customer.name || 'New customer'})
 
 INSTRUCTIONS:
-1. Be friendly and professional; answer all questions to the best of your ability.
-2. Keep responses under 160 characters for SMS when possible.
-3. Keep answers specific to Bueno Brows; do not speculate about other businesses.
-4. Help with appointments, pricing, and hours. Offer to book when appropriate.
-5. Always end with "- Bueno Brows" and, when relevant, add: "Call (650) 613-8455".
-6. If uncertain or it needs a human, say an admin will follow up shortly or the customer can call (650) 613-8455.
+1. Be warm, friendly, and conversational - like talking to a friend who knows beauty. Use natural language, not robotic responses.
+2. For service questions (e.g., "do you do X?", "what services?", "do you offer Y?"), ALWAYS list ALL available services with prices and durations. Use the full 300 characters if needed.
+3. If asked about a service we DON'T offer (e.g., "do you do eyelash extensions"):
+   - Politely say we don't offer that specific service
+   - Intelligently suggest similar/related services we DO offer (e.g., if asked about lash extensions, suggest lash lifts or brow services that complement natural beauty)
+   - Use brand language like "natural beauty enhancements", "complement your natural beauty", "keep you looking bueno longer"
+   - Be helpful and educational - explain why our services might be a great alternative
+4. Match the brand voice: Use "bueno" naturally, emphasize natural beauty, be warm and approachable.
+5. For other questions, keep responses under 160 characters when possible, but prioritize being helpful over strict length limits.
+6. Keep answers specific to Bueno Brows; do not speculate about other businesses.
+7. Help with appointments, pricing, and hours. Offer to book when appropriate.
+8. Always end with "- Bueno Brows" and, when relevant, add: "Call (650) 613-8455".
+9. If uncertain or it needs a human, say an admin will follow up shortly or the customer can call (650) 613-8455.
+
+EXAMPLES OF GOOD RESPONSES:
+- If asked "do you do eyelash extensions?": "We don't do lash extensions, but we offer lash lifts and other natural beauty enhancements that complement your natural beauty to keep you looking bueno longer! We specialize in brows, tinting, and waxing. Want to see our full menu? - Bueno Brows"
+- If asked "what services do you do?": List all services with prices naturally and conversationally.
 
 Customer message: ${message}`;
+
+    // Determine if this is a service question (needs longer response)
+    const msgLowerForTokens = message.toLowerCase();
+    const isServiceQuestionForTokens = msgLowerForTokens.includes('service') || 
+                              msgLowerForTokens.includes('what do you') ||
+                              msgLowerForTokens.includes('what can you') ||
+                              msgLowerForTokens.includes('do you do') ||
+                              msgLowerForTokens.includes('do you offer') ||
+                              msgLowerForTokens.includes('do you have') ||
+                              msgLowerForTokens.includes('do you provide') ||
+                              msgLowerForTokens.includes('what services') ||
+                              msgLowerForTokens.includes('what do you offer') ||
+                              msgLowerForTokens.includes('offer') ||
+                              msgLowerForTokens.includes('menu') ||
+                              msgLowerForTokens.includes('eyelash') ||
+                              msgLowerForTokens.includes('brow') ||
+                              msgLowerForTokens.includes('wax') ||
+                              msgLowerForTokens.includes('tint');
 
     const requestBody = {
       contents: [{ parts: [{ text: systemPrompt }] }],
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 150,
+        maxOutputTokens: isServiceQuestionForTokens ? 300 : 150, // Allow longer responses for service questions
       }
     };
 
@@ -260,35 +337,70 @@ Customer message: ${message}`;
     }
 
     const data = await response.json() as any;
-    const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || generateFallbackResponse(message);
+    const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     
-    // Cache the response for common queries
-    // Only cache for non-personalized queries (e.g., hours, pricing, services)
-    const lowerMessage = message.toLowerCase();
-    const isCacheable = lowerMessage.includes('hours') || 
-                        lowerMessage.includes('price') || 
-                        lowerMessage.includes('cost') ||
-                        lowerMessage.includes('service') ||
-                        lowerMessage.includes('location') ||
-                        lowerMessage.includes('address');
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      console.warn('⚠️ Gemini returned empty response, using fallback');
+      return generateFallbackResponse(message, context);
+    }
     
-    if (isCacheable) {
-      await saveSMSToCache(cacheKey, aiResponse);
+    console.log('✅ Gemini AI response received:', aiResponse.substring(0, 100) + '...');
+    
+    // Cache the response for common queries (but NOT service questions - they need fresh data)
+    if (!isServiceQuestionCheck) {
+      const lowerMsgForCache = message.toLowerCase();
+      const isCacheable = lowerMsgForCache.includes('hours') || 
+                          lowerMsgForCache.includes('price') || 
+                          lowerMsgForCache.includes('cost') ||
+                          lowerMsgForCache.includes('location') ||
+                          lowerMsgForCache.includes('address');
+      
+      if (isCacheable) {
+        const cacheKey = generateSMSCacheKey(message, 'generic');
+        await saveSMSToCache(cacheKey, aiResponse);
+      }
     }
     
     return aiResponse;
   } catch (error) {
-    console.error('Error calling Gemini AI:', error);
-    return generateFallbackResponse(message);
+    console.error('❌ Error calling Gemini AI:', error);
+    return generateFallbackResponse(message, context);
   }
 }
 
 // Generate fallback response
-function generateFallbackResponse(message: string): string {
+function generateFallbackResponse(message: string, context?: any): string {
   const text = message.toLowerCase();
   
   if (text.includes('available') || text.includes('open')) {
     return "We have openings this week. Call (650) 613-8455 to book, or an admin will follow up shortly. - Bueno Brows";
+  }
+  
+  if (text.includes('service') || text.includes('what do you') || text.includes('what can you') || 
+      text.includes('do you do') || text.includes('do you offer') || text.includes('do you have') ||
+      text.includes('offer') || text.includes('menu') || text.includes('eyelash') || 
+      text.includes('brow') || text.includes('wax') || text.includes('tint')) {
+    
+    // Use actual services from context if available
+    if (context?.services && Array.isArray(context.services) && context.services.length > 0) {
+      const servicesList = context.services.slice(0, 5).map((s: any) => 
+        `${s.name}: $${s.price || 'N/A'}`
+      ).join(', ');
+      
+      // Check if asking about a specific service we don't offer
+      if (text.includes('eyelash extension')) {
+        return `We don't do lash extensions, but we offer lash lifts and other natural beauty enhancements that complement your natural beauty to keep you looking bueno longer! We specialize in: ${servicesList}. Want to see our full menu? Visit buenobrows.com/services or call (650) 613-8455. - Bueno Brows`;
+      }
+      
+      return `We offer: ${servicesList}${context.services.length > 5 ? ' & more' : ''}! Visit buenobrows.com/services or call (650) 613-8455 for full menu. - Bueno Brows`;
+    }
+    
+    // Fallback if no services in context
+    if (text.includes('eyelash extension')) {
+      return "We don't do lash extensions, but we offer lash lifts and other natural beauty enhancements that complement your natural beauty to keep you looking bueno longer! Visit buenobrows.com/services or call (650) 613-8455. - Bueno Brows";
+    }
+    
+    return "We offer brow shaping, tinting, waxing & more! Visit buenobrows.com/services or call (650) 613-8455 for full menu. - Bueno Brows";
   }
   
   if (text.includes('price') || text.includes('cost')) {

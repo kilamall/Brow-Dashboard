@@ -189,9 +189,15 @@ export default function PastAppointments() {
       const functions = getFunctions();
       const markAttendance = httpsCallable(functions, 'markAttendance');
       
+      // Get price/tip from appointment for receipt generation
+      const actualPrice = appointment.bookedPrice || appointment.totalPrice || 0;
+      const tipAmount = appointment.tip || 0;
+      
       const result = await markAttendance({
         appointmentId,
         attendance: newAttendance,
+        actualPrice,
+        tipAmount,
         overrideReason: reason.trim()
       });
       

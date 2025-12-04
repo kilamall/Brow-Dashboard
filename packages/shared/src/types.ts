@@ -327,6 +327,21 @@ export interface Appointment {
   receiptUrl?: string;
   receiptGeneratedAt?: string;
   receiptNumber?: string; // For display purposes
+  
+  // Multi-guest booking fields
+  bookedBy?: {
+    name: string;
+    email?: string;
+    userId?: string;
+  };
+  guestInfo?: {
+    guestId: string;
+    guestName: string;
+    guestEmail?: string;
+    guestPhone?: string;
+  };
+  isGroupBooking?: boolean;
+  groupBookingId?: string; // Link related appointments together
 }
 
 export interface AppointmentEditRequest {
@@ -614,4 +629,24 @@ export interface ProductRecommendation {
   compatibilityScore: number;
   reason: string;
   category: string;
+}
+
+// Multi-Guest Booking Types
+export interface Guest {
+  id: string; // Unique ID for this guest in the booking session
+  name: string;
+  email?: string;
+  phone?: string;
+  isSelf?: boolean; // True if this is the authenticated user
+}
+
+export interface GuestAssignment {
+  guestId: string; // Which guest this service instance is for
+  serviceId: string; // Service ID for this assignment
+}
+
+export interface ServiceAssignment {
+  serviceId: string;
+  quantity: number;
+  guestAssignments: GuestAssignment[];
 }

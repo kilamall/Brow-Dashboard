@@ -153,7 +153,10 @@ export const onAppointmentCreated = onDocumentCreated(
   }
 );
 
-// Send appointment reminder 24 hours before
+// DEPRECATED: This function is disabled - use sendAppointmentReminders (scheduled) instead
+// The scheduled function handles email/SMS reminders properly, this only sent push notifications
+// which is less reliable. Keeping commented out to avoid confusion with the scheduled function.
+/*
 export const sendAppointmentReminder = onDocumentUpdated(
   'appointments/{appointmentId}',
   async (event) => {
@@ -208,6 +211,7 @@ export const sendAppointmentReminder = onDocumentUpdated(
     }
   }
 );
+*/
 
 // AI Auto-Response Functions
 

@@ -225,9 +225,16 @@ export default function Schedule() {
       const functions = getFunctions();
       const markAttendance = httpsCallable(functions, 'markAttendance');
       
+      // Get price/tip from appointment for receipt generation
+      const appt = appts.find(a => a.id === appointmentId);
+      const actualPrice = appt?.bookedPrice || appt?.totalPrice || 0;
+      const tipAmount = appt?.tip || 0;
+      
       const result = await markAttendance({
         appointmentId,
         attendance: newAttendance,
+        actualPrice,
+        tipAmount,
         overrideReason: reason.trim()
       });
       
