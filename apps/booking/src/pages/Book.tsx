@@ -2145,7 +2145,7 @@ export default function Book() {
                     }`}
                   >
                     {/* Quantity Controls */}
-                    <div className="absolute top-4 right-4 flex items-center gap-2">
+                    <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-white rounded-lg shadow-sm p-1">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -2164,11 +2164,11 @@ export default function Book() {
                           setError('');
                         }}
                         disabled={(serviceAssignments[s.id]?.quantity || 0) <= 0}
-                        className="w-8 h-8 rounded-lg border-2 border-slate-300 hover:border-terracotta hover:bg-terracotta/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center font-bold text-slate-600 hover:text-terracotta"
+                        className="w-7 h-7 rounded-md border border-slate-300 hover:border-terracotta hover:bg-terracotta/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center font-bold text-slate-600 hover:text-terracotta text-sm"
                       >
                         −
                       </button>
-                      <span className="w-8 text-center font-bold text-lg text-slate-800">
+                      <span className="w-6 text-center font-bold text-sm text-slate-800">
                         {serviceAssignments[s.id]?.quantity || 0}
                       </span>
                       <button
@@ -2188,14 +2188,14 @@ export default function Book() {
                           setHold(null);
                           setError('');
                         }}
-                        className="w-8 h-8 rounded-lg border-2 border-terracotta bg-terracotta hover:bg-terracotta/90 transition-all flex items-center justify-center font-bold text-white shadow-sm"
+                        className="w-7 h-7 rounded-md border border-terracotta bg-terracotta hover:bg-terracotta/90 transition-all flex items-center justify-center font-bold text-white shadow-sm text-sm"
                       >
                         +
                       </button>
                     </div>
                     
                     {/* Service Content */}
-                    <div className="pr-8">
+                    <div className="pr-24">
                       <h4 className="mb-3 text-lg font-bold text-slate-800 group-hover:text-terracotta transition-colors">
                         {s.name}
                       </h4>
