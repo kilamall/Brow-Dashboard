@@ -228,6 +228,19 @@ export default function Book() {
   const [newGuestEmail, setNewGuestEmail] = useState('');
   const [newGuestPhone, setNewGuestPhone] = useState('');
 
+  // Initialize "self" guest for authenticated users
+  useEffect(() => {
+    if (user && guests.length === 0) {
+      setGuests([{
+        id: 'self',
+        name: user.displayName || user.email || 'You',
+        email: user.email || undefined,
+        phone: user.phoneNumber || undefined,
+        isSelf: true
+      }]);
+    }
+  }, [user, guests.length]);
+
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     // Check for preselected service from navigation state first
     if (locationState?.preselectedServiceId) {
@@ -247,18 +260,41 @@ export default function Book() {
   });
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [showServiceModal, setShowServiceModal] = useState(false);
+  
+  // Legacy: selected services based on selectedServiceIds (for backwards compatibility)
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id)),
     [services, selectedServiceIds]
   );
-  const totalDuration = useMemo(
-    () => selectedServices.reduce((sum, service) => sum + service.duration, 0),
-    [selectedServices]
-  );
-  const subtotalPrice = useMemo(
-    () => selectedServices.reduce((sum, service) => sum + service.price, 0),
-    [selectedServices]
-  );
+  
+  // New: Calculate totals based on serviceAssignments (with quantities)
+  const hasAssignments = Object.keys(serviceAssignments).length > 0;
+  
+  const totalDuration = useMemo(() => {
+    if (hasAssignments) {
+      // Use quantity-based calculation
+      return Object.values(serviceAssignments).reduce((sum, assignment) => {
+        const service = services.find(s => s.id === assignment.serviceId);
+        return sum + (service ? service.duration * assignment.quantity : 0);
+      }, 0);
+    } else {
+      // Fall back to legacy calculation
+      return selectedServices.reduce((sum, service) => sum + service.duration, 0);
+    }
+  }, [hasAssignments, serviceAssignments, services, selectedServices]);
+  
+  const subtotalPrice = useMemo(() => {
+    if (hasAssignments) {
+      // Use quantity-based calculation
+      return Object.values(serviceAssignments).reduce((sum, assignment) => {
+        const service = services.find(s => s.id === assignment.serviceId);
+        return sum + (service ? service.price * assignment.quantity : 0);
+      }, 0);
+    } else {
+      // Fall back to legacy calculation
+      return selectedServices.reduce((sum, service) => sum + service.price, 0);
+    }
+  }, [hasAssignments, serviceAssignments, services, selectedServices]);
 
   // Watch promotions
   useEffect(() => {
@@ -1847,6 +1883,143 @@ export default function Book() {
       setHold(null);
       isFinalizingRef.current = false;
     }
+  }
+
+  // Multi-guest booking: Smart assignment logic
+  function handleIncreaseQuantity(serviceId: string) {
+    const current = serviceAssignments[serviceId] || {
+      serviceId,
+      quantity: 0,
+      guestAssignments: []
+    };
+    
+    const newQuantity = current.quantity + 1;
+    
+    // Case 1: First selection and user is authenticated -> assign to self
+    if (newQuantity === 1 && user) {
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          serviceId,
+          quantity: 1,
+          guestAssignments: [{ guestId: 'self', serviceId }]
+        }
+      });
+      return;
+    }
+    
+    // Case 2: First selection for guest user -> assign to guest-self
+    if (newQuantity === 1 && !user) {
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          serviceId,
+          quantity: 1,
+          guestAssignments: [{ guestId: 'guest-self', serviceId }]
+        }
+      });
+      return;
+    }
+    
+    // Case 3: Additional quantity -> need guest assignment
+    if (newQuantity > 1) {
+      const assignedGuestIds = current.guestAssignments.map(ga => ga.guestId);
+      const availableGuests = guests.filter(g => !assignedGuestIds.includes(g.id));
+      
+      if (availableGuests.length === 1) {
+        // Only one available guest, auto-assign
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            serviceId,
+            quantity: newQuantity,
+            guestAssignments: [
+              ...current.guestAssignments,
+              { guestId: availableGuests[0].id, serviceId }
+            ]
+          }
+        });
+      } else {
+        // Multiple options or no guests available, show assignment prompt
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            ...current,
+            quantity: newQuantity,
+            guestAssignments: current.guestAssignments
+          }
+        });
+        setPendingServiceAssignment(serviceId);
+        if (availableGuests.length === 0) {
+          setShowAddGuestModal(true);
+        } else {
+          setShowGuestAssignment(true);
+        }
+      }
+    }
+  }
+
+  function handleDecreaseQuantity(serviceId: string) {
+    const current = serviceAssignments[serviceId];
+    if (!current || current.quantity <= 0) return;
+    
+    const newQuantity = current.quantity - 1;
+    
+    if (newQuantity === 0) {
+      // Remove service entirely
+      const { [serviceId]: removed, ...rest } = serviceAssignments;
+      setServiceAssignments(rest);
+    } else {
+      // Remove last guest assignment
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          ...current,
+          quantity: newQuantity,
+          guestAssignments: current.guestAssignments.slice(0, -1)
+        }
+      });
+    }
+  }
+
+  function assignServiceToGuest(serviceId: string, guestId: string) {
+    const current = serviceAssignments[serviceId];
+    if (!current) return;
+    
+    // Add guest assignment for the unassigned slot
+    setServiceAssignments({
+      ...serviceAssignments,
+      [serviceId]: {
+        ...current,
+        guestAssignments: [
+          ...current.guestAssignments,
+          { guestId, serviceId }
+        ]
+      }
+    });
+    
+    // Close modals and clear pending
+    setShowGuestAssignment(false);
+    setPendingServiceAssignment(null);
+  }
+
+  function removeGuest(guestId: string) {
+    // Remove guest from list
+    setGuests(guests.filter(g => g.id !== guestId));
+    
+    // Remove all assignments for this guest
+    const updatedAssignments = { ...serviceAssignments };
+    Object.keys(updatedAssignments).forEach(serviceId => {
+      updatedAssignments[serviceId].guestAssignments = 
+        updatedAssignments[serviceId].guestAssignments.filter(ga => ga.guestId !== guestId);
+      updatedAssignments[serviceId].quantity = updatedAssignments[serviceId].guestAssignments.length;
+      
+      // Remove service if no assignments left
+      if (updatedAssignments[serviceId].quantity === 0) {
+        delete updatedAssignments[serviceId];
+      }
+    });
+    setServiceAssignments(updatedAssignments);
   }
 
   const prettyTime = (iso: string) => {
