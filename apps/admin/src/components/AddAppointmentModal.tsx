@@ -10,7 +10,7 @@ import {
   watchDayClosures,
   watchSpecialHours
 } from '@buenobrows/shared/firestoreActions';
-import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours, Guest, ServiceAssignment } from '@buenobrows/shared/types';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { fromZonedTime } from 'date-fns-tz';
@@ -50,6 +50,17 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   // Form - Initialize with prefilled data if provided
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({}); // Phase 2: Quantity tracking
+  
+  // Phase 3: Multi-guest booking state
+  const [guests, setGuests] = useState<Guest[]>([]);
+  const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment>>({});
+  const [showAddGuestModal, setShowAddGuestModal] = useState(false);
+  const [showGuestAssignment, setShowGuestAssignment] = useState(false);
+  const [pendingServiceAssignment, setPendingServiceAssignment] = useState<string | null>(null);
+  const [newGuestName, setNewGuestName] = useState('');
+  const [newGuestEmail, setNewGuestEmail] = useState('');
+  const [newGuestPhone, setNewGuestPhone] = useState('');
+  
   const [customerTerm, setCustomerTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [timeHHMM, setTimeHHMM] = useState('10:00');
@@ -102,6 +113,14 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       setNotes('');
       setSelectedServiceIds([]);
       setServiceQuantities({}); // Phase 2: Clear quantities
+      setServiceAssignments({}); // Phase 3: Clear assignments
+      setGuests([]); // Phase 3: Clear guests
+      setShowAddGuestModal(false);
+      setShowGuestAssignment(false);
+      setPendingServiceAssignment(null);
+      setNewGuestName('');
+      setNewGuestEmail('');
+      setNewGuestPhone('');
       setTimeHHMM('09:00'); // Default time
       setSelectedDate(format(date, 'yyyy-MM-dd')); // Reset to prop date
       setErr('');
@@ -126,7 +145,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     }
   }, [open, prefillData, allCustomers]);
 
-  // Check if we're using quantities or legacy selection
+  // Check if we're using assignments (Phase 3) or quantities (Phase 2) or legacy selection
+  const hasAssignments = Object.keys(serviceAssignments).length > 0;
   const hasQuantities = Object.keys(serviceQuantities).length > 0;
   
   const selectedServices = useMemo(
@@ -135,52 +155,165 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   );
   
   const totalDuration = useMemo(() => {
-    if (hasQuantities) {
-      // Use quantity-based calculation
+    if (hasAssignments) {
+      // Phase 3: Use assignment-based calculation
+      return Object.values(serviceAssignments).reduce((sum, assignment) => {
+        const service = services.find(s => s.id === assignment.serviceId);
+        return sum + (service ? service.duration * assignment.quantity : 0);
+      }, 0);
+    } else if (hasQuantities) {
+      // Phase 2: Use quantity-based calculation
       return Object.entries(serviceQuantities).reduce((sum, [serviceId, quantity]) => {
         const service = services.find(s => s.id === serviceId);
         return sum + (service ? service.duration * quantity : 0);
       }, 0);
     } else {
-      // Fall back to legacy calculation
+      // Legacy: Fall back to simple sum
       return selectedServices.reduce((sum, service) => sum + service.duration, 0);
     }
-  }, [hasQuantities, serviceQuantities, services, selectedServices]);
+  }, [hasAssignments, hasQuantities, serviceAssignments, serviceQuantities, services, selectedServices]);
   
   const totalPrice = useMemo(() => {
-    if (hasQuantities) {
-      // Use quantity-based calculation
+    if (hasAssignments) {
+      // Phase 3: Use assignment-based calculation
+      return Object.values(serviceAssignments).reduce((sum, assignment) => {
+        const service = services.find(s => s.id === assignment.serviceId);
+        return sum + (service ? service.price * assignment.quantity : 0);
+      }, 0);
+    } else if (hasQuantities) {
+      // Phase 2: Use quantity-based calculation
       return Object.entries(serviceQuantities).reduce((sum, [serviceId, quantity]) => {
         const service = services.find(s => s.id === serviceId);
         return sum + (service ? service.price * quantity : 0);
       }, 0);
     } else {
-      // Fall back to legacy calculation
+      // Legacy: Fall back to simple sum
       return selectedServices.reduce((sum, service) => sum + service.price, 0);
     }
-  }, [hasQuantities, serviceQuantities, services, selectedServices]);
+  }, [hasAssignments, hasQuantities, serviceAssignments, serviceQuantities, services, selectedServices]);
 
-  // Quantity control handlers for Phase 2
+  // Phase 3: Smart quantity control handlers with guest assignment
   const handleIncreaseQuantity = (serviceId: string) => {
-    const current = serviceQuantities[serviceId] || 0;
-    setServiceQuantities({
-      ...serviceQuantities,
-      [serviceId]: current + 1
-    });
+    const current = serviceAssignments[serviceId] || {
+      serviceId,
+      quantity: 0,
+      guestAssignments: []
+    };
+    
+    const newQuantity = current.quantity + 1;
+    
+    // If only one guest available, auto-assign
+    if (guests.length === 1) {
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          serviceId,
+          quantity: newQuantity,
+          guestAssignments: [
+            ...current.guestAssignments,
+            { guestId: guests[0].id, serviceId }
+          ]
+        }
+      });
+      return;
+    }
+    
+    // If no guests yet or multiple guests, show assignment prompt
+    if (newQuantity > 1 || guests.length === 0 || guests.length > 1) {
+      const assignedGuestIds = current.guestAssignments.map(ga => ga.guestId);
+      const availableGuests = guests.filter(g => !assignedGuestIds.includes(g.id));
+      
+      if (availableGuests.length === 1) {
+        // Only one available guest, auto-assign
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            serviceId,
+            quantity: newQuantity,
+            guestAssignments: [
+              ...current.guestAssignments,
+              { guestId: availableGuests[0].id, serviceId }
+            ]
+          }
+        });
+      } else {
+        // Multiple options or no guests, show assignment prompt
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            ...current,
+            quantity: newQuantity,
+            guestAssignments: current.guestAssignments
+          }
+        });
+        setPendingServiceAssignment(serviceId);
+        if (availableGuests.length === 0) {
+          setShowAddGuestModal(true);
+        } else {
+          setShowGuestAssignment(true);
+        }
+      }
+    }
   };
   
   const handleDecreaseQuantity = (serviceId: string) => {
-    const current = serviceQuantities[serviceId] || 0;
-    if (current <= 1) {
+    const current = serviceAssignments[serviceId];
+    if (!current || current.quantity <= 0) return;
+    
+    const newQuantity = current.quantity - 1;
+    
+    if (newQuantity === 0) {
       // Remove service entirely
-      const { [serviceId]: removed, ...rest } = serviceQuantities;
-      setServiceQuantities(rest);
+      const { [serviceId]: removed, ...rest } = serviceAssignments;
+      setServiceAssignments(rest);
     } else {
-      setServiceQuantities({
-        ...serviceQuantities,
-        [serviceId]: current - 1
+      // Remove last guest assignment
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          ...current,
+          quantity: newQuantity,
+          guestAssignments: current.guestAssignments.slice(0, -1)
+        }
       });
     }
+  };
+
+  const assignServiceToGuest = (serviceId: string, guestId: string) => {
+    const current = serviceAssignments[serviceId];
+    if (!current) return;
+    
+    setServiceAssignments({
+      ...serviceAssignments,
+      [serviceId]: {
+        ...current,
+        guestAssignments: [
+          ...current.guestAssignments,
+          { guestId, serviceId }
+        ]
+      }
+    });
+    
+    setShowGuestAssignment(false);
+    setPendingServiceAssignment(null);
+  };
+
+  const removeGuest = (guestId: string) => {
+    setGuests(guests.filter(g => g.id !== guestId));
+    
+    // Remove all assignments for this guest
+    const updatedAssignments: Record<string, ServiceAssignment> = {};
+    Object.entries(serviceAssignments).forEach(([sId, assignment]) => {
+      const filteredAssignments = assignment.guestAssignments.filter(ga => ga.guestId !== guestId);
+      if (filteredAssignments.length > 0) {
+        updatedAssignments[sId] = {
+          ...assignment,
+          quantity: filteredAssignments.length,
+          guestAssignments: filteredAssignments
+        };
+      }
+    });
+    setServiceAssignments(updatedAssignments);
   };
 
   // Group services by category
@@ -280,8 +413,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     try {
       setSaving(true); setErr('');
       
-      // Validate that at least one service is selected (check both legacy and quantity-based)
-      const hasServices = hasQuantities 
+      // Validate that at least one service is selected (check assignments, quantities, or legacy)
+      const hasServices = hasAssignments
+        ? Object.keys(serviceAssignments).length > 0
+        : hasQuantities 
         ? Object.keys(serviceQuantities).length > 0
         : selectedServiceIds.length > 0;
       
@@ -330,16 +465,23 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       // Convert from business timezone to UTC for storage
       const start = fromZonedTime(localTimeStr, businessTimezone);
 
-      // Expand quantities to service IDs array for Phase 2
-      const finalServiceIds = hasQuantities
+      // Expand assignments/quantities to service IDs array
+      const finalServiceIds = hasAssignments
+        ? Object.values(serviceAssignments).flatMap(assignment =>
+            Array(assignment.quantity).fill(assignment.serviceId)
+          )
+        : hasQuantities
         ? Object.entries(serviceQuantities).flatMap(([serviceId, quantity]) =>
             Array(quantity).fill(serviceId)
           )
         : selectedServiceIds;
       
       console.log('🎯 Creating appointment with service IDs:', {
+        hasAssignments,
         hasQuantities,
-        serviceQuantities: hasQuantities ? serviceQuantities : 'using legacy',
+        serviceAssignments: hasAssignments ? serviceAssignments : 'not used',
+        serviceQuantities: hasQuantities ? serviceQuantities : 'not used',
+        guests: guests.length,
         finalServiceIds
       });
 
@@ -351,7 +493,15 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         duration: totalDuration,
         status: 'confirmed',
         bookedPrice: totalPrice, // Legacy field - total price for all services
-        servicePrices: hasQuantities
+        servicePrices: hasAssignments
+          ? Object.values(serviceAssignments).reduce((acc, assignment) => {
+              const service = services.find(s => s.id === assignment.serviceId);
+              if (service) {
+                acc[assignment.serviceId] = service.price; // Store price per service (not multiplied)
+              }
+              return acc;
+            }, {} as Record<string, number>)
+          : hasQuantities
           ? Object.entries(serviceQuantities).reduce((acc, [serviceId, quantity]) => {
               const service = services.find(s => s.id === serviceId);
               if (service) {
@@ -380,7 +530,12 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           customerName: name || selectedCustomer?.name || customerTerm,
           start: start.toISOString(),
           duration: totalDuration,
-          serviceNames: hasQuantities
+          serviceNames: hasAssignments
+            ? Object.values(serviceAssignments).map(assignment => {
+                const service = services.find(s => s.id === assignment.serviceId);
+                return `${service?.name || 'Service'}${assignment.quantity > 1 ? ` (×${assignment.quantity})` : ''}`;
+              }).join(', ')
+            : hasQuantities
             ? Object.entries(serviceQuantities).map(([serviceId, quantity]) => {
                 const service = services.find(s => s.id === serviceId);
                 return `${service?.name || 'Service'}${quantity > 1 ? ` (×${quantity})` : ''}`;
@@ -525,7 +680,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   <div>
                     <label className="text-sm font-medium text-slate-700 mb-2 block">
                       Select Services {(() => {
-                        const totalQty = Object.values(serviceQuantities).reduce((sum, qty) => sum + qty, 0);
+                        const totalQty = hasAssignments
+                          ? Object.values(serviceAssignments).reduce((sum, a) => sum + a.quantity, 0)
+                          : Object.values(serviceQuantities).reduce((sum, qty) => sum + qty, 0);
                         return totalQty > 0 && <span className="text-terracotta">({totalQty} service{totalQty !== 1 ? 's' : ''})</span>;
                       })()}
                     </label>
@@ -565,7 +722,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                               <div className="p-3 bg-white">
                                 <div className="grid gap-2">
                                   {categoryServices.map((s) => {
-                                    const quantity = serviceQuantities[s.id] || 0;
+                                    const quantity = serviceAssignments[s.id]?.quantity || 0;
                                     const isSelected = quantity > 0;
                                     return (
                                       <div
@@ -632,45 +789,97 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                       })}
                     </div>
                     
-                    {/* Selected Services Summary Bar with Quantities */}
-                    {Object.keys(serviceQuantities).length > 0 && (
+                    {/* Selected Services Summary Bar with Quantities and Guests */}
+                    {(Object.keys(serviceAssignments).length > 0 || Object.keys(serviceQuantities).length > 0) && (
                       <div className="mt-3 p-3 bg-terracotta/10 border border-terracotta/20 rounded-lg">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm font-medium text-slate-700">Selected Services</span>
                           <button
                             type="button"
-                            onClick={() => setServiceQuantities({})}
+                            onClick={() => {
+                              setServiceAssignments({});
+                              setServiceQuantities({});
+                            }}
                             className="text-xs text-slate-500 hover:text-red-600 transition-colors"
                           >
                             Clear All
                           </button>
                         </div>
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {Object.entries(serviceQuantities).map(([serviceId, quantity]) => {
-                            const service = services.find(s => s.id === serviceId);
-                            if (!service) return null;
-                            return (
-                              <div
-                                key={serviceId}
-                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-md text-xs border border-slate-200"
-                              >
-                                <span className="font-medium">{service.name}</span>
-                                {quantity > 1 && (
-                                  <span className="text-terracotta font-bold">× {quantity}</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const { [serviceId]: removed, ...rest } = serviceQuantities;
-                                    setServiceQuantities(rest);
-                                  }}
-                                  className="ml-1 text-slate-400 hover:text-red-600 transition-colors"
+                        <div className="space-y-2 mb-2">
+                          {hasAssignments ? (
+                            /* Phase 3: Show assignments with guests */
+                            Object.values(serviceAssignments).map(assignment => {
+                              const service = services.find(s => s.id === assignment.serviceId);
+                              if (!service) return null;
+                              return (
+                                <div
+                                  key={assignment.serviceId}
+                                  className="bg-white rounded-lg p-2 border border-slate-200"
                                 >
-                                  ×
-                                </button>
-                              </div>
-                            );
-                          })}
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-sm">{service.name}</span>
+                                      {assignment.quantity > 1 && (
+                                        <span className="text-terracotta font-bold text-xs">× {assignment.quantity}</span>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const { [assignment.serviceId]: removed, ...rest } = serviceAssignments;
+                                        setServiceAssignments(rest);
+                                      }}
+                                      className="text-slate-400 hover:text-red-600 transition-colors"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                  {assignment.guestAssignments.length > 0 && (
+                                    <div className="ml-2 space-y-0.5">
+                                      {assignment.guestAssignments.map((ga, idx) => {
+                                        const guest = guests.find(g => g.id === ga.guestId);
+                                        return (
+                                          <div key={idx} className="text-xs text-slate-600 flex items-center gap-1">
+                                            <span className="w-1 h-1 rounded-full bg-terracotta"></span>
+                                            {guest?.name || 'Unassigned'}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            /* Phase 2: Show quantities without guests */
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(serviceQuantities).map(([serviceId, quantity]) => {
+                                const service = services.find(s => s.id === serviceId);
+                                if (!service) return null;
+                                return (
+                                  <div
+                                    key={serviceId}
+                                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-md text-xs border border-slate-200"
+                                  >
+                                    <span className="font-medium">{service.name}</span>
+                                    {quantity > 1 && (
+                                      <span className="text-terracotta font-bold">× {quantity}</span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const { [serviceId]: removed, ...rest } = serviceQuantities;
+                                        setServiceQuantities(rest);
+                                      }}
+                                      className="ml-1 text-slate-400 hover:text-red-600 transition-colors"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center justify-between pt-2 border-t border-terracotta/20">
                           <div className="flex items-center gap-4 text-sm">
@@ -685,6 +894,59 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                       </div>
                     )}
                   </div>
+
+                  {/* Guest Management (Phase 3) */}
+                  {hasAssignments && guests.length >= 0 && (
+                    <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-semibold text-slate-800 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
+                          </svg>
+                          Guests ({guests.length})
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddGuestModal(true)}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-all"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          Add Guest
+                        </button>
+                      </div>
+                      
+                      {guests.length === 0 ? (
+                        <div className="text-sm text-slate-600 text-center py-3">
+                          No guests added yet. Click "Add Guest" to book for multiple people.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {guests.map(guest => (
+                            <div key={guest.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-purple-200">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white font-semibold text-sm">
+                                  {guest.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="font-medium text-slate-800">{guest.name}</div>
+                                  {guest.email && <div className="text-xs text-slate-500">{guest.email}</div>}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeGuest(guest.id)}
+                                className="text-red-600 hover:text-red-700 text-sm font-medium transition-all"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Date/time */}
                   <div className="grid sm:grid-cols-3 gap-3">
@@ -789,7 +1051,13 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
 
                   <div className="flex justify-end gap-2">
                     <button className="px-4 py-2 rounded-md border" onClick={onClose} disabled={saving}>Cancel</button>
-                    <button className="px-4 py-2 rounded-md bg-terracotta text-white" onClick={handleCreate} disabled={saving || selectedServiceIds.length === 0}>{saving ? 'Saving…' : 'Create appointment'}</button>
+                    <button 
+                      className="px-4 py-2 rounded-md bg-terracotta text-white" 
+                      onClick={handleCreate} 
+                      disabled={saving || (hasAssignments ? Object.keys(serviceAssignments).length === 0 : selectedServiceIds.length === 0)}
+                    >
+                      {saving ? 'Saving…' : 'Create appointment'}
+                    </button>
                   </div>
                 </div>
               </Dialog.Panel>
@@ -798,5 +1066,168 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         </div>
       </Dialog>
     </Transition>
+
+      {/* Guest Assignment Modal (Phase 3) */}
+      {showGuestAssignment && pendingServiceAssignment && open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800">
+              Who is this service for?
+            </h3>
+            
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {guests.map(guest => {
+                const assignment = serviceAssignments[pendingServiceAssignment];
+                const alreadyAssigned = assignment?.guestAssignments.some(ga => ga.guestId === guest.id);
+                
+                return (
+                  <button
+                    key={guest.id}
+                    type="button"
+                    onClick={() => assignServiceToGuest(pendingServiceAssignment, guest.id)}
+                    disabled={alreadyAssigned}
+                    className={`w-full text-left p-3 border-2 rounded-lg transition-all ${
+                      alreadyAssigned
+                        ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
+                        : 'border-slate-300 hover:border-purple-500 hover:bg-purple-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+                        {guest.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-slate-800">{guest.name}</div>
+                        {guest.email && <div className="text-sm text-slate-500">{guest.email}</div>}
+                        {alreadyAssigned && <div className="text-xs text-slate-500 mt-1">Already assigned</div>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+              
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGuestAssignment(false);
+                  setShowAddGuestModal(true);
+                }}
+                className="w-full p-4 border-2 border-dashed border-purple-500 rounded-lg hover:bg-purple-50 text-purple-600 font-medium transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add New Guest
+              </button>
+            </div>
+            
+            <button
+              type="button"
+              onClick={() => {
+                setShowGuestAssignment(false);
+                setPendingServiceAssignment(null);
+              }}
+              className="w-full mt-4 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Guest Modal (Phase 3) */}
+      {showAddGuestModal && open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800">Add Guest</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Guest Name *
+                </label>
+                <input
+                  type="text"
+                  value={newGuestName}
+                  onChange={(e) => setNewGuestName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20"
+                  placeholder="Enter guest name"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Email (optional)
+                </label>
+                <input
+                  type="email"
+                  value={newGuestEmail}
+                  onChange={(e) => setNewGuestEmail(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20"
+                  placeholder="guest@example.com"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Phone (optional)
+                </label>
+                <input
+                  type="tel"
+                  value={newGuestPhone}
+                  onChange={(e) => setNewGuestPhone(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20"
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddGuestModal(false);
+                  setNewGuestName('');
+                  setNewGuestEmail('');
+                  setNewGuestPhone('');
+                  setPendingServiceAssignment(null);
+                }}
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newGuestName.trim()) return;
+                  const newGuest: Guest = {
+                    id: `guest-${Date.now()}`,
+                    name: newGuestName.trim(),
+                    email: newGuestEmail.trim() || undefined,
+                    phone: newGuestPhone.trim() || undefined,
+                    isSelf: false
+                  };
+                  setGuests([...guests, newGuest]);
+                  setShowAddGuestModal(false);
+                  setNewGuestName('');
+                  setNewGuestEmail('');
+                  setNewGuestPhone('');
+                  
+                  // If there's a pending service assignment, assign it to this guest
+                  if (pendingServiceAssignment) {
+                    assignServiceToGuest(pendingServiceAssignment, newGuest.id);
+                    setPendingServiceAssignment(null);
+                  }
+                }}
+                disabled={!newGuestName.trim()}
+                className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                Add Guest
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
   );
 }
