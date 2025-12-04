@@ -2131,44 +2131,60 @@ export default function Book() {
                 {categoryServices.map((s) => (
                   <div
                     key={s.id}
-                    className={`group relative cursor-pointer rounded-2xl border-2 p-6 transition-all duration-300 hover:scale-[1.02] ${
-                      selectedServiceIds.includes(s.id) 
+                    className={`group relative rounded-2xl border-2 p-6 transition-all duration-300 ${
+                      (serviceAssignments[s.id]?.quantity || 0) > 0
                         ? 'border-terracotta bg-gradient-to-br from-terracotta/10 to-terracotta/5 shadow-lg ring-2 ring-terracotta/20' 
                         : 'border-slate-200 bg-white hover:border-terracotta/40 hover:shadow-md'
                     }`}
-                    onClick={() => {
-                      if (selectedServiceIds.includes(s.id)) {
-                        setSelectedServiceIds(prev => prev.filter(id => id !== s.id));
-                      } else {
-                        setSelectedServiceIds(prev => [...prev, s.id]);
-                      }
-                      
-                      // Release hold when services change
-                      if (hold) {
-                        console.log('Services changed, releasing hold:', hold.id);
-                        releaseHoldClient(hold.id)
-                          .then(() => console.log('Successfully released hold on service change'))
-                          .catch(e => console.warn('Failed to release hold:', e));
-                      }
-                      
-                      setChosen(null);
-                      setHold(null);
-                      setError('');
-                    }}
                   >
-                    {/* Selection Indicator */}
-                    <div className="absolute top-4 right-4">
-                      <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                        selectedServiceIds.includes(s.id)
-                          ? 'border-terracotta bg-terracotta'
-                          : 'border-slate-300 bg-white'
-                      }`}>
-                        {selectedServiceIds.includes(s.id) && (
-                          <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </div>
+                    {/* Quantity Controls */}
+                    <div className="absolute top-4 right-4 flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDecreaseQuantity(s.id);
+                          
+                          // Release hold when services change
+                          if (hold) {
+                            console.log('Services changed, releasing hold:', hold.id);
+                            releaseHoldClient(hold.id)
+                              .then(() => console.log('Successfully released hold on service change'))
+                              .catch(e => console.warn('Failed to release hold:', e));
+                          }
+                          
+                          setChosen(null);
+                          setHold(null);
+                          setError('');
+                        }}
+                        disabled={(serviceAssignments[s.id]?.quantity || 0) <= 0}
+                        className="w-8 h-8 rounded-lg border-2 border-slate-300 hover:border-terracotta hover:bg-terracotta/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center font-bold text-slate-600 hover:text-terracotta"
+                      >
+                        −
+                      </button>
+                      <span className="w-8 text-center font-bold text-lg text-slate-800">
+                        {serviceAssignments[s.id]?.quantity || 0}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleIncreaseQuantity(s.id);
+                          
+                          // Release hold when services change
+                          if (hold) {
+                            console.log('Services changed, releasing hold:', hold.id);
+                            releaseHoldClient(hold.id)
+                              .then(() => console.log('Successfully released hold on service change'))
+                              .catch(e => console.warn('Failed to release hold:', e));
+                          }
+                          
+                          setChosen(null);
+                          setHold(null);
+                          setError('');
+                        }}
+                        className="w-8 h-8 rounded-lg border-2 border-terracotta bg-terracotta hover:bg-terracotta/90 transition-all flex items-center justify-center font-bold text-white shadow-sm"
+                      >
+                        +
+                      </button>
                     </div>
                     
                     {/* Service Content */}
@@ -2218,8 +2234,53 @@ export default function Book() {
           ))}
         </div>
         
-        {/* Selected Services Summary */}
-        {selectedServices.length > 0 && (
+        {/* Guests Management (for authenticated users) */}
+        {user && guests.length > 0 && (
+          <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-semibold text-slate-800">Guests</h4>
+              <button
+                onClick={() => setShowAddGuestModal(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 text-sm font-medium transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Guest
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              {guests.map(guest => (
+                <div key={guest.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-terracotta to-terracotta/80 flex items-center justify-center text-white font-semibold">
+                      {guest.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="font-medium text-slate-800">
+                        {guest.name}
+                        {guest.isSelf && <span className="ml-2 text-xs text-terracotta">(You)</span>}
+                      </div>
+                      {guest.email && <div className="text-sm text-slate-500">{guest.email}</div>}
+                    </div>
+                  </div>
+                  {!guest.isSelf && (
+                    <button
+                      onClick={() => removeGuest(guest.id)}
+                      className="text-red-600 hover:text-red-700 text-sm font-medium transition-all"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Selected Services Summary with Guest Assignments */}
+        {(hasAssignments ? Object.keys(serviceAssignments).length > 0 : selectedServices.length > 0) && (
           <div className="mt-8 rounded-2xl bg-gradient-to-br from-terracotta/5 to-terracotta/10 border-2 border-terracotta/20 p-6 shadow-lg">
             <div className="mb-6 flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-terracotta text-white">
@@ -2229,25 +2290,88 @@ export default function Book() {
               </div>
               <div>
                 <h4 className="text-lg font-bold text-slate-800">
-                  Your Selection ({selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'})
+                  Your Selection
+                  {hasAssignments && (
+                    <span className="ml-2">
+                      ({Object.values(serviceAssignments).reduce((sum, a) => sum + a.quantity, 0)} {Object.values(serviceAssignments).reduce((sum, a) => sum + a.quantity, 0) === 1 ? 'Service' : 'Services'})
+                    </span>
+                  )}
+                  {!hasAssignments && (
+                    <span className="ml-2">
+                      ({selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'})
+                    </span>
+                  )}
                 </h4>
                 <p className="text-sm text-slate-600">Review your selected services below</p>
               </div>
             </div>
             
             <div className="mb-6 space-y-3">
-              {selectedServices.map((service) => (
-                <div key={service.id} className="flex items-center justify-between rounded-xl bg-white/80 px-4 py-3 shadow-sm border border-slate-200">
-                  <div className="flex items-center gap-3">
-                    <div className="h-2 w-2 rounded-full bg-terracotta"></div>
-                    <span className="font-semibold text-slate-800">{service.name}</span>
+              {hasAssignments ? (
+                /* Show services with guest assignments */
+                Object.values(serviceAssignments).map(assignment => {
+                  const service = services.find(s => s.id === assignment.serviceId);
+                  if (!service) return null;
+                  
+                  return (
+                    <div key={assignment.serviceId} className="rounded-xl bg-white/80 p-4 shadow-sm border border-slate-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-2 w-2 rounded-full bg-terracotta"></div>
+                          <span className="font-semibold text-slate-800">{service.name}</span>
+                          {assignment.quantity > 1 && (
+                            <span className="text-sm text-slate-500">× {assignment.quantity}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="text-slate-600">{service.duration * assignment.quantity}m</span>
+                          <span className="font-bold text-terracotta text-lg">${(service.price * assignment.quantity).toFixed(2)}</span>
+                        </div>
+                      </div>
+                      
+                      {/* Show guest assignments */}
+                      {assignment.guestAssignments.length > 0 && (
+                        <div className="space-y-1 pt-3 border-t border-slate-200">
+                          {assignment.guestAssignments.map((ga, idx) => {
+                            const guest = ga.guestId === 'self' 
+                              ? { name: user?.displayName || 'You', email: user?.email, isSelf: true }
+                              : ga.guestId === 'guest-self'
+                              ? { name: 'You', email: gEmail, isSelf: true }
+                              : guests.find(g => g.id === ga.guestId);
+                            
+                            return (
+                              <div key={idx} className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-terracotta/50"></div>
+                                  <span className="text-slate-700">
+                                    {guest?.name || 'Unassigned'}
+                                    {guest?.isSelf && <span className="text-xs text-terracotta ml-1">(You)</span>}
+                                  </span>
+                                </div>
+                                <span className="text-slate-500">${service.price.toFixed(2)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                /* Legacy: show services without guest assignments */
+                selectedServices.map((service) => (
+                  <div key={service.id} className="flex items-center justify-between rounded-xl bg-white/80 px-4 py-3 shadow-sm border border-slate-200">
+                    <div className="flex items-center gap-3">
+                      <div className="h-2 w-2 rounded-full bg-terracotta"></div>
+                      <span className="font-semibold text-slate-800">{service.name}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-slate-600">{service.duration}m</span>
+                      <span className="font-bold text-terracotta text-lg">${service.price.toFixed(2)}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className="text-slate-600">{service.duration}m</span>
-                    <span className="font-bold text-terracotta text-lg">${service.price.toFixed(2)}</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
             
             <div className="rounded-xl bg-white/90 p-4 border border-slate-200 space-y-3">
@@ -3185,6 +3309,169 @@ export default function Book() {
             customerEmail={user.email || ''}
             appointmentId={hold?.id}
           />
+        </div>
+      )}
+
+      {/* Guest Assignment Modal */}
+      {showGuestAssignment && pendingServiceAssignment && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800">
+              Who is this service for?
+            </h3>
+            
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {/* Assign to existing guests */}
+              {guests.map(guest => {
+                const assignment = serviceAssignments[pendingServiceAssignment];
+                const alreadyAssigned = assignment?.guestAssignments.some(ga => ga.guestId === guest.id);
+                
+                return (
+                  <button
+                    key={guest.id}
+                    onClick={() => assignServiceToGuest(pendingServiceAssignment, guest.id)}
+                    disabled={alreadyAssigned}
+                    className={`w-full text-left p-3 border-2 rounded-lg transition-all ${
+                      alreadyAssigned
+                        ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
+                        : 'border-slate-300 hover:border-terracotta hover:bg-terracotta/5'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-terracotta to-terracotta/80 flex items-center justify-center text-white font-semibold">
+                        {guest.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-slate-800">
+                          {guest.name}
+                          {guest.isSelf && <span className="ml-2 text-xs text-terracotta">(You)</span>}
+                        </div>
+                        {guest.email && <div className="text-sm text-slate-500">{guest.email}</div>}
+                        {alreadyAssigned && <div className="text-xs text-slate-500 mt-1">Already assigned</div>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+              
+              {/* Add new guest option */}
+              <button
+                onClick={() => {
+                  setShowGuestAssignment(false);
+                  setShowAddGuestModal(true);
+                }}
+                className="w-full p-4 border-2 border-dashed border-terracotta rounded-lg hover:bg-terracotta/5 text-terracotta font-medium transition-all flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add New Guest
+              </button>
+            </div>
+            
+            <button
+              onClick={() => {
+                setShowGuestAssignment(false);
+                setPendingServiceAssignment(null);
+              }}
+              className="w-full mt-4 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Guest Modal */}
+      {showAddGuestModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-4 text-slate-800">Add Guest</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Guest Name *
+                </label>
+                <input
+                  type="text"
+                  value={newGuestName}
+                  onChange={(e) => setNewGuestName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-terracotta focus:ring-2 focus:ring-terracotta/20"
+                  placeholder="Enter guest name"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Email (optional)
+                </label>
+                <input
+                  type="email"
+                  value={newGuestEmail}
+                  onChange={(e) => setNewGuestEmail(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-terracotta focus:ring-2 focus:ring-terracotta/20"
+                  placeholder="guest@example.com"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Phone (optional)
+                </label>
+                <input
+                  type="tel"
+                  value={newGuestPhone}
+                  onChange={(e) => setNewGuestPhone(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-terracotta focus:ring-2 focus:ring-terracotta/20"
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowAddGuestModal(false);
+                  setNewGuestName('');
+                  setNewGuestEmail('');
+                  setNewGuestPhone('');
+                  setPendingServiceAssignment(null);
+                }}
+                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!newGuestName.trim()) return;
+                  const newGuest: Guest = {
+                    id: `guest-${Date.now()}`,
+                    name: newGuestName.trim(),
+                    email: newGuestEmail.trim() || undefined,
+                    phone: newGuestPhone.trim() || undefined,
+                    isSelf: false
+                  };
+                  setGuests([...guests, newGuest]);
+                  setShowAddGuestModal(false);
+                  setNewGuestName('');
+                  setNewGuestEmail('');
+                  setNewGuestPhone('');
+                  
+                  // If there's a pending service assignment, assign it to this guest
+                  if (pendingServiceAssignment) {
+                    assignServiceToGuest(pendingServiceAssignment, newGuest.id);
+                    setPendingServiceAssignment(null);
+                  }
+                }}
+                disabled={!newGuestName.trim()}
+                className="flex-1 px-4 py-2 bg-terracotta text-white rounded-lg hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                Add Guest
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
