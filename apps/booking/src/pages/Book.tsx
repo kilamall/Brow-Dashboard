@@ -835,20 +835,27 @@ export default function Book() {
         return;
       }
       
+      // Get first service ID from assignments or legacy selection
+      const firstServiceId = hasAssignments
+        ? Object.keys(serviceAssignments)[0]
+        : selectedServices[0]!.id;
+      
       console.log('🚀 Creating new hold for slot:', slot.startISO);
       console.log('🚀 Session ID:', sessionId);
-      console.log('🚀 Service ID:', selectedServices[0]!.id);
+      console.log('🚀 Service ID:', firstServiceId);
       console.log('🚀 Slot details:', {
         startISO: slot.startISO,
         endISO: slot.endISO,
         totalDuration,
-        calculatedEndISO: slot.endISO || new Date(new Date(slot.startISO).getTime() + totalDuration * 60000).toISOString()
+        calculatedEndISO: slot.endISO || new Date(new Date(slot.startISO).getTime() + totalDuration * 60000).toISOString(),
+        hasAssignments,
+        assignments: hasAssignments ? serviceAssignments : 'using legacy'
       });
       
       // For multiple services, we'll use the first service ID for the hold
       // The actual services will be handled during finalization
       const h = await createSlotHoldClient({
-        serviceId: selectedServices[0]!.id, // Use first service for hold
+        serviceId: firstServiceId, // Use first service for hold
         startISO: slot.startISO,
         endISO: slot.endISO || new Date(new Date(slot.startISO).getTime() + totalDuration * 60000).toISOString(),
         sessionId,
@@ -1708,9 +1715,30 @@ export default function Book() {
   }
 
   async function proceedWithBooking(customerId: string) {
-    if (!hold || selectedServiceIds.length === 0 || !chosen) return;
+    const hasServices = hasAssignments 
+      ? Object.keys(serviceAssignments).length > 0 
+      : selectedServiceIds.length > 0;
+    
+    if (!hold || !hasServices || !chosen) return;
     
     try {
+      // TODO: Multi-guest booking - Currently creates single appointment
+      // Future enhancement: Create separate appointments for each guest
+      // For now, we'll pass all service IDs in the existing format
+      
+      // Convert service assignments to service IDs array for hold
+      const finalServiceIds = hasAssignments
+        ? Object.values(serviceAssignments).flatMap(assignment =>
+            Array(assignment.quantity).fill(assignment.serviceId)
+          )
+        : selectedServiceIds;
+      
+      console.log('🎯 Service IDs for booking:', {
+        hasAssignments,
+        finalServiceIds,
+        serviceAssignments: hasAssignments ? serviceAssignments : 'using legacy',
+        guests: guests.length
+      });
       // Check hold status before finalizing
       const now = Date.now();
       const expiresAt = new Date(hold.expiresAt).getTime();
@@ -1757,7 +1785,7 @@ export default function Book() {
         },
         price: totalPrice, // Already discounted price
         autoConfirm: true,
-        serviceIds: selectedServiceIds, // Pass multi-service data
+        serviceIds: finalServiceIds, // Pass multi-service data (expanded from quantities)
         servicePrices: selectedServices.reduce((acc, service) => {
           acc[service.id] = service.price;
           return acc;
@@ -1784,7 +1812,12 @@ export default function Book() {
   }
 
   async function finalizeBooking() {
-    if (!hold || selectedServiceIds.length === 0 || !chosen) return;
+    // Check if we have any services selected (either legacy or new format)
+    const hasServices = hasAssignments 
+      ? Object.keys(serviceAssignments).length > 0 
+      : selectedServiceIds.length > 0;
+    
+    if (!hold || !hasServices || !chosen) return;
     setError('');
     isFinalizingRef.current = true;
     
