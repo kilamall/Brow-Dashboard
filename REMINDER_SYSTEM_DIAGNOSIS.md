@@ -116,3 +116,5 @@ Receipts are generated in `mark-attendance.ts` when attendance is marked as 'att
 The diagnostic function will tell you exactly what's broken!
 
 
+
+
