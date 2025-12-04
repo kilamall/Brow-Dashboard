@@ -10,7 +10,7 @@ import {
   watchDayClosures,
   watchSpecialHours
 } from '@buenobrows/shared/firestoreActions';
-import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours, Guest, ServiceAssignment } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Customer, Service, DayClosure, SpecialHours, Guest, ServiceAssignment, GuestAssignment } from '@buenobrows/shared/types';
 import { availableSlotsForDay } from '@buenobrows/shared/slotUtils';
 import { addMinutes, format, parseISO } from 'date-fns';
 import { fromZonedTime } from 'date-fns-tz';
@@ -290,7 +290,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     // Remove all assignments for this guest
     const updatedAssignments: Record<string, ServiceAssignment> = {};
     Object.entries(serviceAssignments).forEach(([sId, assignment]) => {
-      const filteredAssignments = assignment.guestAssignments.filter(ga => ga.guestId !== guestId);
+      const filteredAssignments = assignment.guestAssignments.filter((ga: GuestAssignment) => ga.guestId !== guestId);
       if (filteredAssignments.length > 0) {
         updatedAssignments[sId] = {
           ...assignment,
@@ -823,7 +823,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                                   </div>
                                   {assignment.guestAssignments.length > 0 && (
                                     <div className="ml-2 space-y-0.5">
-                                      {assignment.guestAssignments.map((ga, idx) => {
+                                      {assignment.guestAssignments.map((ga: GuestAssignment, idx: number) => {
                                         const guest = guests.find(g => g.id === ga.guestId);
                                         return (
                                           <div key={idx} className="text-xs text-slate-600 flex items-center gap-1">
@@ -1086,7 +1086,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {guests.map(guest => {
                 const assignment = serviceAssignments[pendingServiceAssignment];
-                const alreadyAssigned = assignment?.guestAssignments.some(ga => ga.guestId === guest.id);
+                const alreadyAssigned = assignment?.guestAssignments.some((ga: GuestAssignment) => ga.guestId === guest.id);
                 
                 return (
                   <button
