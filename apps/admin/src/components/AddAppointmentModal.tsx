@@ -924,7 +924,11 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                         </h4>
                         <button
                           type="button"
-                          onClick={() => setShowAddGuestModal(true)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setShowAddGuestModal(true);
+                          }}
                           className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-all"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -953,7 +957,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                               </div>
                               <button
                                 type="button"
-                                onClick={() => removeGuest(guest.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeGuest(guest.id);
+                                }}
                                 className="text-red-600 hover:text-red-700 text-sm font-medium transition-all"
                               >
                                 Remove
