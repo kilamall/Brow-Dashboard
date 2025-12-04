@@ -228,19 +228,6 @@ export default function Book() {
   const [newGuestEmail, setNewGuestEmail] = useState('');
   const [newGuestPhone, setNewGuestPhone] = useState('');
 
-  // Initialize "self" guest for authenticated users
-  useEffect(() => {
-    if (user && guests.length === 0) {
-      setGuests([{
-        id: 'self',
-        name: user.displayName || user.email || 'You',
-        email: user.email || undefined,
-        phone: user.phoneNumber || undefined,
-        isSelf: true
-      }]);
-    }
-  }, [user, guests.length]);
-
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     // Check for preselected service from navigation state first
     if (locationState?.preselectedServiceId) {
@@ -990,6 +977,19 @@ export default function Book() {
     email: ''
   });
   const [missingFields, setMissingFields] = useState<string[]>([]);
+  
+  // Initialize "self" guest for authenticated users (moved here after user state declaration)
+  useEffect(() => {
+    if (user && guests.length === 0) {
+      setGuests([{
+        id: 'self',
+        name: user.displayName || user.email || 'You',
+        email: user.email || undefined,
+        phone: user.phoneNumber || undefined,
+        isSelf: true
+      }]);
+    }
+  }, [user, guests.length]);
   
   // Handle auth state changes
   useEffect(() => {
