@@ -301,6 +301,169 @@ export default function Book() {
     setSelectedService(null);
   };
 
+  // Multi-guest booking: Quantity and assignment functions
+  function increaseQuantity(serviceId: string) {
+    // Read CURRENT state first
+    const current = serviceAssignments[serviceId] || {
+      serviceId,
+      quantity: 0,
+      guestAssignments: []
+    };
+    
+    // Calculate what the NEW quantity will be
+    const newQuantity = current.quantity + 1;
+    
+    // Case 1: First selection and user is authenticated -> assign to self
+    if (newQuantity === 1 && user) {
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          serviceId,
+          quantity: 1,
+          guestAssignments: [{ guestId: 'self', serviceId }]
+        }
+      });
+      return;
+    }
+    
+    // Case 2: Additional quantity -> need guest assignment
+    if (newQuantity > 1) {
+      // Check which guests are already assigned to this service
+      const assignedGuestIds = current.guestAssignments.map(ga => ga.guestId);
+      const availableGuests = guests.filter(g => !assignedGuestIds.includes(g.id));
+      
+      if (availableGuests.length === 1) {
+        // Only one available guest, auto-assign
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            serviceId,
+            quantity: newQuantity,
+            guestAssignments: [
+              ...current.guestAssignments,
+              { guestId: availableGuests[0].id, serviceId }
+            ]
+          }
+        });
+      } else {
+        // Multiple options or no guests available, show assignment prompt
+        // First, update quantity without assignment
+        setServiceAssignments({
+          ...serviceAssignments,
+          [serviceId]: {
+            ...current,
+            quantity: newQuantity,
+            guestAssignments: current.guestAssignments // Keep existing assignments
+          }
+        });
+        // Then show prompt for the unassigned slot
+        setPendingServiceAssignment(serviceId);
+        setShowGuestAssignment(true);
+      }
+    }
+    
+    // Case 3: First selection, not authenticated (guest user)
+    if (newQuantity === 1 && !user) {
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          serviceId,
+          quantity: 1,
+          guestAssignments: [{ guestId: 'guest', serviceId }]
+        }
+      });
+    }
+  }
+
+  function decreaseQuantity(serviceId: string) {
+    const current = serviceAssignments[serviceId];
+    if (!current || current.quantity <= 0) return;
+    
+    const newQuantity = current.quantity - 1;
+    
+    if (newQuantity === 0) {
+      // Remove service entirely
+      const { [serviceId]: removed, ...rest } = serviceAssignments;
+      setServiceAssignments(rest);
+    } else {
+      // Remove last guest assignment
+      setServiceAssignments({
+        ...serviceAssignments,
+        [serviceId]: {
+          ...current,
+          quantity: newQuantity,
+          guestAssignments: current.guestAssignments.slice(0, -1)
+        }
+      });
+    }
+  }
+
+  function assignServiceToGuest(serviceId: string, guestId: string) {
+    const current = serviceAssignments[serviceId];
+    if (!current) return;
+    
+    // Add assignment for this guest
+    setServiceAssignments({
+      ...serviceAssignments,
+      [serviceId]: {
+        ...current,
+        guestAssignments: [
+          ...current.guestAssignments,
+          { guestId, serviceId }
+        ]
+      }
+    });
+    
+    // Close assignment modal
+    setShowGuestAssignment(false);
+    setPendingServiceAssignment(null);
+  }
+
+  function removeGuest(guestId: string) {
+    // Don't allow removing self
+    if (guestId === 'self') return;
+    
+    // Remove guest from list
+    setGuests(guests.filter(g => g.id !== guestId));
+    
+    // Remove all service assignments for this guest
+    const updatedAssignments: Record<string, ServiceAssignment> = {};
+    Object.entries(serviceAssignments).forEach(([sId, assignment]) => {
+      const filteredAssignments = assignment.guestAssignments.filter(ga => ga.guestId !== guestId);
+      if (filteredAssignments.length > 0) {
+        updatedAssignments[sId] = {
+          ...assignment,
+          quantity: filteredAssignments.length,
+          guestAssignments: filteredAssignments
+        };
+      }
+    });
+    setServiceAssignments(updatedAssignments);
+  }
+
+  function addGuest() {
+    if (!newGuestName.trim()) return;
+    
+    const newGuest: Guest = {
+      id: `guest-${Date.now()}`,
+      name: newGuestName.trim(),
+      email: newGuestEmail.trim() || undefined,
+      phone: newGuestPhone.trim() || undefined,
+      isSelf: false
+    };
+    
+    setGuests([...guests, newGuest]);
+    setShowAddGuestModal(false);
+    setNewGuestName('');
+    setNewGuestEmail('');
+    setNewGuestPhone('');
+    
+    // If there's a pending service assignment, assign it to this guest
+    if (pendingServiceAssignment) {
+      assignServiceToGuest(pendingServiceAssignment, newGuest.id);
+    }
+  }
+
   // Group services by category
   const servicesByCategory = useMemo(() => {
     const groups: Record<string, Service[]> = {};
