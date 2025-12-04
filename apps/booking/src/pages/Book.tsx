@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 import { useFirebase } from '@buenobrows/shared/useFirebase';
 import SEO from '../components/SEO';
-import type { Appointment, BusinessHours, Service, ConsentFormTemplate, DayClosure, SpecialHours, Promotion, Customer } from '@buenobrows/shared/types';
+import type { Appointment, BusinessHours, Service, ConsentFormTemplate, DayClosure, SpecialHours, Promotion, Customer, Guest, ServiceAssignment } from '@buenobrows/shared/types';
 import type { AvailabilitySlot } from '@buenobrows/shared/availabilityHelpers';
 import {
   watchServices,
@@ -217,6 +217,16 @@ export default function Book() {
 
     loadVerificationSettings();
   }, [db]);
+
+  // Multi-guest booking state
+  const [guests, setGuests] = useState<Guest[]>([]);
+  const [serviceAssignments, setServiceAssignments] = useState<Record<string, ServiceAssignment>>({});
+  const [showAddGuestModal, setShowAddGuestModal] = useState(false);
+  const [showGuestAssignment, setShowGuestAssignment] = useState(false);
+  const [pendingServiceAssignment, setPendingServiceAssignment] = useState<string | null>(null);
+  const [newGuestName, setNewGuestName] = useState('');
+  const [newGuestEmail, setNewGuestEmail] = useState('');
+  const [newGuestPhone, setNewGuestPhone] = useState('');
 
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     // Check for preselected service from navigation state first
@@ -844,6 +854,23 @@ export default function Book() {
     
     return unsubscribe;
   }, [db, user]);
+
+  // Initialize "self" guest for authenticated users
+  useEffect(() => {
+    if (user && guests.length === 0) {
+      // Initialize with self as first guest
+      setGuests([{
+        id: 'self',
+        name: user.displayName || user.email || 'You',
+        email: user.email || undefined,
+        phone: user.phoneNumber || undefined,
+        isSelf: true
+      }]);
+    } else if (!user && guests.some(g => g.id === 'self')) {
+      // Remove self guest if user logs out
+      setGuests(guests.filter(g => g.id !== 'self'));
+    }
+  }, [user, user?.displayName, user?.email, user?.phoneNumber]);
 
   // Check if customer profile is complete and show prompt if missing fields
   useEffect(() => {

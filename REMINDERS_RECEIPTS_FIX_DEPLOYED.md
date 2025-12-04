@@ -122,8 +122,27 @@ Firebase Console → Functions:
 3. **Test receipt generation** by marking an appointment as attended
 4. **Check logs** to confirm reminders start sending automatically
 
+## 3. ✅ Appointment Edit Notifications
+**Problem:** When admin edited an appointment, customers were not notified of the changes.
+
+**Root Cause:** The `EditAppointmentModal` only updated Firestore but didn't send any notification.
+
+**Solution:**
+- Created new Cloud Function `sendAppointmentUpdate`
+- Automatically sends notification after any appointment edit
+- Email-first (preferred), SMS fallback
+- Shows updated date, time, and services
+
+Now when you edit:
+- ✅ Date/time changes
+- ✅ Service changes  
+- ✅ Customer changes
+- ✅ Note changes
+
+Customer gets notified automatically via email or SMS!
+
 ---
 
-*Deployed: December 3, 2025*
-*Status: ✅ READY - waiting for Firestore index to finish building*
+*Deployed: December 4, 2025*
+*Status: ✅ ALL FEATURES LIVE*
 
