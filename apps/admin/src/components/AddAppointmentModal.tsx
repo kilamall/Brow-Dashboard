@@ -1065,7 +1065,6 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           </div>
         </div>
       </Dialog>
-    </Transition>
 
       {/* Guest Assignment Modal (Phase 3) */}
       {showGuestAssignment && pendingServiceAssignment && open && (
