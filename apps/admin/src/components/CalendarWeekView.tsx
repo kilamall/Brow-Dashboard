@@ -406,8 +406,13 @@ export default function CalendarWeekView({
                         </div>
                         {position.height > 40 && (
                           <>
-                            <div className="text-[10px] font-medium truncate">
-                              {service?.name || 'Service'}
+                            <div className="text-[10px] font-medium truncate flex items-center gap-1">
+                              <span className="truncate">{service?.name || 'Service'}</span>
+                              {appointment.isGroupBooking && (
+                                <span className="inline-flex items-center text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded-full font-semibold flex-shrink-0">
+                                  👥
+                                </span>
+                              )}
                             </div>
                             {position.height > 60 && (
                               <div className="text-[9px] truncate opacity-75">

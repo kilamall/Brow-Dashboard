@@ -698,38 +698,59 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     );
                   }
                   
-                  // For multiple services, show the list directly
+                  // For multiple services, show with quantities if duplicates exist
+                  // Count occurrences of each service
+                  const serviceCounts: Record<string, number> = {};
+                  serviceIds.forEach((id: string) => {
+                    serviceCounts[id] = (serviceCounts[id] || 0) + 1;
+                  });
+                  
+                  const uniqueServiceIds = Object.keys(serviceCounts);
+                  
                   return (
                     <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="text-sm font-medium text-blue-800 mb-2">Multiple Services ({serviceIds.length}):</div>
-                      <div className="space-y-1">
-                        {serviceIds.map((serviceId: string, index: number) => {
+                      <div className="text-sm font-medium text-blue-800 mb-2">
+                        Multiple Services ({serviceIds.length} total{uniqueServiceIds.length !== serviceIds.length ? `, ${uniqueServiceIds.length} unique` : ''}):
+                      </div>
+                      <div className="space-y-2">
+                        {uniqueServiceIds.map((serviceId: string, index: number) => {
                           const service = services[serviceId];
+                          const quantity = serviceCounts[serviceId];
                           const editedPrice = appointment.servicePrices?.[serviceId];
                           const isPriceEdited = editedPrice !== undefined && editedPrice !== service?.price;
                           const currentPrice = editedPrice ?? service?.price ?? 0;
+                          const totalPrice = currentPrice * quantity;
                           
                           return service ? (
-                            <div key={serviceId} className="text-sm text-blue-700 flex items-center gap-2">
-                              <span className="w-4 h-4 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium">
-                                {index + 1}
-                              </span>
-                              <span>{service.name}</span>
-                              <div className="flex items-center gap-2">
-                                <span className={isPriceEdited ? "text-green-700 font-medium" : "text-blue-600"}>
-                                  ${currentPrice}
-                                </span>
-                                {isPriceEdited && (
-                                  <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
-                                    Edited
+                            <div key={serviceId} className="bg-white border border-blue-200 rounded-lg p-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-6 h-6 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium text-blue-800">
+                                    {index + 1}
                                   </span>
-                                )}
-                                {isPriceEdited && (
-                                  <span className="text-xs text-slate-500 line-through">
-                                    ${service.price}
+                                  <span className="font-medium text-slate-800">{service.name}</span>
+                                  {quantity > 1 && (
+                                    <span className="bg-terracotta text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                                      × {quantity}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className={isPriceEdited ? "text-green-700 font-medium" : "text-blue-700 font-medium"}>
+                                    ${totalPrice.toFixed(2)}
                                   </span>
-                                )}
+                                  {isPriceEdited && (
+                                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                                      Edited
+                                    </span>
+                                  )}
+                                </div>
                               </div>
+                              {quantity > 1 && (
+                                <div className="text-xs text-slate-500 mt-1 ml-8">
+                                  ${currentPrice.toFixed(2)} each × {quantity} = ${totalPrice.toFixed(2)}
+                                </div>
+                              )}
                             </div>
                           ) : null;
                         })}
@@ -938,6 +959,73 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                   </div>
                 )}
               </div>
+
+              {/* Group Booking Indicator */}
+              {appointment.isGroupBooking && (
+                <div className="bg-purple-50 border-2 border-purple-300 rounded-xl p-4 mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                      <svg className="w-6 h-6 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-purple-900">Multi-Guest Booking</div>
+                      <div className="text-sm text-purple-700">This appointment is part of a group booking</div>
+                      {appointment.groupBookingId && (
+                        <div className="text-xs text-purple-600 mt-1 font-mono">
+                          Group ID: {appointment.groupBookingId.slice(0, 12)}...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Booked By Information (if different from customer) */}
+              {appointment.bookedBy && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-4">
+                  <h3 className="font-semibold text-lg text-slate-800 mb-3 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-blue-900">Booked By</span>
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="font-medium text-slate-800">{appointment.bookedBy.name}</div>
+                    {appointment.bookedBy.email && (
+                      <div className="text-sm text-slate-600">📧 {appointment.bookedBy.email}</div>
+                    )}
+                    {appointment.bookedBy.userId && (
+                      <div className="text-xs text-slate-500 font-mono">User ID: {appointment.bookedBy.userId}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Guest Information (service recipient) */}
+              {appointment.guestInfo && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-6 mb-4">
+                  <h3 className="font-semibold text-lg text-slate-800 mb-3 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-purple-900">Service For (Guest)</span>
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="font-medium text-slate-800">{appointment.guestInfo.guestName}</div>
+                    {appointment.guestInfo.guestEmail && (
+                      <div className="text-sm text-slate-600">📧 {appointment.guestInfo.guestEmail}</div>
+                    )}
+                    {appointment.guestInfo.guestPhone && (
+                      <div className="text-sm text-slate-600">📱 {appointment.guestInfo.guestPhone}</div>
+                    )}
+                    <div className="text-xs text-purple-600 mt-2">
+                      This service is for a guest, not the person who booked it
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Customer Info */}
               {(customer?.name || appointment.customerName || appointment.customerEmail) && (

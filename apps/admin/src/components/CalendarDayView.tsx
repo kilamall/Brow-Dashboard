@@ -230,10 +230,32 @@ export default function CalendarDayView({ date, appointments, services, business
             const borderColor = categoryColor || '#6366F1';
             const textColor = categoryColor || '#4338CA';
             
-            // Create service display string
-            const serviceDisplay = hasMultipleServices 
-              ? `${allServices[0]?.name || 'Service'}, ${allServices[1]?.name || ''}${allServices.length > 2 ? ` +${allServices.length - 2}` : ''}`
-              : (firstService?.name || 'Service');
+            // Create service display string with quantities
+            const serviceDisplay = (() => {
+              if (!hasMultipleServices) {
+                return firstService?.name || 'Service';
+              }
+              
+              // Count occurrences of each service for multi-guest bookings
+              const serviceCounts: Record<string, number> = {};
+              serviceIds.forEach((id: string) => {
+                serviceCounts[id] = (serviceCounts[id] || 0) + 1;
+              });
+              
+              const uniqueServiceIds = Object.keys(serviceCounts);
+              
+              // If we have quantities (same service multiple times)
+              if (uniqueServiceIds.length < serviceIds.length) {
+                return uniqueServiceIds.map((id, idx) => {
+                  const svc = services[id];
+                  const count = serviceCounts[id];
+                  return `${svc?.name || 'Service'}${count > 1 ? ` ×${count}` : ''}`;
+                }).join(', ');
+              }
+              
+              // Otherwise show first two + count
+              return `${allServices[0]?.name || 'Service'}, ${allServices[1]?.name || ''}${allServices.length > 2 ? ` +${allServices.length - 2}` : ''}`;
+            })();
             
             return (
               <div
@@ -264,14 +286,24 @@ export default function CalendarDayView({ date, appointments, services, business
                     <>
                       <div className="text-xs font-medium truncate">
                         {serviceDisplay} · {appointment.customerName}
+                        {appointment.isGroupBooking && (
+                          <span className="ml-1 inline-flex items-center text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold">
+                            👥
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs opacity-75">{appointment.duration} min</div>
                     </>
                   ) : (
                     // Full layout for longer appointments
                     <>
-                      <div className="text-xs font-medium truncate">
-                        {serviceDisplay}
+                      <div className="text-xs font-medium truncate flex items-center gap-1">
+                        <span className="truncate">{serviceDisplay}</span>
+                        {appointment.isGroupBooking && (
+                          <span className="inline-flex items-center text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">
+                            👥 Multi
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs truncate opacity-75">
                         {appointment.customerName}
