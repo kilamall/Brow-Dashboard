@@ -153,10 +153,13 @@ export async function fetchAvailabilityForDay(
   db: Firestore,
   day: Date
 ): Promise<AvailabilitySlot[]> {
-  const start = new Date(day);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(day);
-  end.setHours(23, 59, 59, 999);
+  // Use UTC methods to ensure consistent date handling (matching website and SMS)
+  const year = day.getUTCFullYear();
+  const month = day.getUTCMonth();
+  const dayOfMonth = day.getUTCDate();
+  
+  const start = new Date(Date.UTC(year, month, dayOfMonth, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, month, dayOfMonth, 23, 59, 59, 999));
 
   console.log('🔍 Fetching availability for day:', {
     day: day.toISOString(),

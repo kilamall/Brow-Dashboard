@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '@buenobrows/shared/useFirebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc, getDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import type { Customer, Appointment, Service } from '@buenobrows/shared/types';
 import { formatMessageTime } from '@buenobrows/shared/messaging';
@@ -122,10 +122,25 @@ export default function CustomerProfile({ customer, onClose, db }: CustomerProfi
   const handleSaveNotes = async () => {
     setSavingNotes(true);
     try {
-      await updateDoc(doc(db, 'customers', currentCustomer.id), { notes });
-    } catch (error) {
+      // Check if customer document exists first
+      const customerRef = doc(db, 'customers', currentCustomer.id);
+      const customerDoc = await getDoc(customerRef);
+      
+      if (!customerDoc.exists()) {
+        throw new Error(`Customer document ${currentCustomer.id} does not exist. This may be an orphaned customer.`);
+      }
+      
+      // Update with timestamp
+      await updateDoc(customerRef, { 
+        notes,
+        updatedAt: new Date().toISOString()
+      });
+      
+      console.log('✅ Notes saved successfully');
+    } catch (error: any) {
       console.error('Failed to save notes:', error);
-      alert('Failed to save notes. Please try again.');
+      const errorMessage = error.message || error.code || 'Unknown error';
+      alert(`Failed to save notes: ${errorMessage}\n\nIf this persists, the customer may be orphaned. Try running "Clean Orphaned Migrations" in Settings > Data Management.`);
     } finally {
       setSavingNotes(false);
     }

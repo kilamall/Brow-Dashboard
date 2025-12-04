@@ -137,6 +137,13 @@ export const markAttendance = onCall(
         await appointmentRef.update(updateData);
         
         // Generate receipt and send email
+        // Declare variables at function scope so they're accessible in catch/return
+        let customerEmail: string | undefined;
+        let customerPhone: string | undefined;
+        let receiptSent = false;
+        let receiptMethod = 'none';
+        let receiptResult: { success: boolean; receiptUrl: string; fileName: string } | null = null;
+        
         try {
           
           // Get customer details
@@ -147,14 +154,14 @@ export const markAttendance = onCall(
           }
           
           const customerData = customerDoc.data();
-          const customerEmail = customerData?.email;
+          customerEmail = customerData?.email;
           const customerName = customerData?.name || 'Valued Customer';
 
 
           // Always generate receipt PDF, even if no email
           // Generate receipt PDF
           const { generateReceiptHelper } = await import('./generate-receipt');
-          const receiptResult = await generateReceiptHelper(appointmentId);
+          receiptResult = await generateReceiptHelper(appointmentId);
           
           if (!receiptResult.success) {
             console.error('❌ Receipt generation failed:', receiptResult);
@@ -169,9 +176,12 @@ export const markAttendance = onCall(
           });
           
           
-          // If no email, return early with emailRequired flag
-          if (!customerEmail) {
-            console.log('⚠️ Customer email is missing - receipt generated but email not sent');
+          // PREFER EMAIL (low cost) - use SMS as fallback if no email or email fails
+          customerPhone = customerData?.phone || customerData?.phoneNumber;
+          
+          // If no email and no phone, return early
+          if (!customerEmail && !customerPhone) {
+            console.log('⚠️ Customer has no email or phone - receipt generated but not sent');
             return {
               success: true,
               message: 'Appointment marked as attended. Receipt generated.',
@@ -179,9 +189,15 @@ export const markAttendance = onCall(
               status: 'completed',
               attendance: 'attended',
               receiptGenerated: true,
-              receiptUrl: receiptResult.receiptUrl,
-              emailRequired: true // Flag to prompt admin for email
+              receiptUrl: receiptResult?.receiptUrl || '',
+              emailRequired: true, // Flag to prompt admin for email
+              phoneRequired: true // Flag to prompt admin for phone
             };
+          }
+          
+          // If no email but has phone, skip email and go straight to SMS
+          if (!customerEmail && customerPhone) {
+            console.log('⚠️ Customer email is missing - will send receipt via SMS instead');
           }
 
           
@@ -280,85 +296,99 @@ export const markAttendance = onCall(
             throw new Error('Receipt email template not found');
           }
 
-          // Replace template variables
-          let emailHtml = receiptTemplate.html;
-          const websiteLink = 'https://bueno-brows-7cce7.web.app';
-          const variables = {
-            customerName: customerName,
-            businessName: businessInfo.businessName || 'Bueno Brows',
-            businessPhone: businessInfo.businessPhone || '(650) 613-8455',
-            businessEmail: businessInfo.businessEmail || 'hello@buenobrows.com',
-            receiptNumber: `RCP-${appointmentId.substring(0, 8).toUpperCase()}`,
-            date: formattedDate,
-            time: formattedTime,
-            serviceDetails: serviceDetails, // Already formatted as HTML div rows
-            subtotal: subtotal.toFixed(2),
-            tip: tip.toFixed(2),
-            total: total.toFixed(2),
-            receiptUrl: receiptResult.receiptUrl,
-            websiteLink: websiteLink
-          };
-
-          Object.entries(variables).forEach(([key, value]) => {
-            emailHtml = emailHtml.replace(new RegExp(`{{${key}}}`, 'g'), value);
-          });
-
-          // Send receipt email
-          // IMPORTANT: Use the same FROM_EMAIL as confirmation emails to ensure delivery
-          const { sendEmail } = await import('./email');
-          const FROM_EMAIL = 'hello@buenobrows.com'; // Use same verified email as confirmation emails
-          const emailResult = await sendEmail({
-            to: customerEmail,
-            from: { email: FROM_EMAIL, name: businessInfo.businessName || 'Bueno Brows' },
-            subject: receiptTemplate.subject.replace(/\{\{businessName\}\}/g, businessInfo.businessName || 'Bueno Brows'),
-            html: emailHtml
-          });
-
-          // Log email attempt to database - serialize sendGridResponse to plain object
-          const logData: any = {
-            to: customerEmail,
-            subject: receiptTemplate.subject.replace(/\{\{businessName\}\}/g, businessInfo.businessName || 'Bueno Brows'),
-            type: 'receipt-email',
-            status: emailResult.success ? 'sent' : 'failed',
-            error: emailResult.error || null,
-            timestamp: new Date().toISOString(),
-            appointmentId: appointmentId,
-            receiptUrl: receiptResult.receiptUrl
-          };
+          // PREFER EMAIL (low cost) - try email first if available
+          receiptMethod = 'none';
           
-          // Safely serialize sendGridResponse (convert Response objects to plain objects)
-          if (emailResult.sendGridResponse) {
+          if (customerEmail) {
             try {
-              // If it's an array with Response objects, convert to plain objects
-              if (Array.isArray(emailResult.sendGridResponse)) {
-                logData.sendGridResponse = emailResult.sendGridResponse.map((item: any) => {
-                  if (item && typeof item === 'object') {
-                    return JSON.parse(JSON.stringify(item));
+              // Replace template variables
+              let emailHtml = receiptTemplate.html;
+              const websiteLink = 'https://bueno-brows-7cce7.web.app';
+              const variables = {
+                customerName: customerName,
+                businessName: businessInfo.businessName || 'Bueno Brows',
+                businessPhone: businessInfo.businessPhone || '(650) 613-8455',
+                businessEmail: businessInfo.businessEmail || 'hello@buenobrows.com',
+                receiptNumber: `RCP-${appointmentId.substring(0, 8).toUpperCase()}`,
+                date: formattedDate,
+                time: formattedTime,
+                serviceDetails: serviceDetails, // Already formatted as HTML div rows
+                subtotal: subtotal.toFixed(2),
+                tip: tip.toFixed(2),
+                total: total.toFixed(2),
+                receiptUrl: receiptResult.receiptUrl,
+                websiteLink: websiteLink
+              };
+
+              Object.entries(variables).forEach(([key, value]) => {
+                emailHtml = emailHtml.replace(new RegExp(`{{${key}}}`, 'g'), value);
+              });
+
+              // Send receipt email
+              // IMPORTANT: Use the same FROM_EMAIL as confirmation emails to ensure delivery
+              const { sendEmail } = await import('./email');
+              const FROM_EMAIL = 'hello@buenobrows.com'; // Use same verified email as confirmation emails
+              const emailResult = await sendEmail({
+                to: customerEmail,
+                from: { email: FROM_EMAIL, name: businessInfo.businessName || 'Bueno Brows' },
+                subject: receiptTemplate.subject.replace(/\{\{businessName\}\}/g, businessInfo.businessName || 'Bueno Brows'),
+                html: emailHtml
+              });
+
+              // Log email attempt to database - serialize sendGridResponse to plain object
+              const logData: any = {
+                to: customerEmail,
+                subject: receiptTemplate.subject.replace(/\{\{businessName\}\}/g, businessInfo.businessName || 'Bueno Brows'),
+                type: 'receipt-email',
+                status: emailResult.success ? 'sent' : 'failed',
+                error: emailResult.error || null,
+                timestamp: new Date().toISOString(),
+                appointmentId: appointmentId,
+                receiptUrl: receiptResult.receiptUrl
+              };
+              
+              // Safely serialize sendGridResponse (convert Response objects to plain objects)
+              if (emailResult.sendGridResponse) {
+                try {
+                  // If it's an array with Response objects, convert to plain objects
+                  if (Array.isArray(emailResult.sendGridResponse)) {
+                    logData.sendGridResponse = emailResult.sendGridResponse.map((item: any) => {
+                      if (item && typeof item === 'object') {
+                        return JSON.parse(JSON.stringify(item));
+                      }
+                      return item;
+                    });
+                  } else if (emailResult.sendGridResponse && typeof emailResult.sendGridResponse === 'object') {
+                    logData.sendGridResponse = JSON.parse(JSON.stringify(emailResult.sendGridResponse));
+                  } else {
+                    logData.sendGridResponse = emailResult.sendGridResponse;
                   }
-                  return item;
-                });
-              } else if (emailResult.sendGridResponse && typeof emailResult.sendGridResponse === 'object') {
-                logData.sendGridResponse = JSON.parse(JSON.stringify(emailResult.sendGridResponse));
-              } else {
-                logData.sendGridResponse = emailResult.sendGridResponse;
+                } catch (e) {
+                  // If serialization fails, just store a string representation
+                  logData.sendGridResponse = String(emailResult.sendGridResponse);
+                }
               }
-            } catch (e) {
-              // If serialization fails, just store a string representation
-              logData.sendGridResponse = String(emailResult.sendGridResponse);
+              
+              await db.collection('email_logs').add(logData);
+              
+              if (emailResult.success) {
+                receiptSent = true;
+                receiptMethod = 'email';
+                console.log(`✅ Receipt sent via EMAIL to ${customerEmail}`);
+              } else {
+                console.error('❌ Failed to send receipt email:', emailResult.error);
+                console.log('⚠️ Will attempt SMS fallback if phone number available');
+              }
+            } catch (emailError: any) {
+              console.error('❌ Error sending receipt email:', emailError);
+              console.log('⚠️ Will attempt SMS fallback if phone number available');
             }
           }
-          
-          await db.collection('email_logs').add(logData);
 
-          if (!emailResult.success) {
-            console.error('Failed to send receipt email:', emailResult.error);
-          }
-          
-          // Also send receipt link via SMS if customer has phone number
-          const customerPhone = customerData?.phone;
-          if (customerPhone) {
+          // Fallback to SMS if email failed or customer prefers SMS
+          if (!receiptSent && customerPhone) {
             try {
-              console.log('📱 Attempting to send receipt link via SMS to:', customerPhone);
+              console.log('📱 Attempting to send receipt link via SMS (email fallback) to:', customerPhone);
               
               // Get Twilio config (matching pattern from sms.ts)
               const twilioConfig = {
@@ -382,6 +412,8 @@ export const markAttendance = onCall(
                 const smsSent = await sendSMS(smsMessage, twilioConfig);
                 
                 if (smsSent) {
+                  receiptSent = true;
+                  console.log(`✅ Receipt sent via SMS to ${customerPhone}`);
                   
                   // Log SMS attempt
                   await db.collection('sms_logs').add({
@@ -398,29 +430,96 @@ export const markAttendance = onCall(
                   console.warn('⚠️ Failed to send receipt SMS to:', customerPhone);
                 }
               } else {
-                console.log('ℹ️ Twilio not configured, skipping SMS receipt link');
+                console.log('ℹ️ Twilio not configured, cannot send SMS receipt fallback');
               }
             } catch (smsError: any) {
               console.error('⚠️ Error sending receipt SMS:', smsError);
               // Don't fail the attendance marking if SMS fails
             }
+          } else if (receiptSent) {
+            // Email succeeded, but also send SMS if customer has phone (optional notification)
+            if (customerPhone) {
+              try {
+                console.log('📱 Also sending receipt link via SMS (optional notification) to:', customerPhone);
+                
+                const twilioConfig = {
+                  accountSid: twilioAccountSid.value(),
+                  authToken: twilioAuthToken.value(),
+                  phoneNumber: twilioPhoneNumber.value(),
+                  messagingServiceSid: twilioMessagingServiceSid.value() || undefined
+                };
+                
+                if (twilioConfig.accountSid && twilioConfig.authToken) {
+                  const smsMessage = {
+                    to: customerPhone,
+                    from: twilioConfig.phoneNumber || '',
+                    body: `Thank you for visiting ${businessInfo.businessName || 'Bueno Brows'}! Your receipt is ready: ${receiptResult.receiptUrl}\n\nTotal: $${total.toFixed(2)}\n\n- Bueno Brows`,
+                    customerId: appointment.customerId,
+                    appointmentId: appointmentId,
+                    type: 'admin_message' as const
+                  };
+                  
+                  const smsSent = await sendSMS(smsMessage, twilioConfig);
+                  
+                  if (smsSent) {
+                    await db.collection('sms_logs').add({
+                      to: customerPhone,
+                      body: smsMessage.body,
+                      customerId: appointment.customerId,
+                      appointmentId: appointmentId,
+                      type: 'receipt',
+                      status: 'sent',
+                      timestamp: new Date().toISOString(),
+                      provider: 'twilio'
+                    });
+                  }
+                }
+              } catch (smsError: any) {
+                // Silent fail for optional SMS notification
+                console.log('ℹ️ Optional SMS notification failed (email already sent)');
+              }
+            }
           } else {
-            console.log('ℹ️ Customer has no phone number, skipping SMS receipt link');
+            console.log('⚠️ Receipt generated but could not be sent - no email or phone available');
           }
         } catch (error: any) {
           console.error('⚠️ Error generating receipt or sending email:', error);
           console.error('⚠️ Error stack:', error.stack);
-          // Don't fail the attendance marking if receipt generation fails
+          console.error('⚠️ Error details:', {
+            appointmentId,
+            customerId: appointment.customerId,
+            customerEmail: customerEmail,
+            customerPhone: customerPhone,
+            errorMessage: error.message,
+            errorName: error.name
+          });
+          // Don't fail the attendance marking if receipt generation fails, but log it
+          // Return with error flag so admin knows receipt failed
+          return {
+            success: true,
+            message: 'Appointment marked as attended, but receipt generation/sending failed',
+            appointmentId,
+            status: 'completed',
+            attendance: 'attended',
+            receiptGenerated: false,
+            receiptError: error.message,
+            emailRequired: !customerEmail && !customerPhone
+          };
         }
         
         return {
           success: true,
-          message: 'Appointment marked as attended and customer notified',
+          message: receiptSent 
+            ? `Appointment marked as attended. Receipt sent via ${receiptMethod}.`
+            : 'Appointment marked as attended. Receipt generated but could not be sent.',
           appointmentId,
           status: 'completed',
           attendance: 'attended',
           receiptGenerated: true,
-          emailRequired: false
+          receiptSent: receiptSent,
+          receiptMethod: receiptMethod,
+          receiptUrl: receiptResult.receiptUrl,
+          emailRequired: !customerEmail && !receiptSent
         };
 
       } else {

@@ -124,6 +124,8 @@ export * from './fix-luis-duplicate.js';
 export * from './fix-self-reference-migrations.js';
 export * from './trace-customer-filter.js';
 export * from './audit-log.js';
+export * from './diagnose-reminders-receipts.js';
+export * from './send-appointment-update.js';
 
 // SECURITY FIX: Disable test functions in production
 // These functions are now secured with authentication but should not be used in production

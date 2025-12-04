@@ -105,9 +105,24 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
     setGoogleLoading(true);
     onError(''); // Clear previous errors
     try {
+      console.log('🔍 Starting Google sign-in...');
+      console.log('🔍 Auth domain:', auth.app.options.authDomain);
+      console.log('🔍 Project ID:', auth.app.options.projectId);
+      
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      // Add scopes if needed
+      provider.addScope('email');
+      provider.addScope('profile');
+      
+      console.log('🔍 Attempting sign-in with popup...');
+      const result = await signInWithPopup(auth, provider);
+      console.log('✅ Google sign-in successful:', result.user?.email);
     } catch (e: any) {
+      console.error('❌ Google sign-in error:', e);
+      console.error('❌ Error code:', e?.code);
+      console.error('❌ Error message:', e?.message);
+      console.error('❌ Full error:', e);
+      
       // Check if 2FA is required for Google sign-in
       if (e.code === 'auth/multi-factor-auth-required') {
         const resolver = getMultiFactorResolver(auth, e);
@@ -117,9 +132,25 @@ function SignIn({ error, onError }: { error?: string; onError: (e: string) => vo
         return;
       }
       
-      const errorMessage = e?.code === 'auth/popup-closed-by-user'
-        ? 'Sign-in cancelled'
-        : e?.message || 'Failed to sign in with Google';
+      // Provide more detailed error messages
+      let errorMessage = 'Failed to sign in with Google';
+      
+      if (e?.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Sign-in cancelled. Please try again.';
+      } else if (e?.code === 'auth/popup-blocked') {
+        errorMessage = 'Popup was blocked. Please allow popups for this site and try again.';
+      } else if (e?.code === 'auth/unauthorized-domain') {
+        errorMessage = 'This domain is not authorized. Please contact support.';
+      } else if (e?.code === 'auth/operation-not-allowed') {
+        errorMessage = 'Google sign-in is not enabled. Please contact support.';
+      } else if (e?.code === 'auth/network-request-failed') {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (e?.code === 'auth/internal-error') {
+        errorMessage = 'Internal error. Please try again or use email sign-in.';
+      } else if (e?.message) {
+        errorMessage = `${e.message} (Code: ${e.code || 'unknown'})`;
+      }
+      
       onError(errorMessage);
     } finally {
       setGoogleLoading(false);

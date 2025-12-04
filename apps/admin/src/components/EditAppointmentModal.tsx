@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { updateDoc, doc, collection, query, where, getDocs } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Appointment, Service, Customer, BusinessHours, DayClosure, SpecialHours } from '@buenobrows/shared/types';
 import { format, parseISO } from 'date-fns';
 import { fromZonedTime, toZonedTime } from 'date-fns-tz';
@@ -15,7 +16,8 @@ interface Props {
 }
 
 export default function EditAppointmentModal({ appointment, service, onClose, onUpdated }: Props) {
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
+  const functions = getFunctions(app);
   const [loading, setLoading] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -228,6 +230,16 @@ export default function EditAppointmentModal({ appointment, service, onClose, on
         status,
         updatedAt: new Date().toISOString(),
       });
+      
+      // Send appointment update notification to customer
+      try {
+        const sendUpdate = httpsCallable(functions, 'sendAppointmentUpdate');
+        await sendUpdate({ appointmentId: appointment.id });
+        console.log('✅ Appointment update notification sent');
+      } catch (notifError) {
+        console.error('⚠️ Failed to send update notification:', notifError);
+        // Don't fail the update if notification fails
+      }
       
       onUpdated();
       onClose();

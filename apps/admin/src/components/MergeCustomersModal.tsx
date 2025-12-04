@@ -41,16 +41,38 @@ export default function MergeCustomersModal({
 
     setMerging(true);
     try {
+      // Check if duplicate has orphaned migratedTo before attempting merge
+      if (duplicate?.migratedTo && duplicate.migratedTo !== survivorId) {
+        const migratedToCustomer = customers.find(c => c.id === duplicate.migratedTo);
+        if (!migratedToCustomer) {
+          console.warn(`⚠️ Duplicate customer ${duplicate.name} has orphaned migratedTo field pointing to non-existent customer ${duplicate.migratedTo}. The merge will fix this.`);
+        }
+      }
+
       const result = await mergeCustomersClient(survivorId, duplicateId);
       const data = result.data as any;
       
-      alert(`Merge completed successfully!\n\nMoved ${data.subcollectionDocsMoved} subcollection documents\nUpdated ${data.appointmentsUpdated} appointments\nUpdated ${data.holdsUpdated} holds\nUpdated ${data.availabilityUpdated} availability records\nUpdated ${data.skinAnalysesUpdated} skin analyses\nUpdated ${data.consentFormsUpdated} consent forms\nUpdated ${data.uniqueContactsUpdated} unique contacts`);
+      alert(`✅ Merge completed successfully!\n\nMoved ${data.subcollectionDocsMoved} subcollection documents\nUpdated ${data.appointmentsUpdated} appointments\nUpdated ${data.holdsUpdated} holds\nUpdated ${data.availabilityUpdated} availability records\nUpdated ${data.skinAnalysesUpdated} skin analyses\nUpdated ${data.consentFormsUpdated} consent forms\nUpdated ${data.uniqueContactsUpdated} unique contacts`);
       
       onMergeComplete();
       onClose();
     } catch (error: any) {
       console.error('Merge failed:', error);
-      alert(`Merge failed: ${error.message}`);
+      
+      // Provide more helpful error messages
+      let errorMessage = error.message || 'Unknown error occurred';
+      
+      if (error.code === 'not-found') {
+        if (errorMessage.includes('Survivor customer')) {
+          errorMessage = `The customer you selected to keep (survivor) no longer exists. Please refresh the customer list and try again.`;
+        } else if (errorMessage.includes('Duplicate customer')) {
+          errorMessage = `The customer you selected to merge (duplicate) no longer exists. Please refresh the customer list and try again.`;
+        }
+      } else if (error.code === 'failed-precondition') {
+        errorMessage = `${errorMessage}\n\nThis customer may have an orphaned migration. Try running "Clean Orphaned Migrations" in Settings > Data Management first.`;
+      }
+      
+      alert(`❌ Merge failed: ${errorMessage}`);
     } finally {
       setMerging(false);
     }

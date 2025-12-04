@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  getAuth, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   GoogleAuthProvider, 
@@ -28,8 +27,7 @@ declare global {
 type AuthMode = 'email' | 'phone';
 
 export default function Login() {
-  const { db } = useFirebase();
-  const auth = getAuth();
+  const { db, auth } = useFirebase();
   const nav = useNavigate();
   
   // Get return URL from query params
@@ -107,13 +105,14 @@ export default function Login() {
             await updateProfile(userCredential.user, profileUpdates);
           }
 
-          // Create/update customer record using enhanced identity system
-          // This will automatically merge with any existing customer records by email/phone
+          // CRITICAL: Find or create customer record - REQUIRED for sign-up
+          // This ensures a customer record exists (either finds existing or creates new)
           const { getFunctions, httpsCallable } = await import('firebase/functions');
           const functions = getFunctions();
           const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
           
           try {
+            console.log('🔍 Finding or creating customer record for sign-up:', email);
             const result = await findOrCreate({
               email: email,
               phone: phone || null,
@@ -126,10 +125,16 @@ export default function Login() {
             if (result.data.merged) {
               console.log('✅ Merged existing customer record with new auth account');
               alert('Welcome back! Your previous bookings have been linked to your account.');
+            } else if (result.data.isNew) {
+              console.log('✅ Created new customer record');
+            } else {
+              console.log('✅ Found existing customer record');
             }
           } catch (customerError: any) {
-            console.error('⚠️ Failed to create customer record:', customerError);
-            // Non-critical error - continue with sign up
+            // CRITICAL: If finding/creating customer record fails, sign out
+            console.error('❌ Failed to find or create customer record:', customerError);
+            await auth.signOut();
+            throw new Error('Failed to set up your account. Please try again or contact support if the problem persists.');
           }
 
           // Send verification email with proper action code settings
@@ -153,21 +158,37 @@ export default function Login() {
           return;
         }
 
-        // Ensure customer record is linked on returning email/password sign-in
-        if (userCredential.user) {
-          try {
-            const { getFunctions, httpsCallable } = await import('firebase/functions');
-            const functions = getFunctions();
-            const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
-            await findOrCreate({
-              email: userCredential.user.email,
-              phone: null,
-              name: userCredential.user.displayName || 'Customer',
-              authUid: userCredential.user.uid,
-            });
-          } catch (linkErr) {
-            console.warn('Customer linkage on email sign-in failed (non-fatal):', linkErr);
+        // CRITICAL: Find or create customer record - REQUIRED for sign-in
+        // This ensures a customer record exists (either finds existing or creates new)
+        if (!userCredential.user) {
+          throw new Error('Sign-in succeeded but no user object returned');
+        }
+
+        const { getFunctions, httpsCallable } = await import('firebase/functions');
+        const functions = getFunctions();
+        const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+        
+        try {
+          console.log('🔍 Finding or creating customer record for sign-in:', userCredential.user.email);
+          const result = await findOrCreate({
+            email: userCredential.user.email,
+            phone: null,
+            name: userCredential.user.displayName || 'Customer',
+            authUid: userCredential.user.uid,
+          }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
+          
+          if (result.data.isNew) {
+            console.log('✅ Created new customer record');
+          } else if (result.data.merged) {
+            console.log('✅ Merged existing customer record');
+          } else {
+            console.log('✅ Found existing customer record');
           }
+        } catch (customerError: any) {
+          // CRITICAL: If finding/creating customer record fails, sign out
+          console.error('❌ Failed to find or create customer record:', customerError);
+          await auth.signOut();
+          throw new Error('Failed to set up your account. Please try again or contact support if the problem persists.');
         }
       }
       
@@ -196,7 +217,12 @@ export default function Login() {
       // Redirect back to return URL with cart intact
       nav(returnTo);
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      // Check if this is a customer record error (will have our custom message)
+      if (err.message && err.message.includes('set up your account')) {
+        setError(err.message);
+      } else {
+        setError(err.message || 'Authentication failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -217,28 +243,51 @@ export default function Login() {
       const result = await signInWithPopup(auth, provider);
       console.log('🔍 Auth successful:', result.user?.email);
       
-      // Create/update customer record using enhanced identity system
-      if (result.user) {
-        const { getFunctions, httpsCallable } = await import('firebase/functions');
-        const functions = getFunctions();
-        const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+      // CRITICAL: Find or create customer record - REQUIRED for authenticated sign-in
+      // This ensures a customer record exists (either finds existing or creates new)
+      // Guest bookings handle customer creation separately during booking flow
+      if (!result.user) {
+        throw new Error('Authentication succeeded but no user object returned');
+      }
+
+      const { getFunctions, httpsCallable } = await import('firebase/functions');
+      const functions = getFunctions();
+      const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+      
+      try {
+        console.log('🔍 Finding or creating customer record for:', result.user.email);
+        const customerResult = await findOrCreate({
+          email: result.user.email,
+          name: result.user.displayName || 'Customer',
+          phone: result.user.phoneNumber || null,
+          profilePictureUrl: result.user.photoURL || null,
+          authUid: result.user.uid
+        }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
         
-        try {
-          const customerResult = await findOrCreate({
-            email: result.user.email,
-            name: result.user.displayName || 'Customer',
-            phone: result.user.phoneNumber || null,
-            profilePictureUrl: result.user.photoURL || null,
-            authUid: result.user.uid
-          }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
-          
-          if (customerResult.data.merged) {
-            console.log('✅ Merged existing customer record with Google account');
-          }
-        } catch (customerError: any) {
-          console.error('⚠️ Failed to create customer record:', customerError);
-          // Non-critical error - continue with sign in
+        console.log('✅ Customer record result:', customerResult.data);
+        if (customerResult.data.isNew) {
+          console.log('✅ Created new customer record');
+        } else if (customerResult.data.merged) {
+          console.log('✅ Merged existing customer record with Google account');
+        } else {
+          console.log('✅ Found existing customer record');
         }
+      } catch (customerError: any) {
+        // CRITICAL: If finding/creating customer record fails, we must sign out
+        // to prevent user from being signed in without a customer record
+        console.error('❌ Failed to find or create customer record:', customerError);
+        console.error('❌ Error code:', customerError?.code);
+        console.error('❌ Error message:', customerError?.message);
+        
+        // Sign user out to prevent incomplete state
+        try {
+          await auth.signOut();
+        } catch (signOutErr) {
+          console.error('Failed to sign out after customer record error:', signOutErr);
+        }
+        
+        // Re-throw with clear message for user
+        throw new Error('Failed to set up your account. Please try again or contact support if the problem persists.');
       }
       
       // Restore booking state if coming from booking flow
@@ -269,7 +318,40 @@ export default function Login() {
       console.error('🔍 Google Auth Error:', err);
       console.error('🔍 Error code:', err.code);
       console.error('🔍 Error message:', err.message);
-      setError(`${err.code}: ${err.message}`);
+      
+      // Handle multi-factor authentication error
+      if (err.code === 'auth/multi-factor-auth-required') {
+        // MFA is enabled for admin site but not supported on booking site
+        // Guide user to use email/password sign-in instead
+        setError('Your account has multi-factor authentication enabled. The booking site doesn\'t support MFA. Please use email and password sign-in instead.');
+        // Switch to email auth mode automatically so they can enter credentials
+        setAuthMode('email');
+        return;
+      }
+      
+      // Handle other common Google auth errors with user-friendly messages
+      let errorMessage = 'Failed to sign in with Google';
+      
+      // Check if this is a customer record error (will have our custom message)
+      if (err.message && err.message.includes('set up your account')) {
+        errorMessage = err.message;
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Sign-in was cancelled. Please try again.';
+      } else if (err.code === 'auth/popup-blocked') {
+        errorMessage = 'Popup was blocked. Please allow popups for this site and try again.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        errorMessage = 'This domain is not authorized. Please contact support.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = 'Google sign-in is not enabled. Please use email sign-in instead.';
+      } else if (err.code === 'auth/network-request-failed' || err.code === 'auth/internal-error') {
+        errorMessage = 'Network error detected. Please check your connection and try again.';
+      } else if (err.code === 'auth/timeout') {
+        errorMessage = 'Request timed out. Please check your connection and try again.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -367,29 +449,46 @@ export default function Login() {
       const userCredential = await signInWithCredential(auth, credential);
       console.log('✅ Phone verification successful');
       
-      // Create/update customer record using enhanced identity system
-      if (userCredential.user) {
-        const { getFunctions, httpsCallable } = await import('firebase/functions');
-        const functions = getFunctions();
-        const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+      // CRITICAL: Find or create customer record - REQUIRED for phone auth
+      // This ensures a customer record exists (either finds existing or creates new)
+      if (!userCredential.user) {
+        throw new Error('Phone verification succeeded but no user object returned');
+      }
+
+      // Format phone number to E.164 format using selected country code
+      let formattedPhone = phone.trim();
+      if (!formattedPhone.startsWith('+')) {
+        const digitsOnly = formattedPhone.replace(/\D/g, '');
+        formattedPhone = countryCode + digitsOnly;
+      }
+
+      const { getFunctions, httpsCallable } = await import('firebase/functions');
+      const functions = getFunctions();
+      const findOrCreate = httpsCallable(functions, 'findOrCreateCustomer');
+      
+      try {
+        console.log('🔍 Finding or creating customer record for phone auth:', formattedPhone);
+        const result = await findOrCreate({
+          phone: formattedPhone,
+          name: name || userCredential.user.displayName || 'Customer',
+          email: null, // Phone auth doesn't provide email
+          authUid: userCredential.user.uid,
+          birthday: birthday || null
+        }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
         
-        try {
-          const result = await findOrCreate({
-            phone: phone,
-            name: name || userCredential.user.displayName || 'Customer',
-            email: null, // Phone auth doesn't provide email
-            authUid: userCredential.user.uid,
-            birthday: birthday || null
-          }) as { data: { customerId: string; isNew: boolean; merged: boolean } };
-          
-          if (result.data.merged) {
-            console.log('✅ Merged existing customer record with phone auth account');
-            alert('Welcome back! Your previous bookings have been linked to your account.');
-          }
-        } catch (customerError: any) {
-          console.error('⚠️ Failed to create customer record:', customerError);
-          // Non-critical error - continue with sign in
+        if (result.data.merged) {
+          console.log('✅ Merged existing customer record with phone auth account');
+          alert('Welcome back! Your previous bookings have been linked to your account.');
+        } else if (result.data.isNew) {
+          console.log('✅ Created new customer record');
+        } else {
+          console.log('✅ Found existing customer record');
         }
+      } catch (customerError: any) {
+        // CRITICAL: If finding/creating customer record fails, sign out
+        console.error('❌ Failed to find or create customer record:', customerError);
+        await auth.signOut();
+        throw new Error('Failed to set up your account. Please try again or contact support if the problem persists.');
       }
       
       // Restore booking state if coming from booking flow
@@ -418,7 +517,12 @@ export default function Login() {
       nav(returnTo);
     } catch (err: any) {
       console.error('❌ Phone verification error:', err);
-      setError(err.message || 'Invalid verification code');
+      // Check if this is a customer record error (will have our custom message)
+      if (err.message && err.message.includes('set up your account')) {
+        setError(err.message);
+      } else {
+        setError(err.message || 'Invalid verification code');
+      }
     } finally {
       setLoading(false);
     }

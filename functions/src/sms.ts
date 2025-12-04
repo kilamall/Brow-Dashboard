@@ -351,7 +351,7 @@ async function parseMessageWithGemini(message: string, phoneNumber: string, apiK
 Return ONLY a JSON object (no other text) with these fields:
 {
   "intent": "booking" | "availability" | "question" | "unknown",
-  "date": "MM/DD or YYYY-MM-DD format if found",
+  "date": "MM/DD or YYYY-MM-DD format if found (only include if user specified a date)",
   "time": "HH:MM AM/PM format if found",
   "service": "service name if mentioned",
   "email": "email@example.com if provided"
@@ -359,8 +359,12 @@ Return ONLY a JSON object (no other text) with these fields:
 
 Examples:
 "BOOK 11/11 10am brow wax" → {"intent":"booking","date":"11/11","time":"10:00 AM","service":"brow wax"}
+"Available?" → {"intent":"availability"}
+"What's available on 11/18?" → {"intent":"availability","date":"11/18"}
 "I need a brow wax next Tuesday around 2pm" → {"intent":"booking","date":"next tuesday","time":"2:00 PM","service":"brow wax"}
 "What are your hours?" → {"intent":"question"}
+
+IMPORTANT: If user asks for availability without specifying a date, set intent to "availability" and omit the date field.
 
 Message: ${message}`;
 
@@ -672,7 +676,15 @@ function findServiceByNameOrNumber(
 function parseSMSMessage(message: string, conversationState: any = null): { type: string; data: any } {
   const text = message.toLowerCase().trim();
   
-  // PRIORITY 1: Check for escape commands FIRST (before conversation state)
+  // PRIORITY 0: Check for availability requests FIRST (before anything else)
+  // Normalize by removing punctuation to handle "available?", "available!", etc.
+  const normalizedForAvailability = text.replace(/[?!.,;:]/g, '').trim();
+  if (normalizedForAvailability === 'available' || normalizedForAvailability === 'availability') {
+    console.log('✅ Detected availability request via pattern match (early check):', message);
+    return { type: 'availability_request', data: null };
+  }
+  
+  // PRIORITY 1: Check for escape commands (before conversation state)
   // This allows users to break out of stuck conversations
   
   // Check for cancel/restart requests (clears conversation state)
@@ -694,11 +706,6 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
   
   if (isGreeting) {
     return { type: 'greeting', data: null };
-  }
-  
-  // Check for availability requests (also an escape from stuck state)
-  if (text === 'available' || text === 'availability') {
-    return { type: 'availability_request', data: null };
   }
   
   // Check for weekly grid request
@@ -764,6 +771,23 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     
     // Check if they're providing a service name (in service selection state)
     if (conversationState.awaitingService) {
+      // BUT: Check if this looks like a new booking request first (allows breaking out of stuck state)
+      const hasBookKeyword = text.includes('book') || text.includes('schedule') || text.includes('appointment');
+      if (hasBookKeyword) {
+        // Match MM/DD, MM/DD/YY, or MM/DD/YYYY formats
+        const dateMatch = text.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{1,2}-\d{1,2}(?:-\d{2,4})?|\d{1,2}\s+\d{1,2}(?:\s+\d{2,4})?)/);
+        const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)|(\d{1,2})\s*(am|pm)/i);
+        if (dateMatch) {
+          console.log('✅ Detected new booking request while in awaitingService state, clearing old state');
+          return {
+            type: 'booking_request',
+            data: {
+              date: dateMatch[1],
+              time: timeMatch ? timeMatch[0] : null
+            }
+          };
+        }
+      }
       return { type: 'provide_service', data: { serviceInput: message.trim() } };
     }
     
@@ -775,9 +799,10 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
     }
   }
   
-  // Check for booking requests
+  // Check for booking requests (also check here for messages not in conversation state)
   if (text.includes('book') || text.includes('schedule') || text.includes('appointment')) {
-    const dateMatch = text.match(/(\d{1,2}\/\d{1,2}|\d{1,2}-\d{1,2}|\d{1,2}\s+\d{1,2})/);
+    // Match MM/DD, MM/DD/YY, or MM/DD/YYYY formats
+    const dateMatch = text.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{1,2}-\d{1,2}(?:-\d{2,4})?|\d{1,2}\s+\d{1,2}(?:\s+\d{2,4})?)/);
     const timeMatch = text.match(/(\d{1,2}:\d{2}|\d{1,2}\s*(am|pm))/i);
     
     if (dateMatch && timeMatch) {
@@ -789,6 +814,18 @@ function parseSMSMessage(message: string, conversationState: any = null): { type
         }
       };
     }
+    
+    // If only date is provided (no time), still treat as booking request
+    if (dateMatch) {
+      return {
+        type: 'booking_request',
+        data: {
+          date: dateMatch[1],
+          time: null
+        }
+      };
+    }
+    
     return { type: 'booking_help', data: null };
   }
   
@@ -852,10 +889,10 @@ async function getWeeklyAvailabilityGrid(): Promise<string> {
     const now = new Date();
     const gridLines: string[] = [];
     
-    // Get next 5 days
+    // Get next 5 days - use same date creation method as getAvailableSlots() for consistency
     for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
-      const targetDate = new Date(now);
-      targetDate.setDate(now.getDate() + dayOffset);
+      // Create date using millisecond addition (same as getAvailableSlots) to avoid timezone issues
+      const targetDate = new Date(now.getTime() + (dayOffset * 24 * 60 * 60 * 1000));
       
       // Format day label with month (e.g., "Tu 11/12", "We 11/13")
       const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -863,7 +900,7 @@ async function getWeeklyAvailabilityGrid(): Promise<string> {
       const monthNum = targetDate.getMonth() + 1;
       const dayNum = targetDate.getDate();
       
-      // Get available times for this day
+      // Get available times for this day - uses same function as getAvailableSlots()
       const availableTimes = await getAvailableSlotsForDate(targetDate);
       
       // Convert available times to hourly grid (10am-4pm = 7 hours)
@@ -1408,6 +1445,7 @@ export const smsWebhook = onRequest(
       
       // Parse the incoming message with conversation context
       let parsed = parseSMSMessage(body, conversationState);
+      console.log('🔍 Parsed message type:', parsed.type, 'for message:', body);
       
       // If needs Gemini parsing, try it
       if (parsed.type === 'needs_gemini_parse') {
@@ -1429,14 +1467,37 @@ export const smsWebhook = onRequest(
         } else if (geminiResult && geminiResult.intent === 'availability') {
           // Convert to availability check
           console.log('✅ Gemini detected availability check');
+          if (geminiResult.date) {
+            // Specific date availability request
+            const specificDate = parseSpecificDate(geminiResult.date);
+            if (specificDate) {
           parsed = {
             type: 'specific_availability_request',
-            data: { date: geminiResult.date }
+                data: { date: specificDate }
           };
         } else {
-          // Gemini couldn't parse, return error with help
-          console.log('❌ Gemini could not parse message');
-          parsed = { type: 'error', data: null };
+              // Date couldn't be parsed, show general availability
+              parsed = { type: 'availability_request', data: null };
+            }
+          } else {
+            // General availability request (no date specified)
+            parsed = { type: 'availability_request', data: null };
+          }
+        } else if (geminiResult && geminiResult.intent === 'question') {
+          // Use full Gemini AI for answering questions
+          console.log('✅ Gemini detected question - using conversational AI');
+          parsed = { type: 'gemini_question', data: { message: body } };
+        } else {
+          // Gemini couldn't parse or unknown intent - check if it's a simple availability request
+          const fallbackNormalized = body.replace(/[?!.,;:]/g, '').trim().toLowerCase();
+          if (fallbackNormalized === 'available' || fallbackNormalized === 'availability') {
+            console.log('✅ Fallback: Detected availability request after Gemini failed');
+            parsed = { type: 'availability_request', data: null };
+          } else {
+            // Use conversational AI as fallback
+            console.log('🤖 Using Gemini conversational AI for:', body);
+            parsed = { type: 'gemini_question', data: { message: body } };
+          }
         }
       }
       
@@ -1489,6 +1550,21 @@ export const smsWebhook = onRequest(
         case 'specific_availability_request':
           const targetDate = parsed.data.date;
           console.log('📅 Checking availability for:', targetDate.toISOString());
+          
+          // Check if date is in the past (with 2 hour minimum booking buffer)
+          const nowForCheck = new Date();
+          const minBookingTimeForCheck = new Date(nowForCheck.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+          const targetDateStart = new Date(targetDate);
+          targetDateStart.setHours(0, 0, 0, 0);
+          const minBookingDateForCheck = new Date(minBookingTimeForCheck);
+          minBookingDateForCheck.setHours(0, 0, 0, 0);
+          
+          if (targetDateStart < minBookingDateForCheck) {
+            const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            responseMessage = `Sorry, ${dateStr} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+            break;
+          }
+          
           const availableTimes = await getAvailableSlotsForDate(targetDate);
           console.log(`✅ Found ${availableTimes.length} available times:`, availableTimes);
           const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -1515,9 +1591,109 @@ export const smsWebhook = onRequest(
           // User sent "BOOK 11/11 10am brow wax" or Gemini parsed a complex booking request
           console.log('📅 Processing quick booking:', parsed.data);
           
-          // Parse the date
+          // Parse the date and time - check full datetime before assuming next year
           const bookingDateStr = parsed.data.date;
-          let bookingDate = parseSpecificDate(bookingDateStr);
+          const bookingTimeStr = parsed.data.time;
+          const now = new Date();
+          const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+          let bookingDate: Date | null = null;
+          
+          // Try to parse as MM/DD format first (most common)
+          const dateMatch = bookingDateStr.match(/(\d{1,2})\/(\d{1,2})/);
+          if (dateMatch) {
+            const month = parseInt(dateMatch[1]) - 1;
+            const day = parseInt(dateMatch[2]);
+            const currentYear = new Date().getFullYear();
+            
+            // Parse the time to check full datetime
+            const parsedTime = parseTimeString(bookingTimeStr);
+            
+            if (parsedTime) {
+              const businessTimezone = 'America/Los_Angeles';
+              const { fromZonedTime } = await import('date-fns-tz');
+              
+              // Try current year first with the actual time
+              const dateISO = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+              const appointmentDateTime = fromZonedTime(localTimeStr, businessTimezone);
+              
+              // If current year datetime is in the future, use it
+              if (appointmentDateTime >= minBookingTime) {
+                bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
+              } else {
+                // Current year is in the past - try next year
+                const nextYear = currentYear + 1;
+                const nextYearDateISO = `${nextYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const nextYearTimeStr = `${nextYearDateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+                const nextYearDateTime = fromZonedTime(nextYearTimeStr, businessTimezone);
+                
+                // If next year is also in the past, reject it
+                if (nextYearDateTime < minBookingTime) {
+                  const dateDisplay = new Date(Date.UTC(currentYear, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  break;
+                }
+                
+                // Next year is valid, use it
+                bookingDate = new Date(Date.UTC(nextYear, month, day, 12, 0, 0));
+              }
+              } else {
+                // No time parsed - use date-only logic
+                bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
+                const bookingDateStart = new Date(bookingDate);
+                bookingDateStart.setHours(0, 0, 0, 0);
+                const minBookingDate = new Date(minBookingTime);
+                minBookingDate.setHours(0, 0, 0, 0);
+                
+                // If date is in the past, check if it's clearly in the past
+                if (bookingDateStart < minBookingDate) {
+                  const currentMonth = now.getMonth();
+                  const currentDay = now.getDate();
+                  
+                  // If the requested month/day is clearly in the past (same month but past day, or previous month), reject it
+                  if (month < currentMonth || (month === currentMonth && day < currentDay)) {
+                    const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                    break;
+                  }
+                  
+                  // Otherwise, try next year (for dates like "12/25" when it's November)
+                  const nextYearDate = new Date(Date.UTC(currentYear + 1, month, day, 12, 0, 0));
+                  const nextYearDateStart = new Date(nextYearDate);
+                  nextYearDateStart.setHours(0, 0, 0, 0);
+                  
+                  // Only use next year if it's actually in the future
+                  if (nextYearDateStart >= minBookingDate) {
+                    bookingDate = nextYearDate;
+                  } else {
+                    // Both current year and next year are in the past - reject it
+                    const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                    break;
+                  }
+                }
+              }
+          } else {
+            // Not MM/DD format - use parseSpecificDate as fallback
+            bookingDate = parseSpecificDate(bookingDateStr);
+            
+            if (!bookingDate) {
+              responseMessage = `Sorry, I couldn't understand the date "${bookingDateStr}". 😕\n\nTry: "BOOK 11/11 10am brow wax"\n\nCall (650) 613-8455 for assistance. - Bueno Brows` + A2P_FOOTER;
+              break;
+            }
+            
+            // Check if date is in the past (with 2 hour minimum booking buffer)
+            const bookingDateStart = new Date(bookingDate);
+            bookingDateStart.setHours(0, 0, 0, 0);
+            const minBookingDate = new Date(minBookingTime);
+            minBookingDate.setHours(0, 0, 0, 0);
+            
+            if (bookingDateStart < minBookingDate) {
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              break;
+            }
+          }
           
           if (!bookingDate) {
             responseMessage = `Sorry, I couldn't understand the date "${bookingDateStr}". 😕\n\nTry: "BOOK 11/11 10am brow wax"\n\nCall (650) 613-8455 for assistance. - Bueno Brows` + A2P_FOOTER;
@@ -1661,6 +1837,21 @@ export const smsWebhook = onRequest(
         case 'time_selection':
           // User selected a time - show top 5 most booked services
           if (conversationState && conversationState.pendingTimes) {
+            // Check if date is in the past
+            const bookingDateFromState = new Date(conversationState.date);
+            const now = new Date();
+            const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            const bookingDateStart = new Date(bookingDateFromState);
+            bookingDateStart.setHours(0, 0, 0, 0);
+            const minBookingDate = new Date(minBookingTime);
+            minBookingDate.setHours(0, 0, 0, 0);
+            
+            if (bookingDateStart < minBookingDate) {
+              responseMessage = `Sorry, ${conversationState.dateStr} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
             const selectedTime = parsed.data.time;
             
             // Show top 5 most booked services
@@ -1754,6 +1945,23 @@ export const smsWebhook = onRequest(
             const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
             const appointmentDate = fromZonedTime(localTimeStr, businessTimezone);
             
+            // Validate that appointment datetime is in the future (with 2 hour minimum buffer)
+            const nowForService = new Date();
+            const minBookingTimeForService = new Date(nowForService.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            
+            if (appointmentDate < minBookingTimeForService) {
+              const dateTimeStr = appointmentDate.toLocaleString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZone: businessTimezone
+              });
+              responseMessage = `Sorry, ${dateTimeStr} is in the past or too soon (need at least 2 hours notice). 😕\n\nPlease choose a future time. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
             const availabilityCheck = await checkSlotAvailableForDuration(appointmentDate, service.duration);
             
             if (!availabilityCheck.available) {
@@ -1809,6 +2017,21 @@ export const smsWebhook = onRequest(
         case 'provide_email':
           // User provided email - now ask for name
           if (conversationState && conversationState.awaitingEmail) {
+            // Check if date is in the past
+            const bookingDateFromState = new Date(conversationState.date);
+            const now = new Date();
+            const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            const bookingDateStart = new Date(bookingDateFromState);
+            bookingDateStart.setHours(0, 0, 0, 0);
+            const minBookingDate = new Date(minBookingTime);
+            minBookingDate.setHours(0, 0, 0, 0);
+            
+            if (bookingDateStart < minBookingDate) {
+              responseMessage = `Sorry, ${conversationState.dateStr} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
             const customerEmail = parsed.data.email;
             
             responseMessage = SMS_TEMPLATES.bookingConfirmName();
@@ -1837,6 +2060,21 @@ export const smsWebhook = onRequest(
             console.log('📝 Customer provided name:', customerName);
             console.log('📋 Current conversation state:', JSON.stringify(conversationState));
             
+            // Check if date is in the past (with 2 hour minimum booking buffer)
+            const bookingDateFromState = new Date(conversationState.date);
+            const now = new Date();
+            const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            const bookingDateStart = new Date(bookingDateFromState);
+            bookingDateStart.setHours(0, 0, 0, 0);
+            const minBookingDate = new Date(minBookingTime);
+            minBookingDate.setHours(0, 0, 0, 0);
+            
+            if (bookingDateStart < minBookingDate) {
+              responseMessage = `Sorry, ${conversationState.dateStr} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
             // Parse appointment date/time in BUSINESS TIMEZONE (Pacific)
             const businessTimezone = 'America/Los_Angeles';
             const dateISO = conversationState.date.split('T')[0]; // Extract YYYY-MM-DD
@@ -1852,6 +2090,23 @@ export const smsWebhook = onRequest(
             // Create appointment in Pacific timezone
             const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
             const appointmentDate = fromZonedTime(localTimeStr, businessTimezone);
+            
+            // Validate that appointment datetime is in the future (with 2 hour minimum buffer)
+            const nowForFinal = new Date();
+            const minBookingTimeForFinal = new Date(nowForFinal.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            
+            if (appointmentDate < minBookingTimeForFinal) {
+              const dateTimeStr = appointmentDate.toLocaleString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZone: businessTimezone
+              });
+              responseMessage = `Sorry, ${dateTimeStr} is in the past or too soon (need at least 2 hours notice). 😕\n\nPlease choose a future time. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
             
             // Double-check availability (race condition protection)
             const finalCheck = await isSlotAvailableForDuration(appointmentDate, conversationState.serviceDuration);
@@ -1985,6 +2240,71 @@ export const smsWebhook = onRequest(
           await clearConversationState(from);
           break;
           
+        case 'gemini_question':
+          // Check if this is an availability-related question (earliest, next appointment, etc.)
+          const questionText = parsed.data.message.toLowerCase();
+          const isAvailabilityQuestion = questionText.includes('earliest') || 
+                                         questionText.includes('next appt') ||
+                                         questionText.includes('next appointment') ||
+                                         questionText.includes('when can') ||
+                                         questionText.includes('when are you') ||
+                                         questionText.includes('soonest');
+          
+          if (isAvailabilityQuestion) {
+            // Treat as availability request - show next available slots
+            console.log('📅 Question is about availability, showing next slots');
+            const nextSlots = await getAvailableSlots(3, 7); // Get top 3 slots
+            if (nextSlots.length > 0) {
+              const earliestSlot = nextSlots[0];
+              responseMessage = `Our earliest available appointment is ${earliestSlot}. ✨\n\nOther options:\n${nextSlots.slice(1, 3).join('\n')}\n\nWould you like to book one? Reply with the time or "AVAILABLE" for more options. - Bueno Brows` + A2P_FOOTER;
+            } else {
+              responseMessage = `I'm checking our calendar... Please call (650) 613-8455 for the earliest availability, or reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+            }
+            await clearConversationState(from);
+            break;
+          }
+          
+          // Use full Gemini AI for other conversational responses
+          console.log('🤖 Using Gemini AI for conversational response');
+          try {
+            // Get real-time business data for context
+            const [servicesSnapshot] = await Promise.all([
+              db.collection('services').where('active', '==', true).get()
+            ]);
+            let services = servicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Filter out consultation services and event services (they're not regular bookable services)
+            services = services.filter((s: any) => {
+              const nameLower = (s.name || '').toLowerCase();
+              const categoryLower = (s.category || '').toLowerCase();
+              const isConsultation = nameLower.includes('consultation') || nameLower.includes('consult');
+              const isEvent = categoryLower === 'events';
+              return !isConsultation && !isEvent;
+            });
+            
+            const availableSlots = await getAvailableSlots(5, 7);
+            
+            // Get customer info (already fetched earlier in the function)
+            const customerData = customer.docs[0]?.data() || {};
+            
+            const context = {
+              availableSlots,
+              services,
+              customer: {
+                phoneNumber: from,
+                name: customerData.name || 'New customer'
+              }
+            };
+            
+            const aiResponse = await callGeminiAI(parsed.data.message, context, from, geminiApiKey.value());
+            responseMessage = aiResponse + A2P_FOOTER;
+          } catch (error: any) {
+            console.error('Error calling Gemini AI:', error);
+            responseMessage = `I'm having trouble understanding that. 😕\n\nText "HELP" for commands or call (650) 613-8455 for assistance. - Bueno Brows` + A2P_FOOTER;
+          }
+          await clearConversationState(from);
+          break;
+          
         case 'booking_help':
           responseMessage = SMS_TEMPLATES.booking_instructions();
           await clearConversationState(from);
@@ -2010,23 +2330,178 @@ export const smsWebhook = onRequest(
             const dateStr = parsed.data.date.replace(/[\/\-]/g, '/');
             const dateParts = dateStr.split('/');
             
-            if (dateParts.length === 2) {
-              // Format: MM/DD (assume current year or next year if past)
+            if (dateParts.length === 3) {
+              // Format: MM/DD/YY or MM/DD/YYYY - year is explicitly provided
+              const month = parseInt(dateParts[0]) - 1;
+              const day = parseInt(dateParts[1]);
+              let year = parseInt(dateParts[2]);
+              const currentYear = new Date().getFullYear();
+              const now = new Date();
+              const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+              
+              // Handle 2-digit year (e.g., "26" = 2026, "25" = 2025)
+              if (year < 100) {
+                // For booking purposes, assume 2-digit years are in the 2000s
+                // "26" = 2026, "25" = 2025, etc.
+                year = 2000 + year;
+              }
+              
+              // Parse the time to check full datetime
+              const parsedTime = parseTimeString(parsed.data.time);
+              
+              if (parsedTime) {
+                const businessTimezone = 'America/Los_Angeles';
+                const dateISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+                const { fromZonedTime } = await import('date-fns-tz');
+                const appointmentDateTime = fromZonedTime(localTimeStr, businessTimezone);
+                
+                // Check if this datetime is in the future
+                if (appointmentDateTime >= minBookingTime) {
+                  bookingDate = new Date(Date.UTC(year, month, day, 12, 0, 0));
+                } else {
+                  // Date is in the past - reject it
+                  const dateDisplay = new Date(Date.UTC(year, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  const timeDisplay = parsed.data.time.toUpperCase();
+                  responseMessage = `Sorry, ${dateDisplay} at ${timeDisplay} is in the past or too soon (need at least 2 hours notice). 😕\n\nPlease choose a future date and time. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  await clearConversationState(from);
+                  break;
+                }
+              } else {
+                // No time parsed - use date-only logic
+                bookingDate = new Date(Date.UTC(year, month, day, 12, 0, 0));
+                const bookingDateStart = new Date(bookingDate);
+                bookingDateStart.setUTCHours(0, 0, 0, 0);
+                const minBookingDate = new Date(minBookingTime);
+                minBookingDate.setUTCHours(0, 0, 0, 0);
+                
+                // Check if date is in the past
+                if (bookingDateStart < minBookingDate) {
+                  const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  await clearConversationState(from);
+                  break;
+                }
+              }
+            } else if (dateParts.length === 2) {
+              // Format: MM/DD - check with time FIRST before assuming next year
               const month = parseInt(dateParts[0]) - 1;
               const day = parseInt(dateParts[1]);
               const currentYear = new Date().getFullYear();
+              const now = new Date();
+              const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
               
-              // Create date at UTC noon for consistent date handling
+              // Parse the time to check full datetime
+              const parsedTime = parseTimeString(parsed.data.time);
+              
+              // Try current year first with the actual time
+              if (parsedTime) {
+                const businessTimezone = 'America/Los_Angeles';
+                const dateISO = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+                const { fromZonedTime } = await import('date-fns-tz');
+                const appointmentDateTime = fromZonedTime(localTimeStr, businessTimezone);
+                
+                // If current year datetime is in the future, use it
+                if (appointmentDateTime >= minBookingTime) {
               bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
-              
-              // If date is in the past, assume next year
-              if (bookingDate < new Date()) {
-                bookingDate = new Date(Date.UTC(currentYear + 1, month, day, 12, 0, 0));
+                } else {
+                  // Current year datetime is in the past - check if it's clearly a past date
+                  const currentMonth = now.getMonth();
+                  const currentDay = now.getDate();
+                  
+                  // If the requested month/day is in the past (same month but past day, or previous month), reject it immediately
+                  if (month < currentMonth || (month === currentMonth && day < currentDay)) {
+                    const dateDisplay = new Date(Date.UTC(currentYear, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                    await clearConversationState(from);
+                    break;
+                  }
+                  
+                  // Date is in current month but the day hasn't happened yet, or it's a future month
+                  // But the datetime with time is still in the past - this means the time has passed today
+                  // Reject it - they need to choose a future time
+                  const dateDisplay = new Date(Date.UTC(currentYear, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  const timeDisplay = parsed.data.time.toUpperCase();
+                  responseMessage = `Sorry, ${dateDisplay} at ${timeDisplay} is in the past or too soon (need at least 2 hours notice). 😕\n\nPlease choose a future date and time. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  await clearConversationState(from);
+                  break;
+                }
+              } else {
+                // No time parsed - use date-only logic
+                const currentMonth = now.getMonth();
+                const currentDay = now.getDate();
+                
+                // If the requested month/day is clearly in the past (same month but past day, or previous month), reject it immediately
+                if (month < currentMonth || (month === currentMonth && day < currentDay)) {
+                  const dateDisplay = new Date(Date.UTC(currentYear, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  await clearConversationState(from);
+                  break;
+                }
+                
+                // Date is in current month (future day) or future month - use current year
+                bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
+                const bookingDateStart = new Date(bookingDate);
+                bookingDateStart.setHours(0, 0, 0, 0);
+                const minBookingDate = new Date(minBookingTime);
+                minBookingDate.setHours(0, 0, 0, 0);
+                
+                // Double-check it's actually in the future
+                if (bookingDateStart < minBookingDate) {
+                  // This shouldn't happen given the check above, but just in case
+                  const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                  await clearConversationState(from);
+                  break;
+                }
               }
             }
             
             if (!bookingDate) {
               responseMessage = `Sorry, I couldn't understand the date "${parsed.data.date}". 😕\n\nPlease try: "What's available on the 9th?" or "AVAILABLE" to see open slots. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            // Check if date is in the past (with 2 hour minimum booking buffer)
+            // IMPORTANT: Do this check BEFORE asking for service
+            const now = new Date();
+            const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000)); // 2 hours from now
+            const bookingDateStart = new Date(bookingDate);
+            bookingDateStart.setUTCHours(0, 0, 0, 0);
+            const minBookingDate = new Date(minBookingTime);
+            minBookingDate.setUTCHours(0, 0, 0, 0);
+            
+            // Also check if the date (with time) would be in the past
+            // Parse the time to get full datetime
+            const parsedTime = parseTimeString(parsed.data.time);
+            if (parsedTime) {
+              const businessTimezone = 'America/Los_Angeles';
+              const dateISO = bookingDate.toISOString().split('T')[0];
+              const localTimeStr = `${dateISO}T${String(parsedTime.hours).padStart(2, '0')}:${String(parsedTime.minutes).padStart(2, '0')}:00`;
+              const { fromZonedTime } = await import('date-fns-tz');
+              const appointmentDateTime = fromZonedTime(localTimeStr, businessTimezone);
+              
+              if (appointmentDateTime < minBookingTime) {
+                const dateTimeDisplay = appointmentDateTime.toLocaleString('en-US', { 
+                  month: 'short', 
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  timeZone: businessTimezone
+                });
+                responseMessage = `Sorry, ${dateTimeDisplay} is in the past or too soon (need at least 2 hours notice). 😕\n\nPlease choose a future date and time. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                await clearConversationState(from);
+                break;
+              }
+            }
+            
+            // Check if just the date (without time) is in the past
+            if (bookingDateStart < minBookingDate) {
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
               break;
             }
             
@@ -2076,6 +2551,89 @@ export const smsWebhook = onRequest(
                 awaitingTime: true
               });
             }
+          } else if (parsed.data.date && !parsed.data.time) {
+            // User sent "BOOK [date]" without time - validate date and ask for time
+            console.log('📅 Processing booking request with date only:', parsed.data.date);
+            let bookingDate: Date | null = null;
+            const dateStr = parsed.data.date.replace(/[\/\-]/g, '/');
+            const dateParts = dateStr.split('/');
+            
+            if (dateParts.length === 3) {
+              // Format: MM/DD/YY or MM/DD/YYYY
+              const month = parseInt(dateParts[0]) - 1;
+              const day = parseInt(dateParts[1]);
+              let year = parseInt(dateParts[2]);
+              const currentYear = new Date().getFullYear();
+              const now = new Date();
+              const minBookingTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
+              
+              // Handle 2-digit year
+              if (year < 100) {
+                year = 2000 + year;
+              }
+              
+              bookingDate = new Date(Date.UTC(year, month, day, 12, 0, 0));
+              const bookingDateStart = new Date(bookingDate);
+              bookingDateStart.setUTCHours(0, 0, 0, 0);
+              const minBookingDate = new Date(minBookingTime);
+              minBookingDate.setUTCHours(0, 0, 0, 0);
+              
+              // Check if date is in the past
+              if (bookingDateStart < minBookingDate) {
+                const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                await clearConversationState(from);
+                break;
+              }
+            } else if (dateParts.length === 2) {
+              // Format: MM/DD
+              const month = parseInt(dateParts[0]) - 1;
+              const day = parseInt(dateParts[1]);
+              const currentYear = new Date().getFullYear();
+              const now = new Date();
+              const currentMonth = now.getMonth();
+              const currentDay = now.getDate();
+              
+              // If the requested month/day is clearly in the past, reject it immediately
+              if (month < currentMonth || (month === currentMonth && day < currentDay)) {
+                const dateDisplay = new Date(Date.UTC(currentYear, month, day, 12, 0, 0)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                responseMessage = `Sorry, ${dateDisplay} is in the past. 😕\n\nPlease choose a future date. Reply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+                await clearConversationState(from);
+                break;
+              }
+              
+              // Date is in current month (future day) or future month - use current year
+              bookingDate = new Date(Date.UTC(currentYear, month, day, 12, 0, 0));
+            }
+            
+            if (!bookingDate) {
+              responseMessage = `Sorry, I couldn't understand the date "${parsed.data.date}". 😕\n\nPlease try: "Book 12/1 10AM" or "AVAILABLE" to see open slots. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            // Get available times for this date
+            const availableTimes = await getAvailableSlotsForDate(bookingDate);
+            
+            if (availableTimes.length === 0) {
+              const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              responseMessage = `Sorry, we don't have availability on ${dateDisplay}. 😕\n\nReply "AVAILABLE" to see our next open dates. - Bueno Brows` + A2P_FOOTER;
+              await clearConversationState(from);
+              break;
+            }
+            
+            // Date is valid and has availability - ask for time
+            const dateDisplay = bookingDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            responseMessage = `Great! What time on ${dateDisplay}? ⏰\n\nAvailable times:\n${availableTimes.slice(0, 5).join('\n')}${availableTimes.length > 5 ? `\n\n...and ${availableTimes.length - 5} more` : ''}\n\nReply with a time (e.g., "10AM" or "2:30PM"). - Bueno Brows` + A2P_FOOTER;
+            
+            // Save conversation state so when they provide time, we can continue booking
+            await saveConversationState(from, {
+              type: 'awaiting_time',
+              date: bookingDate.toISOString(),
+              dateStr: dateDisplay,
+              pendingTimes: availableTimes,
+              awaitingTime: true
+            });
           } else {
             responseMessage = SMS_TEMPLATES.booking_instructions();
           }
