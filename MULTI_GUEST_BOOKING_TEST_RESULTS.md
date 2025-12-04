@@ -44,21 +44,31 @@
 - **Issue**: "Cannot access 'user' before initialization"
 - **Cause**: Guest initialization useEffect used `user` variable before it was declared
 - **Fix**: Moved guest init useEffect after user state declaration
-- **Status**: ✅ Fixed & Committed
+- **Status**: ✅ Fixed & Committed (commit 3dde7521)
 
 #### Bug #2: Duplicate useEffect Race Condition
 - **Issue**: Two separate useEffect hooks both initializing "self" guest
 - **Cause**: One at line 986-992, another at 1064-1079
 - **Impact**: Race condition, conflicting dependencies, redundant initializations
 - **Fix**: Removed first duplicate, improved second with comprehensive logic
-- **Status**: ✅ Fixed & Committed
+- **Status**: ✅ Fixed & Committed (commit 63d8c27f)
 
 #### Bug #3: Duplicate Function Definitions
 - **Issue**: assignServiceToGuest and removeGuest defined twice
 - **Cause**: Functions defined around line 424-465 AND again at 2032-2070
 - **Impact**: Linter errors, potential runtime conflicts
 - **Fix**: Removed duplicate definitions at lines 2032-2070
-- **Status**: ✅ Fixed & Committed
+- **Status**: ✅ Fixed & Committed (commit 63d8c27f)
+
+#### Bug #4: Quantity Controls Overlapping Text
+- **Issue**: Quantity controls blocking service name and description
+- **Cause**: Buttons too large, insufficient padding on service content
+- **Fix**: 
+  - Made buttons more compact (w-7 h-7, smaller text)
+  - Added white background with shadow for clarity
+  - Increased content padding (pr-8 → pr-24)
+  - Reduced gaps and optimized positioning
+- **Status**: ✅ Fixed & Committed (commit fca90290)
 
 ### 📊 Manual Testing Needed
 
@@ -113,7 +123,10 @@ The following still need manual verification:
 ### 📝 Git History
 
 ```
+fca90290 UI: Fix quantity controls overlapping service text
+93e2e09b Add comprehensive test results documentation
 63d8c27f Fix: Remove duplicate useEffect and function definitions
+3dde7521 Fix: Move guest initialization useEffect after user state declaration
 4a8e1f7b Add feature completion documentation
 5593719a Update booking finalization for multi-guest support
 4c60e5aa Add multi-guest booking UI components
@@ -124,7 +137,7 @@ ebc1234e Add multi-guest booking state management and logic
 1483b6e5 Add implementation plan for multi-guest booking feature
 ```
 
-**Total: 9 commits**, all clean and focused
+**Total: 12 commits**, all clean and focused
 
 ### 🚀 Next Steps
 
