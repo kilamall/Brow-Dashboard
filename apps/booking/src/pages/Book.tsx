@@ -978,19 +978,6 @@ export default function Book() {
   });
   const [missingFields, setMissingFields] = useState<string[]>([]);
   
-  // Initialize "self" guest for authenticated users (moved here after user state declaration)
-  useEffect(() => {
-    if (user && guests.length === 0) {
-      setGuests([{
-        id: 'self',
-        name: user.displayName || user.email || 'You',
-        email: user.email || undefined,
-        phone: user.phoneNumber || undefined,
-        isSelf: true
-      }]);
-    }
-  }, [user, guests.length]);
-  
   // Handle auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -1063,20 +1050,47 @@ export default function Book() {
 
   // Initialize "self" guest for authenticated users
   useEffect(() => {
-    if (user && guests.length === 0) {
-      // Initialize with self as first guest
-      setGuests([{
-        id: 'self',
-        name: user.displayName || user.email || 'You',
-        email: user.email || undefined,
-        phone: user.phoneNumber || undefined,
-        isSelf: true
-      }]);
+    if (user) {
+      // Check if self guest already exists
+      const selfGuest = guests.find(g => g.id === 'self');
+      
+      if (!selfGuest) {
+        // Initialize with self as first guest
+        console.log('🎯 Initializing self guest for authenticated user:', user.email);
+        setGuests(prev => [{
+          id: 'self',
+          name: user.displayName || user.email || 'You',
+          email: user.email || undefined,
+          phone: user.phoneNumber || undefined,
+          isSelf: true
+        }, ...prev.filter(g => g.id !== 'self')]); // Ensure no duplicates
+      } else {
+        // Update existing self guest if user info changed
+        const needsUpdate = 
+          selfGuest.name !== (user.displayName || user.email || 'You') ||
+          selfGuest.email !== user.email ||
+          selfGuest.phone !== user.phoneNumber;
+        
+        if (needsUpdate) {
+          console.log('🔄 Updating self guest with new user info');
+          setGuests(prev => prev.map(g => 
+            g.id === 'self'
+              ? {
+                  ...g,
+                  name: user.displayName || user.email || 'You',
+                  email: user.email || undefined,
+                  phone: user.phoneNumber || undefined
+                }
+              : g
+          ));
+        }
+      }
     } else if (!user && guests.some(g => g.id === 'self')) {
       // Remove self guest if user logs out
-      setGuests(guests.filter(g => g.id !== 'self'));
+      console.log('👋 Removing self guest after logout');
+      setGuests(prev => prev.filter(g => g.id !== 'self'));
     }
-  }, [user, user?.displayName, user?.email, user?.phoneNumber]);
+  }, [user, user?.displayName, user?.email, user?.phoneNumber, guests]);
 
   // Check if customer profile is complete and show prompt if missing fields
   useEffect(() => {
@@ -2013,46 +2027,6 @@ export default function Book() {
         }
       });
     }
-  }
-
-  function assignServiceToGuest(serviceId: string, guestId: string) {
-    const current = serviceAssignments[serviceId];
-    if (!current) return;
-    
-    // Add guest assignment for the unassigned slot
-    setServiceAssignments({
-      ...serviceAssignments,
-      [serviceId]: {
-        ...current,
-        guestAssignments: [
-          ...current.guestAssignments,
-          { guestId, serviceId }
-        ]
-      }
-    });
-    
-    // Close modals and clear pending
-    setShowGuestAssignment(false);
-    setPendingServiceAssignment(null);
-  }
-
-  function removeGuest(guestId: string) {
-    // Remove guest from list
-    setGuests(guests.filter(g => g.id !== guestId));
-    
-    // Remove all assignments for this guest
-    const updatedAssignments = { ...serviceAssignments };
-    Object.keys(updatedAssignments).forEach(serviceId => {
-      updatedAssignments[serviceId].guestAssignments = 
-        updatedAssignments[serviceId].guestAssignments.filter(ga => ga.guestId !== guestId);
-      updatedAssignments[serviceId].quantity = updatedAssignments[serviceId].guestAssignments.length;
-      
-      // Remove service if no assignments left
-      if (updatedAssignments[serviceId].quantity === 0) {
-        delete updatedAssignments[serviceId];
-      }
-    });
-    setServiceAssignments(updatedAssignments);
   }
 
   const prettyTime = (iso: string) => {
