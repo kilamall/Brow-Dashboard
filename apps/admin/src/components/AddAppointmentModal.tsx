@@ -218,57 +218,27 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
     
     const newQuantity = current.quantity + 1;
     
-    // If only one guest available, auto-assign
-    if (guests.length === 1) {
-      setServiceAssignments({
-        ...serviceAssignments,
-        [serviceId]: {
-          serviceId,
-          quantity: newQuantity,
-          guestAssignments: [
-            ...current.guestAssignments,
-            { guestId: guests[0].id, serviceId }
-          ]
-        }
-      });
-      return;
-    }
-    
-    // If no guests yet or multiple guests, show assignment prompt
-    if (newQuantity > 1 || guests.length === 0 || guests.length > 1) {
-      const assignedGuestIds = current.guestAssignments.map(ga => ga.guestId);
-      const availableGuests = guests.filter(g => !assignedGuestIds.includes(g.id));
-      
-      if (availableGuests.length === 1) {
-        // Only one available guest, auto-assign
-        setServiceAssignments({
-          ...serviceAssignments,
-          [serviceId]: {
-            serviceId,
-            quantity: newQuantity,
-            guestAssignments: [
-              ...current.guestAssignments,
-              { guestId: availableGuests[0].id, serviceId }
-            ]
-          }
-        });
-      } else {
-        // Multiple options or no guests, show assignment prompt
-        setServiceAssignments({
-          ...serviceAssignments,
-          [serviceId]: {
-            ...current,
-            quantity: newQuantity,
-            guestAssignments: current.guestAssignments
-          }
-        });
-        setPendingServiceAssignment(serviceId);
-        if (availableGuests.length === 0) {
-          setShowAddGuestModal(true);
-        } else {
-          setShowGuestAssignment(true);
-        }
+    // Always show assignment prompt - let user choose guest or add new one
+    // Update quantity first
+    setServiceAssignments({
+      ...serviceAssignments,
+      [serviceId]: {
+        ...current,
+        serviceId,
+        quantity: newQuantity,
+        guestAssignments: current.guestAssignments
       }
+    });
+    
+    // Set pending assignment and show guest selection modal
+    setPendingServiceAssignment(serviceId);
+    
+    // If no guests at all, go straight to add guest modal
+    if (guests.length === 0) {
+      setShowAddGuestModal(true);
+    } else {
+      // Show guest assignment modal (includes option to add new guest)
+      setShowGuestAssignment(true);
     }
   };
   
@@ -1094,8 +1064,21 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
 
       {/* Guest Assignment Modal (Phase 3) */}
       {showGuestAssignment && pendingServiceAssignment && open && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Close modal if clicking backdrop
+            if (e.target === e.currentTarget) {
+              setShowGuestAssignment(false);
+              setPendingServiceAssignment(null);
+            }
+          }}
+        >
+          <div 
+            className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-lg font-semibold mb-4 text-slate-800">
               Who is this service for?
             </h3>
@@ -1162,8 +1145,23 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
 
       {/* Add Guest Modal (Phase 3) */}
       {showAddGuestModal && open && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Close modal if clicking backdrop
+            if (e.target === e.currentTarget) {
+              setShowAddGuestModal(false);
+              setNewGuestName('');
+              setNewGuestEmail('');
+              setNewGuestPhone('');
+            }
+          }}
+        >
+          <div 
+            className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-lg font-semibold mb-4 text-slate-800">Add Guest</h3>
             
             <div className="space-y-4">
@@ -1211,7 +1209,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
             <div className="flex gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   setShowAddGuestModal(false);
                   setNewGuestName('');
                   setNewGuestEmail('');
@@ -1224,7 +1224,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   if (!newGuestName.trim()) return;
                   const newGuest: Guest = {
                     id: `guest-${Date.now()}`,
