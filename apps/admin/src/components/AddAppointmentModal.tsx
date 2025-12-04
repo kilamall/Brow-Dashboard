@@ -548,7 +548,14 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
   return (
     <>
       <Transition show={open} as={Fragment}>
-        <Dialog onClose={onClose} className="relative z-50">
+        <Dialog 
+          onClose={() => {
+            // Don't close if nested modals are open
+            if (showAddGuestModal || showGuestAssignment) return;
+            onClose();
+          }} 
+          className="relative z-50"
+        >
         <Transition.Child as={Fragment} enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100" leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0">
           <div className="fixed inset-0 bg-black/20" />
         </Transition.Child>
@@ -1092,7 +1099,11 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   <button
                     key={guest.id}
                     type="button"
-                    onClick={() => assignServiceToGuest(pendingServiceAssignment, guest.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      assignServiceToGuest(pendingServiceAssignment, guest.id);
+                    }}
                     disabled={alreadyAssigned}
                     className={`w-full text-left p-3 border-2 rounded-lg transition-all ${
                       alreadyAssigned
@@ -1116,7 +1127,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
               
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   setShowGuestAssignment(false);
                   setShowAddGuestModal(true);
                 }}
@@ -1131,7 +1144,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
             
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
                 setShowGuestAssignment(false);
                 setPendingServiceAssignment(null);
               }}
