@@ -114,7 +114,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       setSelectedServiceIds([]);
       setServiceQuantities({}); // Phase 2: Clear quantities
       setServiceAssignments({}); // Phase 3: Clear assignments
-      setGuests([]); // Phase 3: Clear guests
+      setGuests([]); // Phase 3: Clear guests (will be re-populated by auto-init if customer selected)
       setShowAddGuestModal(false);
       setShowGuestAssignment(false);
       setPendingServiceAssignment(null);
@@ -136,6 +136,7 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
             setName(customer.name);
             setEmail(customer.email || '');
             setPhone(customer.phone || '');
+            // Customer will be auto-added as guest by the auto-init useEffect
           }
         }
         if (prefillData.serviceId) {
@@ -144,6 +145,21 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       }
     }
   }, [open, prefillData, allCustomers]);
+
+  // ✅ AUTO-INITIALIZE: Automatically add selected customer as first guest
+  useEffect(() => {
+    if (selectedCustomer && guests.length === 0) {
+      const customerAsGuest: Guest = {
+        id: `customer-${selectedCustomer.id}`,
+        name: selectedCustomer.name,
+        email: selectedCustomer.email,
+        phone: selectedCustomer.phone,
+        isSelf: true // Mark as primary booking holder
+      };
+      setGuests([customerAsGuest]);
+      console.log('[AddAppointmentModal] Auto-added customer as first guest:', customerAsGuest);
+    }
+  }, [selectedCustomer]); // Only depend on selectedCustomer, not guests (to avoid loops)
 
   // Check if we're using assignments (Phase 3) or quantities (Phase 2) or legacy selection
   const hasAssignments = Object.keys(serviceAssignments).length > 0;
@@ -1051,8 +1067,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   {err && <div className="text-red-600 text-sm">{err}</div>}
 
                   <div className="flex justify-end gap-2">
-                    <button className="px-4 py-2 rounded-md border" onClick={onClose} disabled={saving}>Cancel</button>
+                    <button type="button" className="px-4 py-2 rounded-md border" onClick={onClose} disabled={saving}>Cancel</button>
                     <button 
+                      type="button"
                       className="px-4 py-2 rounded-md bg-terracotta text-white" 
                       onClick={handleCreate} 
                       disabled={saving || (hasAssignments ? Object.keys(serviceAssignments).length === 0 : selectedServiceIds.length === 0)}
