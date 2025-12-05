@@ -228,19 +228,6 @@ export default function Book() {
   const [newGuestEmail, setNewGuestEmail] = useState('');
   const [newGuestPhone, setNewGuestPhone] = useState('');
 
-  // Initialize "self" guest for authenticated users
-  useEffect(() => {
-    if (user && guests.length === 0) {
-      setGuests([{
-        id: 'self',
-        name: user.displayName || user.email || 'You',
-        email: user.email || undefined,
-        phone: user.phoneNumber || undefined,
-        isSelf: true
-      }]);
-    }
-  }, [user, guests.length]);
-
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     // Check for preselected service from navigation state first
     if (locationState?.preselectedServiceId) {
@@ -902,11 +889,10 @@ export default function Book() {
         phone: user.phoneNumber || undefined,
         isSelf: true
       }]);
-    } else if (!user && guests.some(g => g.id === 'self')) {
-      // Remove self guest if user logs out
-      setGuests(guests.filter(g => g.id !== 'self'));
     }
-  }, [user, user?.displayName, user?.email, user?.phoneNumber]);
+    // Don't include cleanup logic for logout to avoid infinite loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]); // Only depend on user.uid, not full user object
 
   // Check if customer profile is complete and show prompt if missing fields
   useEffect(() => {
