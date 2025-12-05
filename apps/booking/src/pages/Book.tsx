@@ -338,7 +338,7 @@ export default function Book() {
   };
 
   // Multi-guest booking: Quantity and assignment functions
-  function increaseQuantity(serviceId: string) {
+  function handleIncreaseQuantity(serviceId: string) {
     // Read CURRENT state first
     const current = serviceAssignments[serviceId] || {
       serviceId,
@@ -411,7 +411,7 @@ export default function Book() {
     }
   }
 
-  function decreaseQuantity(serviceId: string) {
+  function handleDecreaseQuantity(serviceId: string) {
     const current = serviceAssignments[serviceId];
     if (!current || current.quantity <= 0) return;
     
