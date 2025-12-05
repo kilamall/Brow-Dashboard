@@ -328,6 +328,10 @@ export interface Appointment {
   receiptGeneratedAt?: string;
   receiptNumber?: string; // For display purposes
   
+  // Guest booking fields (book for others)
+  guests?: Guest[]; // List of guests for multi-guest bookings
+  serviceAssignments?: Record<string, ServiceAssignment>; // Which guest gets which service
+  
   // Multi-guest booking fields
   bookedBy?: {
     name: string;

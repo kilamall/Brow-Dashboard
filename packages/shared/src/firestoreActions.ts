@@ -703,6 +703,9 @@ export async function createAppointmentTx(
     if ((input as any).serviceIds) {
       payload.serviceIds = (input as any).serviceIds;
     }
+    if ((input as any).servicePrices) {
+      payload.servicePrices = (input as any).servicePrices;
+    }
     if ((input as any).totalPrice !== undefined) {
       payload.totalPrice = (input as any).totalPrice;
     }
@@ -711,6 +714,13 @@ export async function createAppointmentTx(
     }
     if ((input as any).isPriceEdited !== undefined) {
       payload.isPriceEdited = (input as any).isPriceEdited;
+    }
+    // Guest booking fields
+    if ((input as any).guests) {
+      payload.guests = (input as any).guests;
+    }
+    if ((input as any).serviceAssignments) {
+      payload.serviceAssignments = (input as any).serviceAssignments;
     }
 
     tx.set(newRef, payload);

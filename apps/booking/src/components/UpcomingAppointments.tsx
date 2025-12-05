@@ -175,6 +175,12 @@ export default function UpcomingAppointments({ className = '' }: UpcomingAppoint
           const appointmentDate = new Date(appointment.start);
           const isConfirming = confirmingIds.has(appointment.id);
           
+          // Multi-service support with guest assignments
+          const serviceIds = (appointment as any).serviceIds || (appointment as any).selectedServices || [];
+          const guests = (appointment as any).guests || [];
+          const serviceAssignments = (appointment as any).serviceAssignments || {};
+          const hasMultipleServices = serviceIds.length > 1;
+          
           return (
             <div 
               key={appointment.id}
@@ -185,12 +191,47 @@ export default function UpcomingAppointments({ className = '' }: UpcomingAppoint
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-lg">{getStatusIcon(appointment.status)}</span>
                     <h4 className="font-semibold text-slate-800">
-                      {service?.name || 'Unknown Service'}
+                      {hasMultipleServices ? `${serviceIds.length} Services` : (service?.name || 'Unknown Service')}
                     </h4>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(appointment.status)}`}>
                       {appointment.status}
                     </span>
                   </div>
+                  
+                  {/* Service List with Guest Assignments */}
+                  {hasMultipleServices && (
+                    <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-sm font-medium text-blue-800 mb-2">Services:</div>
+                      <div className="space-y-1">
+                        {(() => {
+                          const serviceInstanceCount: Record<string, number> = {};
+                          return serviceIds.map((serviceId: string, index: number) => {
+                            const svc = services[serviceId];
+                            if (!svc) return null;
+                            
+                            const instanceIndex = serviceInstanceCount[serviceId] || 0;
+                            serviceInstanceCount[serviceId] = instanceIndex + 1;
+                            
+                            const assignment = serviceAssignments[serviceId];
+                            const guestAssignment = assignment?.guestAssignments?.[instanceIndex];
+                            const guestName = guestAssignment ? guests.find((g: any) => g.id === guestAssignment.guestId)?.name : null;
+                            
+                            return (
+                              <div key={`${serviceId}-${index}`} className="text-sm text-blue-700 flex items-center gap-2">
+                                <span className="text-blue-400">{index + 1}.</span>
+                                <span>{svc.name}</span>
+                                {guestName && (
+                                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                                    {guestName}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="text-sm text-slate-600 space-y-1">
                     <p><strong>Date:</strong> {format(appointmentDate, 'EEEE, MMMM d, yyyy')}</p>

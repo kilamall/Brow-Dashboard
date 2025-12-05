@@ -152,8 +152,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
       const customerAsGuest: Guest = {
         id: `customer-${selectedCustomer.id}`,
         name: selectedCustomer.name,
-        email: selectedCustomer.email,
-        phone: selectedCustomer.phone,
+        ...(selectedCustomer.email && { email: selectedCustomer.email }),
+        ...(selectedCustomer.phone && { phone: selectedCustomer.phone }),
         isSelf: true // Mark as primary booking holder
       };
       setGuests([customerAsGuest]);
@@ -462,13 +462,10 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
           )
         : selectedServiceIds;
       
-      console.log('🎯 Creating appointment with service IDs:', {
+      console.log('🎯 Creating appointment with guests:', {
         hasAssignments,
-        hasQuantities,
-        serviceAssignments: hasAssignments ? serviceAssignments : 'not used',
-        serviceQuantities: hasQuantities ? serviceQuantities : 'not used',
-        guests: guests.length,
-        finalServiceIds
+        guestsCount: guests.length,
+        servicesCount: finalServiceIds.length
       });
 
       const id = await createAppointmentTx(db, {
@@ -503,6 +500,9 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
         tip: 0, // Default tip amount
         isPriceEdited: false, // Not edited initially
         notes,
+        // Save guest and service assignment data
+        guests: hasAssignments && guests.length > 0 ? guests : undefined,
+        serviceAssignments: hasAssignments ? serviceAssignments : undefined,
       } as any);
 
       // ✅ NEW: Send confirmation email
@@ -1246,8 +1246,8 @@ export default function AddAppointmentModal({ open, onClose, date, onCreated, pr
                   const newGuest: Guest = {
                     id: `guest-${Date.now()}`,
                     name: newGuestName.trim(),
-                    email: newGuestEmail.trim() || undefined,
-                    phone: newGuestPhone.trim() || undefined,
+                    ...(newGuestEmail.trim() && { email: newGuestEmail.trim() }),
+                    ...(newGuestPhone.trim() && { phone: newGuestPhone.trim() }),
                     isSelf: false
                   };
                   setGuests([...guests, newGuest]);

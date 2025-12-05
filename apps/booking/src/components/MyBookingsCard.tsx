@@ -199,16 +199,9 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
               {upcomingAppointments.slice(0, 2).map((apt) => {
                 // Check for both selectedServices (old) and serviceIds (new) for backward compatibility
                 const serviceIds = (apt as any).serviceIds || (apt as any).selectedServices || [];
-                
-                // Get service names - prioritize serviceIds array if it exists and has items
-                let serviceNames = '';
-                if (serviceIds.length > 0) {
-                  serviceNames = serviceIds.map((id: string) => services[id]?.name).filter(Boolean).join(', ') || '';
-                } else if (apt.serviceId) {
-                  serviceNames = services[apt.serviceId]?.name || 'Service';
-                } else {
-                  serviceNames = 'Service';
-                }
+                const guests = (apt as any).guests || [];
+                const serviceAssignments = (apt as any).serviceAssignments || {};
+                const hasMultipleServices = serviceIds.length > 1;
                 
                 return (
                   <div key={apt.id} className="bg-slate-50 rounded-lg p-3">
@@ -216,7 +209,7 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <h4 className="font-medium text-slate-800 text-sm">
-                            {serviceNames}
+                            {hasMultipleServices ? `${serviceIds.length} Services` : (services[apt.serviceId]?.name || 'Service')}
                           </h4>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                             apt.status === 'confirmed'
@@ -226,6 +219,37 @@ export default function MyBookingsCard({ className = '' }: MyBookingsCardProps) 
                             {apt.status}
                           </span>
                         </div>
+                        
+                        {/* Service List with Guest Assignments */}
+                        {hasMultipleServices && (
+                          <div className="mb-2 space-y-1">
+                            {(() => {
+                              const serviceInstanceCount: Record<string, number> = {};
+                              return serviceIds.map((serviceId: string, index: number) => {
+                                const service = services[serviceId];
+                                if (!service) return null;
+                                
+                                const instanceIndex = serviceInstanceCount[serviceId] || 0;
+                                serviceInstanceCount[serviceId] = instanceIndex + 1;
+                                
+                                const assignment = serviceAssignments[serviceId];
+                                const guestAssignment = assignment?.guestAssignments?.[instanceIndex];
+                                const guestName = guestAssignment ? guests.find((g: any) => g.id === guestAssignment.guestId)?.name : null;
+                                
+                                return (
+                                  <div key={`${serviceId}-${index}`} className="text-xs text-slate-700 flex items-center gap-1">
+                                    <span className="text-slate-400">{index + 1}.</span>
+                                    <span>{service.name}</span>
+                                    {guestName && (
+                                      <span className="text-purple-600 font-medium">({guestName})</span>
+                                    )}
+                                  </div>
+                                );
+                              });
+                            })()}
+                          </div>
+                        )}
+                        
                         <div className="text-xs text-slate-600 space-y-0.5">
                           <p>📅 {safeFormatDate(apt.start, 'MMM d, yyyy', 'Date TBD')}</p>
                           <p>🕐 {safeFormatDate(apt.start, 'h:mm a', 'Time TBD')}</p>

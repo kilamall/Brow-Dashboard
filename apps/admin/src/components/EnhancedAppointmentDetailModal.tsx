@@ -697,36 +697,57 @@ export default function EnhancedAppointmentDetailModal({ appointment, service, o
                     <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <div className="text-sm font-medium text-blue-800 mb-2">Multiple Services ({serviceIds.length}):</div>
                       <div className="space-y-1">
-                        {serviceIds.map((serviceId: string, index: number) => {
-                          const service = services[serviceId];
-                          const editedPrice = appointment.servicePrices?.[serviceId];
-                          const isPriceEdited = editedPrice !== undefined && editedPrice !== service?.price;
-                          const currentPrice = editedPrice ?? service?.price ?? 0;
+                        {(() => {
+                          // Track instance count for each service ID
+                          const serviceInstanceCount: Record<string, number> = {};
                           
-                          return service ? (
-                            <div key={serviceId} className="text-sm text-blue-700 flex items-center gap-2">
-                              <span className="w-4 h-4 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium">
-                                {index + 1}
-                              </span>
-                              <span>{service.name}</span>
-                              <div className="flex items-center gap-2">
-                                <span className={isPriceEdited ? "text-green-700 font-medium" : "text-blue-600"}>
-                                  ${currentPrice}
+                          return serviceIds.map((serviceId: string, index: number) => {
+                            const service = services[serviceId];
+                            const editedPrice = appointment.servicePrices?.[serviceId];
+                            const isPriceEdited = editedPrice !== undefined && editedPrice !== service?.price;
+                            const currentPrice = editedPrice ?? service?.price ?? 0;
+                            
+                            // Track which instance of this service we're on
+                            const instanceIndex = serviceInstanceCount[serviceId] || 0;
+                            serviceInstanceCount[serviceId] = instanceIndex + 1;
+                            
+                            // Find guest assignment for this specific service instance
+                            const guests = (appointment as any).guests || [];
+                            const serviceAssignments = (appointment as any).serviceAssignments || {};
+                            const assignment = serviceAssignments[serviceId];
+                            const guestAssignment = assignment?.guestAssignments?.[instanceIndex];
+                            const guestName = guestAssignment ? guests.find((g: any) => g.id === guestAssignment.guestId)?.name : null;
+                            
+                            return service ? (
+                              <div key={`${serviceId}-${index}`} className="text-sm text-blue-700 flex items-center gap-2">
+                                <span className="w-4 h-4 bg-blue-200 rounded-full flex items-center justify-center text-xs font-medium">
+                                  {index + 1}
                                 </span>
-                                {isPriceEdited && (
-                                  <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
-                                    Edited
+                                <span>{service.name}</span>
+                                {guestName && (
+                                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                                    {guestName}
                                   </span>
                                 )}
-                                {isPriceEdited && (
-                                  <span className="text-xs text-slate-500 line-through">
-                                    ${service.price}
+                                <div className="flex items-center gap-2">
+                                  <span className={isPriceEdited ? "text-green-700 font-medium" : "text-blue-600"}>
+                                    ${currentPrice}
                                   </span>
-                                )}
+                                  {isPriceEdited && (
+                                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                                      Edited
+                                    </span>
+                                  )}
+                                  {isPriceEdited && (
+                                    <span className="text-xs text-slate-500 line-through">
+                                      ${service.price}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ) : null;
-                        })}
+                            ) : null;
+                          });
+                        })()}
                       </div>
                     </div>
                   );
